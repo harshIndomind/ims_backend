@@ -1,0 +1,100 @@
+const express = require('express');
+const app = express();
+const { PORT, BASE_URL, APP_ENV } = require('./config/serverConfig');
+const cors = require('cors');
+const authRoutes = require('./routes/v1/auth.routes');
+const db = require('./models/index');
+const cookieParser = require('cookie-parser');
+const errorHandler = require('./middlewares/errorHandler');
+const path = require('path');
+const rateLimit = require('express-rate-limit');
+const {sendTestMail} = require('./utils/mailer')
+app.use('/uploads', express.static(path.join(__dirname, '/uploads')));
+
+const limiter = rateLimit({
+	windowMs: 15 * 60 * 1000,
+	limit: 100,
+	standardHeaders: 'draft-8',
+	legacyHeaders: false,
+});
+
+const authLimiter = rateLimit({
+	windowMs: 5 * 60 * 1000,
+	limit: 5,
+	standardHeaders: 'draft-8',
+	legacyHeaders: false,
+});
+
+async function prepareAndStartServer() {
+	// sendTestMail();
+	console.log(`Environment: ${APP_ENV}`);
+	console.log(`PORT: ${PORT}`);
+	console.log(`Server listening on ${BASE_URL}`);
+	console.log(`Date ${new Date().toString()}`);
+
+	app.use(cookieParser());
+	app.use(
+		cors({
+			origin: 'http://localhost:3000', // your frontend origin
+			credentials: true,
+		})
+	);
+	app.use(express.json());
+	app.use(express.urlencoded({ extended: true }));
+
+	// app.use(limiter);
+
+	const apiPrefix = APP_ENV === 'production' ? '' : '/api';
+	console.log('apiPrefix ', apiPrefix);
+
+	app.use(`${apiPrefix}/v1/auth`, authRoutes);
+	app.use(`${apiPrefix}/v1/users`, require('./routes/v1/user.routes'));
+	app.use(`${apiPrefix}/v1/dashboard`, require('./routes/v1/dashboard.routes'));
+	app.use(`${apiPrefix}/v1/organizations`, require('./routes/v1/organization.route'));
+	app.use(`${apiPrefix}/v1/docs-categories`, require('./routes/v1/docs-category.route'));
+	app.use(`${apiPrefix}/v1/docs-uploads`, require('./routes/v1/doc-uploads.routes'));
+	app.use(`${apiPrefix}/v1/projects`, require('./routes/v1/project.routes'));
+	app.use(`${apiPrefix}/v1/issues`, require('./routes/v1/issue.routes'));
+	app.use(`${apiPrefix}/v1/roles`, require('./routes/v1/role.routes'));
+	app.use(`${apiPrefix}/v1/menus`, require('./routes/v1/menu.routes'));
+	app.use(
+		`${apiPrefix}/v1/permissions`,
+		require('./routes/v1/permission.routes')
+	);
+	app.use(
+		`${apiPrefix}/v1/role-permissions`,
+		require('./routes/v1/roles-permission.routes')
+	);
+
+	app.get('/', (req, res) => {
+		res.status(200).json({ status: true, message: '✅ Its working.' });
+	});
+
+	app.use((req, res, next) => {
+		res.status(404).json({ error: 'Route not found' });
+	});
+
+	app.use(errorHandler);
+
+	if (APP_ENV === 'development') {
+		db.sequelize.sync().then(() => {
+			app.listen(PORT, () => {
+				console.log(`Dev server running on ${BASE_URL}`);
+			});
+		});
+	} else {
+		db.sequelize
+			.authenticate()
+			.then(() => {
+				app.listen(PORT, () => {
+					console.log(`Production server running on ${BASE_URL}`);
+				});
+			})
+			.catch((err) => {
+				console.error('Database connection failed:', err);
+				process.exit(1);
+			});
+	}
+}
+
+prepareAndStartServer();

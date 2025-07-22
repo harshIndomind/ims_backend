@@ -1,0 +1,37 @@
+# ===========================================
+# GENERAL CONFIGURATION
+#============================================
+APP_ENV=development
+BASE_URL=
+TZ="Asia/Kolkata"
+PORT=
+
+# ===========================================
+# JWT AUTHENTICATION
+#============================================
+JWT_ACCESS_SECRET=
+JWT_REFRESH_SECRET=
+JWT_ACCESS_EXPIRES=
+JWT_REFRESH_EXPIRES=
+
+# ===========================================
+# DATABASE CREDENTIALS
+#============================================
+DB_USERNAME=
+DB_PASSWORD=
+DB_DATABASE=
+DB_HOST=
+
+# ===========================================
+# S3 BUCKET
+#============================================
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_REGION=
+AWS_BUCKET_NAME=
+
+# ===========================================
+# MAILER
+#============================================
+SMTP_USER=
+SMTP_PASS=
