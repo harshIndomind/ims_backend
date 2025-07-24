@@ -10,7 +10,7 @@ module.exports = (sequelize, DataTypes) => {
 		static associate(models) {
 			DocumentsUpload.belongsTo(models.User, {
 				foreignKey: 'user_id',
-				as: 'vendor_docs',
+				as: 'vendor',
 			});
 		}
 	}

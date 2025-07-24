@@ -109,15 +109,25 @@ class UserRepository {
 		try {
 			const user = await User.findOne({
 				where: { id },
-				attributes: ['id', 'name', 'email', ['image', 'imageUrl']],
+				attributes: [
+					'id',
+					'name',
+					'email',
+					['image', 'imageUrl'],
+					'vendor_company_name',
+					'vendor_company_code',
+					'vendor_contact_no',
+					'vendor_address',
+				],
 				include: [
 					{
 						model: Role,
 						attributes: ['name'],
 					},
 					{
-						model: Company,
-						attributes: ['name'],
+						model: organization,
+						as: 'organization',
+						attributes: ['org_name', 'org_code'],
 					},
 				],
 			});

@@ -255,6 +255,13 @@ exports.getAllUploadedDocs = catchAsync(async (req, res) => {
 		const allDocuments = await DocumentsUpload.findAndCountAll({
 			where: wheres,
 			attributes: columns,
+			include: [
+				{
+					model: User,
+					as: 'vendor',
+					attributes: ['name', 'vendor_company_name'],
+				}
+			],
 			offset,
 			limit,
 			order: [['id', 'DESC']],

@@ -169,6 +169,16 @@ module.exports = {
 			{
 				id: 17,
 				parentId: null,
+				menuName: 'Vendors Documents',
+				icon: 'IconFileText',
+				url: '/vendor-documents',
+				isActive: 1,
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			},
+			{
+				id: 18,
+				parentId: null,
 				menuName: 'Assign Menu to Role',
 				icon: 'IconBrandAuth0',
 				url: '/assign-roles-menu',

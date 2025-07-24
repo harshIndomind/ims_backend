@@ -2,7 +2,7 @@ const router = require('express').Router();
 const DocumentsUploadsController = require('../../controllers/document-uploads.controller');
 const verifyToken = require('../../middlewares/verifyToken');
 const checkRole = require('../../middlewares/checkRole');
-const uploadTo = require('../../middlewares/multer');
+const {upload} = require('../../middlewares/multer');
 
 router.post(
 	'/update-status',
@@ -25,7 +25,7 @@ router.use(verifyToken);
 router.post(
 	'/',
 	checkRole(['Super Admin', 'Admin', 'Vendor']),
-	uploadTo.single('attachment'),
+	upload.single('attachment'),
 	DocumentsUploadsController.uploadADocument
 );
 router.get(
@@ -47,7 +47,7 @@ router.get(
 // 		'User',
 // 		'Support Engineer',
 // 	]),
-// 	uploadTo.single('attachment'),
+// 	upload.single('attachment'),
 // 	DocumentsUploadsController.updateIssue
 // );
 router.delete(

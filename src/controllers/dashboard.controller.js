@@ -72,10 +72,28 @@ exports.getDashboardCounts = catchAsync(async (req, res) => {
 exports.getDashboardChartsData = catchAsync(async (req, res) => {
 	const role = req.user.role;
 	const user_id = req.user.id;
+	const timeRange = req.query.timeRange;
+
 	let whereCondition = {};
 	if (role == 'Vendor') {
 		whereCondition = { user_id };
 	}
+
+	// 👇 Add time filter
+	const now = new Date();
+	let pastDate = new Date();
+
+	if (timeRange === '7d') {
+		pastDate.setDate(now.getDate() - 7);
+	} else if (timeRange === '30d') {
+		pastDate.setDate(now.getDate() - 30);
+	} else {
+		pastDate.setDate(now.getDate() - 90); // default to 90 days
+	}
+
+	whereCondition.createdAt = {
+		[Op.gte]: pastDate,
+	};
 
 	const uploadStats = await DocumentsUpload.findAll({
 		where: whereCondition,
