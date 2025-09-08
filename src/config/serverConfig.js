@@ -4,6 +4,7 @@ dotenv.config();
 
 module.exports = {
 	APP_ENV: process.env.APP_ENV || 'development',
+	APP_DEBUG: process.env.APP_DEBUG,
 	PORT: process.env.PORT || 3000,
 	BASE_URL:
 		process.env.APP_ENV === 'development'
@@ -17,5 +18,6 @@ module.exports = {
 	DB_PASSWORD: process.env.DB_PASSWORD,
 	DB_DATABASE: process.env.DB_DATABASE,
 	DB_HOST: process.env.DB_HOST,
-	CLIENT_BASE_URL: process.env.CLIENT_BASE_URL
+	CLIENT_BASE_URL: process.env.CLIENT_BASE_URL,
+	WEBHOOK_SECRET_KEY: process.env.WEBHOOK_SECRET_KEY
 };

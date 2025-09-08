@@ -2,10 +2,13 @@ const router = require('express').Router();
 const DocumentsUploadsController = require('../../controllers/document-uploads.controller');
 const verifyToken = require('../../middlewares/verifyToken');
 const checkRole = require('../../middlewares/checkRole');
-const {upload} = require('../../middlewares/multer');
+const { upload } = require('../../middlewares/multer');
+const verifyWebhookSignature = require('../../middlewares/verifyWebhookSignature');
+const express = require('express');
 
 router.post(
-	'/update-status',
+	'/webhook',
+	verifyWebhookSignature,
 	DocumentsUploadsController.updateDocumentStatus
 );
 

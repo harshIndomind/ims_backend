@@ -6,7 +6,7 @@ module.exports = {
 		await queryInterface.addColumn('DocumentsUploads', 'doc_status', {
 			type: Sequelize.ENUM([
 				'UPLOADED',
-				'IN-PROGRESS',
+				'IN-PROCESS',
 				'DUPLICATE',
 				'FAILED',
 				'RESULT',

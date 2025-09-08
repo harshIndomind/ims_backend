@@ -1,5 +1,5 @@
 const logger = require('../utils/logger');
-const { APP_ENV } = require('../config/serverConfig');
+const { APP_DEBUG } = require('../config/serverConfig');
 
 module.exports = (err, req, res, next) => {
 	// Unwrap if error is wrapped
@@ -24,10 +24,11 @@ module.exports = (err, req, res, next) => {
 			query: req.query
 		}
 	});
-
+	console.log("APP_DEBUG ", APP_DEBUG);
+	
 	res.status(statusCode).json({
 		success: false,
 		message,
-		stack: APP_ENV === 'development' ? err.stack : undefined,
+		stack: APP_DEBUG == 'true' ? err.stack : undefined,
 	});
 };

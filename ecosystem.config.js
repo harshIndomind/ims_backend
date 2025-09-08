@@ -2,11 +2,11 @@ module.exports = {
   apps: [
     // Development
     {
-      name: 'ims-test-backend',
+      name: 'dev-indomind-vendor-backend',
       script: 'src/index.js',
-      cwd: '/var/www/html/indomind.ims.test/backend',
+      cwd: '/var/www/html/indomind.vc.dev/api',
       env: {
-        PORT: 5100,
+        PORT: 5200,
         NODE_ENV: 'development',
       },
     },
