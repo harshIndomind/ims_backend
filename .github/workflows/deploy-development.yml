@@ -32,7 +32,11 @@ jobs:
             [ -z ${{ secrets.APP_DIR }} ] && echo "❌ APP_DIR is empty" && exit 1
             rm -rf ~/dev-indomind-vendor-backup
             mkdir -p ~/dev-indomind-vendor-backup
-            cp -a ${{ secrets.APP_DIR }}/* ~/dev-indomind-vendor-backup/
+
+            # Only copy if not empty
+            shopt -s nullglob
+            cp -a \$APP_DIR/* ~/dev-indomind-vendor-backup/ || echo "⚠️ No files to backup"
+            
             echo "✅ Backup completed"
           EOF
 
