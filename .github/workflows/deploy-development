@@ -1,4 +1,4 @@
-name: Deploy Development Issue Management System Backend to EC2
+name: Deploy Development Indomind Vendor Backend to EC2
 
 on:
   push:
@@ -30,9 +30,9 @@ jobs:
             set -e
             echo "📦 Backing up from ${{ secrets.APP_DIR }}"
             [ -z ${{ secrets.APP_DIR }} ] && echo "❌ APP_DIR is empty" && exit 1
-            rm -rf ~/ims-backup
-            mkdir -p ~/ims-backup
-            cp -a ${{ secrets.APP_DIR }}/* ~/ims-backup/
+            rm -rf ~/dev-indomind-vendor-backup
+            mkdir -p ~/dev-indomind-vendor-backup
+            cp -a ${{ secrets.APP_DIR }}/* ~/dev-indomind-vendor-backup/
             echo "✅ Backup completed"
           EOF
 
@@ -90,21 +90,21 @@ jobs:
             if ! npm ci --legacy-peer-deps; then
               echo "❌ NPM install failed! Rolling back..."
               rm -rf ./*
-              cp -a ~/ims-backup/. .
-              pm2 delete ims-test-backend || true
-              pm2 start ecosystem.config.js --only ims-test-backend
+              cp -a ~/dev-indomind-vendor-backup/. .
+              pm2 delete dev-indomind-vendor-backend || true
+              pm2 start ecosystem.config.js --only dev-indomind-vendor-backend
               pm2 save
               sudo systemctl restart nginx
               exit 1
             fi
           
-            pm2 delete ims-test-backend || true
-            if ! pm2 start ecosystem.config.js --only ims-test-backend; then
+            pm2 delete dev-indomind-vendor-backend || true
+            if ! pm2 start ecosystem.config.js --only dev-indomind-vendor-backend; then
               echo "❌ PM2 start failed! Rolling back..."
               rm -rf ./*
-              cp -a ~/ims-backup/. .
-              pm2 delete ims-test-backend || true
-              pm2 start ecosystem.config.js --only ims-test-backend
+              cp -a ~/dev-indomind-vendor-backup/. .
+              pm2 delete dev-indomind-vendor-backend || true
+              pm2 start ecosystem.config.js --only dev-indomind-vendor-backend
               pm2 save
               sudo systemctl restart nginx
               exit 1

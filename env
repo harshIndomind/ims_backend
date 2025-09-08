@@ -2,6 +2,7 @@
 # GENERAL CONFIGURATION
 #============================================
 APP_ENV=development
+APP_DEBUG=false
 BASE_URL=
 TZ="Asia/Kolkata"
 PORT=
@@ -35,3 +36,8 @@ AWS_BUCKET_NAME=
 #============================================
 SMTP_USER=
 SMTP_PASS=
+
+# ===========================================
+# WEBHOOK SECRET KEY
+#============================================
+WEBHOOK_SECRET_KEY=
