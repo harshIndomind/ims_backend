@@ -21,7 +21,7 @@ exports.createDocsCategory = catchAsync(async (req, res) => {
 		const DocsCategory = await docs_category.create({
 			name,
 			short_code,
-			s3_folder_Path: s3Path,
+			s3_folder_path: s3Path,
 		});
 
 		res.status(201).json(DocsCategory);
@@ -52,7 +52,7 @@ exports.updateDocsCategory = catchAsync(async (req, res) => {
 			{
 				name,
 				short_code,
-				s3_folder_Path: s3Path,
+				s3_folder_path: s3Path,
 			},
 			{
 				where: { id },
