@@ -86,6 +86,7 @@ exports.getAllDocsCategories = catchAsync(async (req, res) => {
 		const docs_categories = await docs_category.findAndCountAll({
 			offset,
 			limit,
+			where: { is_deleted: false },
 			order: [['id', 'DESC']],
 		});
 

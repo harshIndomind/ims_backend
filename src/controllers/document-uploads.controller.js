@@ -230,6 +230,7 @@ exports.getAllUploadedDocs = catchAsync(async (req, res) => {
 				'org_filename',
 				'generated_filename',
 				'isDeleteRequest',
+				'doc_status',
 				'createdAt',
 				'updatedAt',
 			];
@@ -244,6 +245,7 @@ exports.getAllUploadedDocs = catchAsync(async (req, res) => {
 				'generated_filename',
 				'uploaded_path',
 				'isDeleteRequest',
+				'doc_status',
 				'createdAt',
 				'updatedAt',
 			];
