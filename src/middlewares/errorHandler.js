@@ -24,7 +24,6 @@ module.exports = (err, req, res, next) => {
 			query: req.query
 		}
 	});
-	console.log("APP_DEBUG ", APP_DEBUG);
 	
 	res.status(statusCode).json({
 		success: false,

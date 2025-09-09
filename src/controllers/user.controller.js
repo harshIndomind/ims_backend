@@ -12,6 +12,7 @@ const validateUser = [
 
 	body('password')
 		.trim()
+		.optional()
 		.isLength({ min: 6 })
 		.withMessage('Password must be at least 6 characters'),
 
@@ -39,6 +40,25 @@ const validateUser = [
 		.withMessage('Invalid contact number'),
 
 	body('vendorAddress').optional().trim(),
+];
+
+const validateUpdateUser = [
+  body('name').trim().notEmpty().withMessage('Name is required'),
+  body('email').trim().isEmail().withMessage('Invalid email'),
+  body('password')
+    .optional()
+    .isLength({ min: 6 })
+    .withMessage('Password must be at least 6 characters'),
+  body('roleId').toInt().isInt().withMessage('Role ID must be an integer'),
+  body('orgId').toInt().isInt().withMessage('Organization ID must be an integer'),
+  body('vendorCompanyName').trim().notEmpty().withMessage('Vendor Company Name is required'),
+  body('vendorCompanyCode').trim().notEmpty().withMessage('Vendor Company Code is required'),
+  body('vendorContactNo')
+    .optional()
+    .trim()
+    .matches(/^[0-9+\-()\s]*$/)
+    .withMessage('Invalid contact number'),
+  body('vendorAddress').optional().trim(),
 ];
 
 const createUser = catchAsync(async (req, res) => {
@@ -99,19 +119,24 @@ const updateUser = catchAsync(async (req, res) => {
 		vendorContactNo,
 		vendorAddress
 	} = req.body;
-	const hashedPassword = await bcrypt.hash(password, 10);
 
-	const vendor = await userService.update(id, {
+	const payload = {
 		name,
 		email,
-		password: hashedPassword,
 		roleId,
 		org_id: orgId,
 		vendor_company_name: vendorCompanyName,
 		vendor_company_code: vendorCompanyCode,
 		vendor_contact_no: vendorContactNo,
 		vendor_address: vendorAddress,
-	});
+	};
+
+	if(password){
+		const hashedPassword = await bcrypt.hash(password, 10);
+		payload.password = hashedPassword
+	}
+
+	const vendor = await userService.update(id, payload);
 
 	res.status(201).json({
 		status: true,
@@ -120,7 +145,7 @@ const updateUser = catchAsync(async (req, res) => {
 	});
 });
 
-exports.update = [...validateUser, updateUser];
+exports.update = [...validateUpdateUser, updateUser];
 
 exports.getAllUsers = catchAsync(async (req, res) => {
 	const vendors = await userService.getAllUsers();
