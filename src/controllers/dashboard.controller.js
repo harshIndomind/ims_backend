@@ -23,7 +23,14 @@ async function getOrganizationsCount() {
 }
 
 async function getVendorsCount() {
-	const count = await User.count();
+	const count = await User.count({
+		include: [
+			{
+				model: Role,
+				where: { name: 'Vendor' },
+			},
+		],
+	});
 	return count;
 }
 
@@ -57,7 +64,7 @@ exports.getDashboardCounts = catchAsync(async (req, res) => {
 	const counts = {};
 	if (organizationsCount && vendorsCount) {
 		counts['organizationsCount'] = organizationsCount;
-		counts['vendorsCount'] = organizationsCount;
+		counts['vendorsCount'] = vendorsCount;
 		counts['documentsCount'] = documentsCount;
 		counts['vendorDocumentsCount'] = documentsVendorCount;
 	}
