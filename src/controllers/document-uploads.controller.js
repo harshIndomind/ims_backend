@@ -474,9 +474,9 @@ function getFolderLocationStatusWise(doc_status = 'UPLOADED') {
 	const map = {
 		UPLOADED: '/',
 		'IN-PROCESS': '/inprocess/',
-		DUPLICATE: '/duplicate/',
+		DUPLICATE: '/duplicates/',
 		FAILED: '/failed/',
-		RESULT: '/result/',
+		RESULT: '/results/',
 	};
 
 	return map[doc_status] || '/';
