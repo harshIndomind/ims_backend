@@ -41,6 +41,7 @@ exports.login = async ({ email, password }, res) => {
 	});
 
 	return {
+		id: user.id,
 		role: user.Role.name,
 		name: user.name,
 		email: user.email,
