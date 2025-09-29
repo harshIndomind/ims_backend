@@ -30,13 +30,14 @@ exports.login = async ({ email, password }, res) => {
 		secure: false, // set true in production
 		sameSite: 'strict',
 		maxAge: 7 * 24 * 60 * 60 * 1000,
+		// maxAge: 2 * 60 * 1000,
 	});
 
 	res.cookie('accessToken', accessToken, {
 		httpOnly: true,
 		secure: false, // set true in production
 		sameSite: 'strict',
-		maxAge: 1 * 60 * 1000,
+		maxAge: 15 * 60 * 1000,
 		// maxAge: 7 * 24 * 60 * 60 * 1000,
 	});
 

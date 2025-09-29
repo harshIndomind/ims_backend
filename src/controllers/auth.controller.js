@@ -36,7 +36,7 @@ exports.refreshToken = catchAsync(async (req, res) => {
 			httpOnly: true,
 			secure: false, // set true in production
 			sameSite: 'strict',
-			maxAge: 1 * 60 * 1000,
+			maxAge: 15 * 60 * 1000,
 			// maxAge: 7 * 24 * 60 * 60 * 1000,
 		});
 
