@@ -36,7 +36,7 @@ async function prepareAndStartServer() {
 	app.use(cookieParser());
 	app.use(
 		cors({
-			origin: 'http://localhost:3000', // your frontend origin
+			origin: 'https://vcdev.swayamm.com', // your frontend origin
 			credentials: true,
 		})
 	);
