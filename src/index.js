@@ -8,9 +8,10 @@ const cookieParser = require('cookie-parser');
 const errorHandler = require('./middlewares/errorHandler');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
-const {sendTestMail} = require('./utils/mailer')
+const { sendTestMail } = require('./utils/mailer');
 app.use('/uploads', express.static(path.join(__dirname, '/uploads')));
-
+const http = require('http');
+const { init } = require('./utils/socket');
 const limiter = rateLimit({
 	windowMs: 15 * 60 * 1000,
 	limit: 100,
@@ -50,9 +51,18 @@ async function prepareAndStartServer() {
 	app.use(`${apiPrefix}/v1/auth`, authRoutes);
 	app.use(`${apiPrefix}/v1/users`, require('./routes/v1/user.routes'));
 	app.use(`${apiPrefix}/v1/dashboard`, require('./routes/v1/dashboard.routes'));
-	app.use(`${apiPrefix}/v1/organizations`, require('./routes/v1/organization.route'));
-	app.use(`${apiPrefix}/v1/docs-categories`, require('./routes/v1/docs-category.route'));
-	app.use(`${apiPrefix}/v1/docs-uploads`, require('./routes/v1/doc-uploads.routes'));
+	app.use(
+		`${apiPrefix}/v1/organizations`,
+		require('./routes/v1/organization.route')
+	);
+	app.use(
+		`${apiPrefix}/v1/docs-categories`,
+		require('./routes/v1/docs-category.route')
+	);
+	app.use(
+		`${apiPrefix}/v1/docs-uploads`,
+		require('./routes/v1/doc-uploads.routes')
+	);
 	// app.use(`${apiPrefix}/v1/projects`, require('./routes/v1/project.routes'));
 	// app.use(`${apiPrefix}/v1/issues`, require('./routes/v1/issue.routes'));
 	app.use(`${apiPrefix}/v1/roles`, require('./routes/v1/role.routes'));
@@ -65,6 +75,10 @@ async function prepareAndStartServer() {
 		`${apiPrefix}/v1/role-permissions`,
 		require('./routes/v1/roles-permission.routes')
 	);
+	app.use(
+		`${apiPrefix}/v1/notifications`,
+		require('./routes/v1/notifications.routes')
+	);
 
 	app.get('/', (req, res) => {
 		res.status(200).json({ status: true, message: '✅ Its working.' });
@@ -76,9 +90,12 @@ async function prepareAndStartServer() {
 
 	app.use(errorHandler);
 
+	const server = http.createServer(app);
+	const io = init(server);
+
 	if (APP_ENV === 'development') {
 		db.sequelize.sync().then(() => {
-			app.listen(PORT, () => {
+			server.listen(PORT, () => {
 				console.log(`Dev server running on ${BASE_URL}`);
 			});
 		});
@@ -86,7 +103,7 @@ async function prepareAndStartServer() {
 		db.sequelize
 			.authenticate()
 			.then(() => {
-				app.listen(PORT, () => {
+				server.listen(PORT, () => {
 					console.log(`Production server running on ${BASE_URL}`);
 				});
 			})

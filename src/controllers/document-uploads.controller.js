@@ -5,6 +5,7 @@ const {
 	User,
 	Role,
 	organization,
+	Alert,
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const {
@@ -15,6 +16,9 @@ const {
 } = require('../utils/s3Bucket');
 const path = require('path');
 const AppError = require('../utils/AppError');
+const { sendToUser } = require('../utils/socket');
+const { Op } = require('sequelize');
+const moment = require('moment-timezone');
 
 exports.uploadADocument = catchAsync(async (req, res) => {
 	const t = await sequelize.transaction();
@@ -262,7 +266,7 @@ exports.getAllUploadedDocs = catchAsync(async (req, res) => {
 					model: User,
 					as: 'vendor',
 					attributes: ['name', 'vendor_company_name'],
-				}
+				},
 			],
 			offset,
 			limit,
@@ -453,14 +457,10 @@ async function getS3FullPath(generated_filename = null) {
 			);
 		}
 
-		console.log("uploadedDoc ", JSON.stringify(uploadedDoc, null, ''));
-		
-
 		const key = `${docCategory.s3_folder_path}${getFolderLocationStatusWise(
 			uploadedDoc.doc_status
 		)}${uploadedDoc.generated_filename}`;
-		console.log("key ", uploadedDoc.doc_status);
-		
+
 		return key;
 	} catch (error) {
 		throw new AppError(
@@ -482,23 +482,52 @@ function getFolderLocationStatusWise(doc_status = 'UPLOADED') {
 	return map[doc_status] || '/';
 }
 
+function getStatusMapping(doc_status = 'UPLOADED') {
+	const map = {
+		UPLOADED: 'uploaded',
+		'IN-PROCESS': 'in-process',
+		DUPLICATE: 'duplicate',
+		FAILED: 'failed',
+		RESULT: 'results',
+	};
+
+	return map[doc_status] || '/';
+}
+
 exports.updateDocumentStatus = catchAsync(async (req, res) => {
 	try {
 		const { generated_filename, status } = req.body;
-
 		if (!generated_filename || !status) {
 			return res.status(400).json({
 				status: false,
-				message: "Filename and status are required",
+				message: 'Filename and status are required',
 			});
 		}
 
-		const validStatuses = ['UPLOADED', 'IN-PROCESS', 'DUPLICATE', 'FAILED', 'RESULT'];
+		const validStatuses = [
+			'UPLOADED',
+			'IN-PROCESS',
+			'DUPLICATE',
+			'FAILED',
+			'RESULT',
+		];
 
 		if (!validStatuses.includes(status)) {
 			return res.status(400).json({
 				status: false,
-				message: "Invalid status",
+				message: 'Invalid status',
+			});
+		}
+
+		const docDetails = await DocumentsUpload.findOne({
+			where: { generated_filename },
+			include: [{ model: User, attributes: ['id', 'name', 'email'], as: 'vendor' }],
+		});
+
+		if (!docDetails) {
+			return res.status(404).json({
+				status: false,
+				message: 'Document not found',
 			});
 		}
 
@@ -507,21 +536,54 @@ exports.updateDocumentStatus = catchAsync(async (req, res) => {
 			{ where: { generated_filename } }
 		);
 
+		console.log("docDetails User Name ", docDetails.vendor.name);
+		
+
 		if (updated[0] === 0) {
 			return res.status(404).json({
 				status: false,
-				message: "Document not found",
+				message: 'Document not found',
 			});
+		}
+
+		const description = `Vendor: ${docDetails.vendor.name}, Filename: ${generated_filename} file status changed to ${getStatusMapping(
+			status
+		)}.`;
+
+		const alert = await Alert.create({
+			title: 'Status Updated',
+			user_id: docDetails.user_id,
+			description,
+			createdAt: moment().tz('Asia/Kolkata').toDate(), // ✅ IST time
+		});
+
+		const allAdmins = await User.findAll({
+			include: [
+				{
+					model: Role,
+					attributes: ['name'],
+					where: {
+						name: { [Op.in]: ['Super Admin', 'Admin'] },
+					},
+				},
+			],
+			attributes: ['id'],
+		});
+
+		const allIds = [...allAdmins.map((a) => a.id), docDetails.user_id];
+
+		for (const id of allIds) {
+			sendToUser(id, 'new_alert', alert);
 		}
 
 		res.status(200).json({
 			status: true,
-			message: "Document status updated successfully",
+			message: 'Document status updated successfully',
 		});
 	} catch (error) {
 		res.status(500).json({
 			status: false,
-			message: error.message || "Something went wrong",
+			message: error.message || 'Something went wrong',
 		});
 	}
 });
