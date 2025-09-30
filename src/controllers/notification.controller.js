@@ -1,4 +1,4 @@
-const { Alert } = require('../models/index');
+const { Alert, AlertRead, User } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
 const moment = require('moment-timezone');
@@ -10,29 +10,42 @@ exports.getUnreadNotifications = catchAsync(async (req, res, next) => {
 		if (!userId) {
 			return next(new AppError('User ID is required', 400));
 		}
-		console.log("req.user ", req.user);
-		
-		isAdmin = req.user && req.user.role === 'Super Admin' || req.user.role === 'Admin';
+
+		const isAdmin =
+			req.user &&
+			(req.user.role === 'Super Admin' || req.user.role === 'Admin');
 
 		const whereClause = isAdmin ? {} : { user_id: userId };
 
+		// fetch alerts
 		const notifications = await Alert.findAll({
 			where: whereClause,
 			order: [['createdAt', 'DESC']],
+			include: [
+				{
+					model: AlertRead,
+					as: 'reads',
+					where: { user_id: userId },
+					required: false, // left join → so we know if user has read it
+				},
+			],
 		});
 
-		// map each notification to include human-readable time
-		const formattedNotifications = notifications.map((n) => ({
-			id: n.id,
-			title: n.title,
-			description: n.description,
-			userId: n.userId,
-			is_read: n.is_read,
-			createdAtIST: moment(n.createdAt)
-				.tz('Asia/Kolkata')
-				.format('YYYY-MM-DD HH:mm:ss'),
-			timeAgo: moment(n.createdAt).tz('Asia/Kolkata').fromNow(),
-		}));
+		// format with read/unread status
+		const formattedNotifications = notifications.map((n) => {
+			const isRead = n.reads && n.reads.length > 0;
+			return {
+				id: n.id,
+				title: n.title,
+				description: n.description,
+				userId: n.userId,
+				is_read: isRead,
+				createdAtIST: moment(n.createdAt)
+					.tz('Asia/Kolkata')
+					.format('YYYY-MM-DD HH:mm:ss'),
+				timeAgo: moment(n.createdAt).tz('Asia/Kolkata').fromNow(),
+			};
+		});
 
 		res.json({
 			success: true,
@@ -46,7 +59,9 @@ exports.getUnreadNotifications = catchAsync(async (req, res, next) => {
 });
 
 exports.markNotificationAsRead = catchAsync(async (req, res, next) => {
-	const alertId = req.params.alertId;
+	const { alertId } = req.params;
+	const userId = req.user.id;
+
 	if (!alertId) {
 		return next(new AppError('Alert ID is required', 400));
 	}
@@ -56,14 +71,16 @@ exports.markNotificationAsRead = catchAsync(async (req, res, next) => {
 		return next(new AppError('Alert not found', 404));
 	}
 
-	alert.is_read = true;
-	alert.updatedAt = moment().tz('Asia/Kolkata').toDate();
-	await alert.save();
+	// Insert into AlertReads (if not exists)
+	await AlertRead.upsert({
+		alert_id: alertId,
+		user_id: userId,
+		read_at: moment().tz('Asia/Kolkata').toDate(),
+	});
 
 	res.status(200).json({
 		status: true,
 		message: 'Notification marked as read',
-		data: alert,
 	});
 });
 

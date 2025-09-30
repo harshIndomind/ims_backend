@@ -9,6 +9,10 @@ module.exports = (sequelize, DataTypes) => {
 		 */
 		static associate(models) {
 			Alert.belongsTo(models.User, { foreignKey: 'user_id' });
+			Alert.hasMany(models.AlertRead, {
+				foreignKey: 'alert_id',
+				as: 'reads',
+			});
 		}
 	}
 	Alert.init(
@@ -16,7 +20,6 @@ module.exports = (sequelize, DataTypes) => {
 			user_id: { type: DataTypes.INTEGER, allowNull: false },
 			title: { type: DataTypes.STRING, allowNull: false },
 			description: { type: DataTypes.TEXT },
-			is_read: { type: DataTypes.BOOLEAN, defaultValue: false },
 		},
 		{
 			sequelize,
