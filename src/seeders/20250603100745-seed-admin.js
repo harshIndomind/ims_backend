@@ -10,6 +10,7 @@ module.exports = {
 			email: 'superadmin@indomind.ai',
 			password: password,
 			roleId: 1,
+			is_active: 1,
 			createdAt: new Date(),
 			updatedAt: new Date(),
 		}], {});

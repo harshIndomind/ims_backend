@@ -6,6 +6,7 @@ const {
 	Role,
 	organization,
 	Alert,
+	BusinessPartner,
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const {
@@ -35,19 +36,19 @@ exports.uploadADocument = catchAsync(async (req, res) => {
 			throw new AppError('Document number is required.', 409);
 		}
 
-		if (await isDocumentExists(user_id, docCatgoryId, doc_number)) {
-			throw new AppError(
-				'Sorry! The document you are trying to upload already exists. Please contact the admin.',
-				409
-			);
-		}
-
-		const currentUser = await User.findOne({
-			where: { id: user_id },
+		const currentUser = await BusinessPartner.findOne({
+			where: { user_id },
 			include: [
 				{
-					model: Role,
-					attributes: ['name'],
+					model: User,
+					as: 'user', // ✅ must match association alias
+					attributes: ['id', 'name', 'email'],
+					include: [
+						{
+							model: Role,
+							attributes: ['name'],
+						},
+					],
 				},
 				{
 					model: organization,
@@ -61,7 +62,14 @@ exports.uploadADocument = catchAsync(async (req, res) => {
 			throw new AppError('Vendor details not found!', 404);
 		}
 
-		if (currentUser.Role.name === 'Super Admin') {
+		if (await isDocumentExists(currentUser.user_id, docCatgoryId, doc_number)) {
+			throw new AppError(
+				'Sorry! The document you are trying to upload already exists. Please contact the admin.',
+				409
+			);
+		}
+
+		if (currentUser.user.Role.name === 'Super Admin') {
 			throw new AppError(
 				'Super Admins cannot upload documents because they are not associated with any organization.',
 				403
@@ -78,7 +86,7 @@ exports.uploadADocument = catchAsync(async (req, res) => {
 
 		// [ORG_CODE]_[VENDOR_CODE]_[DOC_SHORTCODE]_[DOC_NUMBER_BY_USER]
 		const ORG_CODE = currentUser.organization.org_code;
-		const VENDOR_CODE = currentUser.vendor_company_code;
+		const VENDOR_CODE = currentUser.code;
 		const DOC_SHORTCODE = docCategory.short_code;
 		const DOC_NUMBER_BY_USER = doc_number;
 		const documentName = `${ORG_CODE}_${VENDOR_CODE}_${DOC_SHORTCODE}_${DOC_NUMBER_BY_USER}`;
@@ -112,7 +120,7 @@ exports.uploadADocument = catchAsync(async (req, res) => {
 		console.log('S3 result => ', result);
 
 		const DocsCategory = await DocumentsUpload.create({
-			user_id,
+			partner_id: currentUser.id,
 			doc_number,
 			org_filename,
 			generated_filename,
@@ -222,13 +230,17 @@ exports.getAllUploadedDocs = catchAsync(async (req, res) => {
 
 		const { role, id } = req.user;
 
+		const businessPartner = await BusinessPartner.findOne({
+			where: { user_id: id },
+		});
+
 		let columns = [];
 		let wheres = {};
 
 		if (role == 'Vendor') {
 			columns = [
 				'id',
-				'user_id',
+				'partner_id',
 				'doc_id',
 				'doc_number',
 				'org_filename',
@@ -238,11 +250,11 @@ exports.getAllUploadedDocs = catchAsync(async (req, res) => {
 				'createdAt',
 				'updatedAt',
 			];
-			wheres['user_id'] = id;
+			wheres['partner_id'] = businessPartner.id;
 		} else {
 			columns = [
 				'id',
-				'user_id',
+				'partner_id',
 				'doc_id',
 				'doc_number',
 				'org_filename',
@@ -254,7 +266,7 @@ exports.getAllUploadedDocs = catchAsync(async (req, res) => {
 				'updatedAt',
 			];
 
-			if (vendorId > 0) wheres['user_id'] = vendorId;
+			if (vendorId > 0) wheres['partner_id'] = vendorId;
 		}
 		console.log('wheres ', wheres);
 
@@ -263,9 +275,16 @@ exports.getAllUploadedDocs = catchAsync(async (req, res) => {
 			attributes: columns,
 			include: [
 				{
-					model: User,
-					as: 'vendor',
-					attributes: ['name', 'vendor_company_name'],
+					model: BusinessPartner,
+					as: 'vendor', // must match DocumentsUpload association
+					attributes: ['id', 'name', 'code', 'contact_no'],
+					include: [
+						{
+							model: User,
+							as: 'user', // must match BusinessPartner association
+							attributes: ['id', 'name', 'email'],
+						},
+					],
 				},
 			],
 			offset,
@@ -324,17 +343,17 @@ exports.deleteUploadedDoc = catchAsync(async (req, res) => {
 });
 
 async function isDocumentExists(
-	user_id = null,
+	partner_id = null,
 	doc_id = null,
 	doc_number = null
 ) {
-	if (!user_id || !doc_id || !doc_number) {
+	if (!partner_id || !doc_id || !doc_number) {
 		throw new AppError('Something went wrong!', 400);
 	}
 
 	const isExists = await DocumentsUpload.findOne({
 		where: {
-			user_id,
+			partner_id,
 			doc_id,
 			doc_number,
 		},
@@ -521,7 +540,20 @@ exports.updateDocumentStatus = catchAsync(async (req, res) => {
 
 		const docDetails = await DocumentsUpload.findOne({
 			where: { generated_filename },
-			include: [{ model: User, attributes: ['id', 'name', 'email'], as: 'vendor' }],
+			include: [
+				{
+					model: BusinessPartner,
+					as: 'vendor', // must match DocumentsUpload association
+					attributes: ['id', 'name', 'code', 'contact_no', 'user_id'],
+					include: [
+						{
+							model: User,
+							as: 'user', // must match BusinessPartner association
+							attributes: ['id', 'name', 'email'],
+						},
+					],
+				},
+			],
 		});
 
 		if (!docDetails) {
@@ -536,8 +568,7 @@ exports.updateDocumentStatus = catchAsync(async (req, res) => {
 			{ where: { generated_filename } }
 		);
 
-		console.log("docDetails User Name ", docDetails.vendor.name);
-		
+		console.log('docDetails User Name ', docDetails.vendor.name);
 
 		if (updated[0] === 0) {
 			return res.status(404).json({
@@ -546,7 +577,9 @@ exports.updateDocumentStatus = catchAsync(async (req, res) => {
 			});
 		}
 
-		const description = `Vendor: ${docDetails.vendor.name}, Filename: ${generated_filename} file status changed to ${getStatusMapping(
+		const description = `Vendor: ${
+			docDetails.vendor.name
+		}, Filename: ${generated_filename} file status changed to ${getStatusMapping(
 			status
 		)}.`;
 

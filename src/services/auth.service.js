@@ -14,13 +14,13 @@ exports.register = async ({ name, email, password, roleId }) => {
 };
 
 exports.login = async ({ email, password }, res) => {
-	const user = await User.findOne({ where: { email }, include: Role });
+	const user = await User.findOne({ where: { email, is_active: 1 }, include: Role });
 	if (!user) throw new AppError('User not found!', 401);
 
 	const isMatch = await bcrypt.compare(password, user.password);
 	if (!isMatch) throw new AppError('Invalid credentials', 401);
 
-	const payload = { id: user.id, role: user.Role.name, companyId: user.companyIds, roleId: user.roleId, avatar: user.image  };
+	const payload = { id: user.id, role: user.Role.name, companyId: user.companyIds, roleId: user.roleId, avatar: user.image, org_id: user.org_id };
 	const accessToken = generateAccessToken(payload);
 	const refreshToken = generateRefreshToken(payload);
 
@@ -48,6 +48,7 @@ exports.login = async ({ email, password }, res) => {
 		email: user.email,
 		companyId: user.companyId,
 		roleId: user.roleId,
-		imageUrl: user.image
+		imageUrl: user.image,
+		org_id: user.org_id
 	};
 };

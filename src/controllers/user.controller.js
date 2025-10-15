@@ -169,8 +169,9 @@ exports.getUserById = catchAsync(async (req, res) => {
 
 exports.destroy = catchAsync(async (req, res) => {
 	const { id } = req.params;
-
-	const vendor = await userService.destroy({ where: { id } });
+	console.log("id => " , id);
+	
+	const vendor = await userService.destroy(id);
 	res.status(201).json({
 		status: true,
 		message: 'A vendor deleted successfully',

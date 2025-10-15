@@ -6,6 +6,8 @@ const {
 	Company,
 	UserProject,
 	ResetPassword,
+	Alert,
+	AlertReads
 } = require('../models/index');
 const AppError = require('../utils/AppError');
 const { sendForgotPasswordMail } = require('../utils/mailer');
@@ -141,6 +143,8 @@ class UserRepository {
 
 	async delete(id) {
 		try {
+			console.log("id in repo => " , id);
+			await Alert.destroy({ where: { user_id: 3 } });
 			const user = await User.destroy({ where: { id } });
 
 			return user;

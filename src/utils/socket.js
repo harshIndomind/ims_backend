@@ -7,7 +7,7 @@ module.exports = {
     const { Server } = require("socket.io");
     io = new Server(server, {
       cors: {
-        origin: "https://vcdev.swayamm.com",
+        origin: "https://localhost:3000",
         methods: ["GET", "POST"],
       },
     });

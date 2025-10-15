@@ -2,29 +2,35 @@
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
 	async up(queryInterface, Sequelize) {
-		await queryInterface.createTable('Companies', {
+		await queryInterface.createTable('ProductSerials', {
 			id: {
 				allowNull: false,
 				autoIncrement: true,
 				primaryKey: true,
 				type: Sequelize.INTEGER,
 			},
-			name: {
+			product_id: {
+				type: Sequelize.BIGINT,
+			},
+			serial_no: {
 				type: Sequelize.STRING,
 				allowNull: false,
 			},
-			description: {
-				type: Sequelize.TEXT,
+			sell_price: {
+				type: Sequelize.DECIMAL(12, 2),
+				allowNull: true,
 			},
-			address: {
-				type: Sequelize.TEXT,
+			sell_price_incl_tax: {
+				type: Sequelize.DECIMAL(12, 2),
+				allowNull: true,
 			},
-			contact_no: {
-				type: Sequelize.STRING,
-				allowNull: false,
+			purchase_price: {
+				type: Sequelize.DECIMAL(12, 2),
+				allowNull: true,
 			},
-			alt_contact_no: {
-				type: Sequelize.STRING,
+			purchase_price_incl_tax: {
+				type: Sequelize.DECIMAL(12, 2),
+				allowNull: true,
 			},
 			createdAt: {
 				allowNull: false,
@@ -37,6 +43,6 @@ module.exports = {
 		});
 	},
 	async down(queryInterface, Sequelize) {
-		await queryInterface.dropTable('Companies');
+		await queryInterface.dropTable('ProductSerials');
 	},
 };

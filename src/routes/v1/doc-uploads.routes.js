@@ -27,18 +27,18 @@ router.use(verifyToken);
 // );
 router.post(
 	'/',
-	checkRole(['Super Admin', 'Admin', 'Vendor']),
+	checkRole(['Super Admin', 'Admin', 'Vendor', 'Vendor-Customer']),
 	upload.single('attachment'),
 	DocumentsUploadsController.uploadADocument
 );
 router.get(
 	'/:id',
-	checkRole(['Super Admin', 'Admin', 'Vendor']),
+	checkRole(['Super Admin', 'Admin', 'Vendor', 'Vendor-Customer']),
 	DocumentsUploadsController.getAUploadedDoc
 );
 router.get(
 	'/',
-	checkRole(['Super Admin', 'Admin', 'Vendor']),
+	checkRole(['Super Admin', 'Admin', 'Vendor', 'Vendor-Customer']),
 	DocumentsUploadsController.getAllUploadedDocs
 );
 // router.put(
@@ -55,17 +55,17 @@ router.get(
 // );
 router.delete(
 	'/:id',
-	checkRole(['Super Admin', 'Admin', 'Vendor']),
+	checkRole(['Super Admin', 'Admin', 'Vendor', 'Vendor-Customer']),
 	DocumentsUploadsController.deleteUploadedDoc
 );
 router.get(
 	'/getDocumentUrl/:id',
-	checkRole(['Super Admin', 'Admin', 'Vendor']),
+	checkRole(['Super Admin', 'Admin', 'Vendor', 'Vendor-Customer']),
 	DocumentsUploadsController.getDocumentSignedURL
 );
 router.get(
 	'/sendDeleteRequest/:id',
-	checkRole(['Super Admin', 'Admin', 'Vendor']),
+	checkRole(['Super Admin', 'Admin', 'Vendor', 'Vendor-Customer']),
 	DocumentsUploadsController.sendDeleteRequestToAdmin
 );
 

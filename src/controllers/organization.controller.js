@@ -1,18 +1,28 @@
-const { organization } = require('../models/index');
+const { organization, User } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
 const { fn, col, Op, JSON } = require('sequelize');
+const bcrypt = require('bcrypt');
 
 exports.createOrganization = catchAsync(async (req, res) => {
 	try {
+		const loggedInUserId = req.user.id;
+
 		const {
 			org_name,
 			org_code,
+			org_gst_number,
+			pan,
 			org_email,
 			org_person_name,
 			org_person_contact,
 			org_address,
+			pincode,
+			city,
+			state,
+			update_gst_on_invoices
 		} = req.body;
+		console.log('req.body ', req.body);
 
 		const isOrgCodeExists = await organization.findOne({
 			where: { org_code },
@@ -25,13 +35,31 @@ exports.createOrganization = catchAsync(async (req, res) => {
 			);
 		}
 
+		
 		const Organization = await organization.create({
 			org_name,
 			org_code,
+			org_gst_number,
+			pan,
 			org_email,
 			org_person_name,
 			org_person_contact,
 			org_address,
+			pincode,
+			city,
+			state,
+			update_gst_on_invoices,
+			createdBy: loggedInUserId,
+		});
+		
+		const hashedPassword = await bcrypt.hash('12345678', 10);
+		const user = await User.create({
+			org_id: Organization.id,
+			name: org_person_name,
+			email: org_email,
+			password: hashedPassword,
+			roleId: 2, // Admin Role
+			is_active: 1
 		});
 
 		res.status(201).json(Organization);
@@ -47,10 +75,16 @@ exports.updateOrganization = catchAsync(async (req, res) => {
 	const {
 		org_name,
 		org_code,
+		org_gst_number,
+		pan,
 		org_email,
 		org_person_name,
 		org_person_contact,
 		org_address,
+		pincode,
+		city,
+		state,
+		update_gst_on_invoices
 	} = req.body;
 
 	const isOrgCodeExists = await organization.findOne({
@@ -64,14 +98,36 @@ exports.updateOrganization = catchAsync(async (req, res) => {
 		);
 	}
 
+	const hashedPassword = await bcrypt.hash('12345678', 10);
+
+	const isUserExists = await User.findOne({ where: { email: org_email } });
+
+	if (!isUserExists) {
+		throw new AppError('User not exists.', 404);
+	}
+
+	await User.update(
+		{
+			name: org_person_name,
+			email: org_email,
+		},
+		{ where: { id: isUserExists.id } }
+	);
+
 	const [updatedCount] = await organization.update(
 		{
 			org_name,
 			org_code,
+			org_gst_number,
+			pan,
 			org_email,
 			org_person_name,
 			org_person_contact,
 			org_address,
+			pincode,
+			city,
+			state,
+			update_gst_on_invoices
 		},
 		{
 			where: { id },

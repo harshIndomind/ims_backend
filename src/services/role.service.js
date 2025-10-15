@@ -33,9 +33,9 @@ class RoleService {
 		}
 	}
 
-	async getAllRoles(data) {
+	async getAllRoles(id) {
 		try {
-			const roles = await this.roleRepository.allRoles();
+			const roles = await this.roleRepository.allRoles(id);
 			return roles;
 		} catch (error) {
 			return error;

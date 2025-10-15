@@ -12,6 +12,7 @@ module.exports = (sequelize, DataTypes) => {
 			Alert.hasMany(models.AlertRead, {
 				foreignKey: 'alert_id',
 				as: 'reads',
+				onDelete: 'CASCADE',
 			});
 		}
 	}

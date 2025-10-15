@@ -2,32 +2,27 @@
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
 	async up(queryInterface, Sequelize) {
-		await queryInterface.createTable('UserProjects', {
+		await queryInterface.createTable('ProductUOMs', {
 			id: {
 				allowNull: false,
 				autoIncrement: true,
 				primaryKey: true,
 				type: Sequelize.INTEGER,
 			},
-			userId: {
-				type: Sequelize.INTEGER,
+			product_id: {
+				type: Sequelize.BIGINT,
 				allowNull: false,
-				references: {
-					model: 'Users', // table name
-					key: 'id',
-				},
-				onUpdate: 'CASCADE',
+				references: { model: 'Products', key: 'id' },
 				onDelete: 'CASCADE',
 			},
-			projectId: {
-				type: Sequelize.INTEGER,
+			unit_id: {
+				type: Sequelize.BIGINT,
 				allowNull: false,
-				references: {
-					model: 'Projects', // table name
-					key: 'id',
-				},
-				onUpdate: 'CASCADE',
-				onDelete: 'CASCADE',
+				references: { model: 'Units', key: 'id' },
+			},
+			qty: {
+				type: Sequelize.DECIMAL(12, 2),
+				allowNull: false,
 			},
 			createdAt: {
 				allowNull: false,
@@ -40,6 +35,6 @@ module.exports = {
 		});
 	},
 	async down(queryInterface, Sequelize) {
-		await queryInterface.dropTable('UserProjects');
+		await queryInterface.dropTable('ProductUOMs');
 	},
 };

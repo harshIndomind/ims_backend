@@ -36,7 +36,7 @@ async function prepareAndStartServer() {
 	app.use(cookieParser());
 	app.use(
 		cors({
-			origin: 'https://vcdev.swayamm.com', // your frontend origin
+			origin: 'http://localhost:3000', // your frontend origin
 			credentials: true,
 		})
 	);
@@ -79,6 +79,14 @@ async function prepareAndStartServer() {
 		`${apiPrefix}/v1/notifications`,
 		require('./routes/v1/notifications.routes')
 	);
+	app.use(`${apiPrefix}/v1/partners`, require('./routes/v1/partners.route'));
+	app.use(
+		`${apiPrefix}/v1/product-groups`,
+		require('./routes/v1/product-group.route')
+	);
+	app.use(`${apiPrefix}/v1/taxes`, require('./routes/v1/tax.routes'));
+	app.use(`${apiPrefix}/v1/units`, require('./routes/v1/unit.routes'));
+	app.use(`${apiPrefix}/v1/product-services`, require('./routes/v1/productService.route'));
 
 	app.get('/', (req, res) => {
 		res.status(200).json({ status: true, message: '✅ Its working.' });

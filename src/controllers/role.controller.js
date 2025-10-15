@@ -38,7 +38,9 @@ exports.destory = catchAsync(async (req, res) => {
 });
 
 exports.getAllRoles = catchAsync(async (req, res) => {
-	const roles = await roleService.getAllRoles();
+	const id = req.user.id;
+
+	const roles = await roleService.getAllRoles(id);
 
 	res.status(201).json({
 		status: true,

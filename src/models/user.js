@@ -12,13 +12,18 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'user_id',
 				as: 'vendor_docs',
 			});
+
+			User.hasOne(models.BusinessPartner, {
+				foreignKey: 'user_id',
+				as: 'partner', // optional alias for reverse lookup
+			});
 		}
 	}
 	User.init(
 		{
 			org_id: {
 				type: DataTypes.STRING,
-				allowNull: false,
+				allowNull: true,
 			},
 			name: {
 				type: DataTypes.STRING,
@@ -34,23 +39,23 @@ module.exports = (sequelize, DataTypes) => {
 				allowNull: true,
 			},
 			password: { type: DataTypes.STRING, allowNull: false },
-			vendor_company_name: {
-				type: DataTypes.STRING,
-				allowNull: false,
-			},
-			vendor_company_code: {
-				type: DataTypes.STRING,
-				allowNull: false,
-				unique: true,
-			},
-			vendor_contact_no: {
-				type: DataTypes.STRING,
-				allowNull: false,
-			},
-			vendor_address: {
-				type: DataTypes.STRING,
-				allowNull: true,
-			},
+			// vendor_company_name: {
+			// 	type: DataTypes.STRING,
+			// 	allowNull: true,
+			// },
+			// vendor_company_code: {
+			// 	type: DataTypes.STRING,
+			// 	allowNull: true,
+			// 	unique: true,
+			// },
+			// vendor_contact_no: {
+			// 	type: DataTypes.STRING,
+			// 	allowNull: true,
+			// },
+			// vendor_address: {
+			// 	type: DataTypes.STRING,
+			// 	allowNull: true,
+			// },
 			roleId: {
 				type: DataTypes.INTEGER,
 				references: {
@@ -58,7 +63,15 @@ module.exports = (sequelize, DataTypes) => {
 					key: 'id',
 				},
 				onUpdate: 'CASCADE',
-				onDelete: 'SET NULL',
+				onDelete: 'CASCADE',
+			},
+			is_active: {
+				type: DataTypes.BOOLEAN,
+				defaultValue: false
+			},
+			last_login: {
+				type: DataTypes.DATE,
+				allowNull: true,
 			},
 		},
 		{
