@@ -10,5 +10,6 @@ router.put('/:id', PartnersController.updatePartner);
 router.delete('/:id', PartnersController.deletePartner);
 router.get('/', PartnersController.getAllPartners);
 router.get('/:id', PartnersController.getPartnerById);
-
+router.put('/add-shipping-address/:id', PartnersController.addShippingAddress);
+router.get('/shipping-address/:id', PartnersController.getShippingAddressesByPartnerId);
 module.exports = router;

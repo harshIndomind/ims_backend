@@ -48,6 +48,8 @@ async function prepareAndStartServer() {
 	const apiPrefix = APP_ENV === 'production' ? '' : '/api';
 	console.log('apiPrefix ', apiPrefix);
 
+	app.use('/storage', express.static(path.join(__dirname, '../storage')));
+
 	app.use(`${apiPrefix}/v1/auth`, authRoutes);
 	app.use(`${apiPrefix}/v1/users`, require('./routes/v1/user.routes'));
 	app.use(`${apiPrefix}/v1/dashboard`, require('./routes/v1/dashboard.routes'));
@@ -86,7 +88,13 @@ async function prepareAndStartServer() {
 	);
 	app.use(`${apiPrefix}/v1/taxes`, require('./routes/v1/tax.routes'));
 	app.use(`${apiPrefix}/v1/units`, require('./routes/v1/unit.routes'));
-	app.use(`${apiPrefix}/v1/product-services`, require('./routes/v1/productService.route'));
+	app.use(`${apiPrefix}/v1/countries`, require('./routes/v1/country.routes'));
+	app.use(`${apiPrefix}/v1/states`, require('./routes/v1/state.routes'));
+	app.use(
+		`${apiPrefix}/v1/product-services`,
+		require('./routes/v1/productService.route')
+	);
+	app.use(`${apiPrefix}/v1/invoices`, require('./routes/v1/invoice.routes'));
 
 	app.get('/', (req, res) => {
 		res.status(200).json({ status: true, message: '✅ Its working.' });

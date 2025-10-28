@@ -10,6 +10,7 @@ module.exports = (sequelize, DataTypes) => {
 		static associate(models) {
 			// organization.belongsTo(User, { foreignKey: 'user_id' }, { onDelete: 'CASCADE' });
 			// Organization.belongsTo(Plan, { foreignKey: 'plan_id' }, { onDelete: 'SET NULL' });
+			organization.hasMany(models.OrganizationBankDetails, { foreignKey: 'org_id', as: 'bankDetails' });
 		}
 	}
 	organization.init(

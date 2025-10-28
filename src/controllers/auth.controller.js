@@ -28,7 +28,8 @@ exports.refreshToken = catchAsync(async (req, res) => {
 			companyId: decoded.companyId ?? null,
 			roleId: decoded.roleId,
 			avatar: decoded.avatar,
-			org_id: decoded.org_id
+			org_id: decoded.org_id,
+			state_id: 9
 		};
 
 		const accessToken = generateAccessToken(payload);

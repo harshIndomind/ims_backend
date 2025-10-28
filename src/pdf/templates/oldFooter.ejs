@@ -1,0 +1,142 @@
+<table style="width:100%; border-collapse: collapse; margin-top: 30px; font-size:8px;">
+        <tbody>
+            <tr>
+                <!-- Left Column: Texts -->
+                <td style="width:50%; vertical-align:top; border:none; padding:10px;">
+                    <!-- <strong>Bank Details:</strong><br>
+                    Bank Name: <%= invoice.bankDetails.bank_name %><br>
+                    Account No: <%= invoice.bankDetails.account_no %><br>
+                    IFSC: <%= invoice.bankDetails.bank_ifsc %><br><br>
+
+                    <strong>Terms & Conditions:</strong><br>
+                    Subject to our home Jurisdiction.<br>
+                    Our Responsibility Ceases as soon as goods leaves our Premises.<br>
+                    Goods once sold will not be taken back.<br>
+                    Delivery Ex-Premises.<br><br>
+
+                    <em>(E & O.E.)</em><br>
+                    Certified that the particulars given above are true and correct.<br>
+                    For INDOMIND AI LLP<br>
+                    <strong>Authorised Signatory</strong> -->
+                    <table>
+                        <thead><th>Bank Details</th></thead>
+                        <tbody>
+                            <tr>
+                                <td style="height: 50px;">
+                                    <div style="margin-bottom: 5px;">
+                                        <strong>Bank Name:</strong> <%= invoice.bankDetails.bank_name %><br>
+                                    </div>
+                                    <div style="margin-bottom: 5px;">
+                                        <strong>Account No:</strong> <%= invoice.bankDetails.account_no %><br>
+                                    </div>
+                                    <div style="margin-bottom: 5px;">
+                                        <strong>IFSC:</strong> <%= invoice.bankDetails.bank_ifsc %><br><br>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <% if(invoice.additionalNotes.length > 0){ %>
+                        <% invoice.additionalNotes.forEach((item, index) => { %>
+                            <table>
+                                <thead><th><%= item.title %></th></thead>
+                                <tbody>
+                                    <tr>
+                                        <td style="height: 50px;">
+                                            <p><%= item.title %></p>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        <% }) %>
+                    <% } %>
+                </td>
+
+                <!-- Right Column: Amounts -->
+                <td style="width:30%; vertical-align:top; border:none;">
+                    <table style="width:100%; border-collapse: collapse; font-size:8px;">
+                        <tbody>
+                            <tr>
+                                <td style="width:70%; padding:5px;"><strong>Taxable Amount</strong></td>
+                                <td style="width:30%; padding:5px; text-align:right;"><%=
+                                        parseFloat(invoice.totalTaxableAmount).toFixed(2) %>
+                                </td>
+                            </tr>
+                            <% if (!invoice.same_state) { %>
+                                <tr>
+                                    <td style="width:70%;padding:5px;"><strong>Add : IGST</strong></td>
+                                    <td style="width:30%;padding:5px; text-align:right;"><%=
+                                            parseFloat(invoice.totalIgst).toFixed(2) %>
+                                    </td>
+                            </tr>
+                            <% } else { %>
+                                <tr>
+                                    <td style="width:70%;padding:5px;"><strong>Add : CGST</strong></td>
+                                    <td style="width:30%;padding:5px; text-align:right;"><%=
+                                            parseFloat(invoice.totalCgst).toFixed(2) %>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td style="width:70%;padding:5px;"><strong>Add : SGST</strong></td>
+                                    <td style="width:30%;padding:5px; text-align:right;"><%=
+                                            parseFloat(invoice.totalSgst).toFixed(2) %>
+                                    </td>
+                                </tr>
+                            <% } %>
+
+                            <tr>
+                                <td style="width:70%;padding:5px;"><strong>Total Tax</strong></td>
+                                <td style="width:30%;padding:5px; text-align:right;"><%=
+                                        parseFloat(invoice.total_tax).toFixed(2) %>
+                                </td>
+                            </tr>
+
+                            <% if (invoice.customField1 && invoice.customField1.calculatedValue) { %>
+                                <tr>
+                                    <td style="width:70%;padding:5px;">
+                                        <strong>
+                                            <%=
+                                                invoice.customField1.label ||
+                                                ' Additional Charge / Discount' %>
+                                        <%= invoice.customField1.valueType==='percentage' ?
+                                            `(${invoice.customField1.value}%)` : '' %>
+                                            </strong>
+                    </td>
+                    <td style="width:30%;padding:5px; text-align:right;">
+                        <% if(invoice.customField1.operationType=='-' ) { %>
+                            <%= invoice.customField1.operationType %>
+                                <% } %>
+                                    <%= parseFloat(invoice.customField1.calculatedValue).toFixed(2) %>
+                    </td>
+                </tr>
+                <% } %>
+
+                    <% if (invoice.customField2 && invoice.customField2.calculatedValue) { %>
+                        <tr>
+                            <td style="width:70%;padding:5px;">
+                                <strong>
+                                    <%= invoice.customField2.label || 'Additional Charge / Discount' %>
+                                        <%= invoice.customField2.valueType==='percentage' ?
+                                            `(${invoice.customField2.value}%)` : '' %>
+                                </strong>
+                            </td>
+                            <td style="width:30%;padding:5px; text-align:right;">
+                                <% if(invoice.customField2.operationType=='-' ) { %>
+                                    <%= invoice.customField2.operationType %>
+                                        <% } %>
+                                            <%= parseFloat(invoice.customField2.calculatedValue).toFixed(2) %>
+                            </td>
+                        </tr>
+                        <% } %>
+
+                            <tr>
+                                <td style="width:70%;padding:5px;"><strong>Total Amount After Tax</strong></td>
+                                <td style="width:30%;padding:5px; text-align:right; color:#e74c3c;"><strong>₹ <%=
+                                            parseFloat(invoice.grandTotal).toFixed(2) %></strong></td>
+                            </tr>
+        </tbody>
+    </table>
+    </td>
+    </tr>
+    </tbody>
+    </table>

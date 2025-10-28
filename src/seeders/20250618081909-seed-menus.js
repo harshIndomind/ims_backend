@@ -215,6 +215,16 @@ module.exports = {
 				isActive: 1,
 				createdAt: new Date(),
 				updatedAt: new Date(),
+			},
+			{
+				id: 22,
+				parentId: null,
+				menuName: 'Sale Invoice',
+				icon: '',
+				url: '/sale-invoices',
+				isActive: 1,
+				createdAt: new Date(),
+				updatedAt: new Date(),
 			}
 		]);
 	},

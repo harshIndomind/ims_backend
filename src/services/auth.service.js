@@ -20,7 +20,7 @@ exports.login = async ({ email, password }, res) => {
 	const isMatch = await bcrypt.compare(password, user.password);
 	if (!isMatch) throw new AppError('Invalid credentials', 401);
 
-	const payload = { id: user.id, role: user.Role.name, companyId: user.companyIds, roleId: user.roleId, avatar: user.image, org_id: user.org_id };
+	const payload = { id: user.id, role: user.Role.name, companyId: user.companyIds, roleId: user.roleId, avatar: user.image, org_id: user.org_id, state_id: 9 };
 	const accessToken = generateAccessToken(payload);
 	const refreshToken = generateRefreshToken(payload);
 
@@ -49,6 +49,7 @@ exports.login = async ({ email, password }, res) => {
 		companyId: user.companyId,
 		roleId: user.roleId,
 		imageUrl: user.image,
-		org_id: user.org_id
+		org_id: user.org_id,
+		state_id: 9
 	};
 };

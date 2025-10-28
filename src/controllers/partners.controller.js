@@ -7,6 +7,8 @@ const {
 	Role,
 	User,
 	sequelize,
+	Country,
+	GstStateCode
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
@@ -35,7 +37,7 @@ exports.createPartner = catchAsync(async (req, res) => {
 		// Create user first
 		const hashedPassword = await bcrypt.hash(password, 10);
 		const user = await User.create(
-			{ name, email,org_id:orgId, password: hashedPassword, roleId },
+			{ name, email, org_id: orgId, password: hashedPassword, roleId },
 			{ transaction: t }
 		);
 
@@ -111,21 +113,29 @@ exports.createPartner = catchAsync(async (req, res) => {
 
 // Get All Partners
 exports.getAllPartners = catchAsync(async (req, res) => {
-  const {org_id, role} = req.user;
+	const { org_id, role } = req.user;
 
-  const whereClause = {};
-  if (role !== 'Super Admin') {
-    whereClause.organization_id = org_id;
-  }
-	const partners = await BusinessPartner.findAll({where: whereClause},{
+	const whereClause = {};
+	if (role !== 'Super Admin') {
+		whereClause.organization_id = org_id;
+	}
+	const partners = await BusinessPartner.findAll({
+		where: whereClause,
 		include: [
-			'addresses',
-			'bankDetails',
-			'additionalDetails',
-			'openingBalances',
-			'organization',
+			// 'addresses',
+			// 'bankDetails',
+			// 'additionalDetails',
+			// 'openingBalances',
+			{
+				model: User,
+				as: 'user',
+				attributes: ['id', 'name', 'email', 'roleId'],
+			},
 		],
 	});
+
+	console.log('partners ', partners);
+
 	res.status(200).json({ data: partners });
 });
 
@@ -135,7 +145,17 @@ exports.getPartnerById = catchAsync(async (req, res) => {
 
 	const partner = await BusinessPartner.findByPk(id, {
 		include: [
-			'addresses',
+			{
+				association: 'addresses',
+				include: [
+					{ model: Country, as: 'countryData', attributes: ['id', 'name'] },
+					{
+						model: GstStateCode,
+						as: 'stateData',
+						attributes: ['id', 'state_name'],
+					},
+				],
+			},
 			'bankDetails',
 			'additionalDetails',
 			'openingBalances',
@@ -151,7 +171,7 @@ exports.getPartnerById = catchAsync(async (req, res) => {
 
 	// Transform the data to match your desired structure
 	const response = {
-    id: partner.id,
+		id: partner.id,
 		roleId: partner.user?.roleId || null,
 		orgId: partner.organization_id,
 		name: partner.user?.name || '',
@@ -218,7 +238,7 @@ exports.updatePartner = catchAsync(async (req, res) => {
 			{
 				name: vendorCompany?.name || partner.name,
 				code: vendorCompany?.code || partner.code,
-        email: vendorCompany?.email || partner.email,
+				email: vendorCompany?.email || partner.email,
 				contact_no: vendorCompany?.contactNo || partner.contact_no,
 				gstin: vendorCompany?.gstin || partner.gstin,
 				pan: vendorCompany?.pan || partner.pan,
@@ -329,5 +349,76 @@ exports.deletePartner = catchAsync(async (req, res) => {
 		res
 			.status(500)
 			.json({ message: 'Error deleting partner', error: error.message });
+	}
+});
+
+exports.getShippingAddressesByPartnerId = catchAsync(async (req, res) => {
+	const { id } = req.params;
+
+	const addresses = await Address.findAll({
+		where: { partner_id: id, type: 'shipping' },
+		include: [
+			{ model: Country, as: 'countryData', attributes: ['id', 'name'] },
+			{ model: GstStateCode, as: 'stateData', attributes: ['id', 'state_name'] },
+		],
+	});
+
+	res.status(200).json({ data: addresses });
+});
+
+exports.addShippingAddress = catchAsync(async (req, res) => {
+	const t = await sequelize.transaction();
+	const { id } = req.params;
+	try {
+		const partner = await BusinessPartner.findByPk(id, { transaction: t });
+		if (!partner) throw new AppError('Partner not found', 404);
+
+		const {
+			address1,
+			address2,
+			gstin,
+			name,
+			contact_person,
+			phone,
+			email,
+			landmark,
+			pincode,
+			city,
+			state_id,
+			country_id,
+			distance_for_eway_bill_km,
+		} = req.body;
+
+		const newAddress = await Address.create(
+			{
+				partner_id: id,
+				type: 'shipping',
+				address1,
+				address2,
+				name,
+				gstin,
+				contact_person,
+				phone,
+				email,
+				landmark,
+				pincode,
+				city,
+				state_id,
+				country_id,
+				distance_for_eway_bill_km,
+			},
+			{ transaction: t }
+		);
+
+		await t.commit();
+		res
+			.status(201)
+			.json({ message: 'Shipping address added successfully', newAddress });
+	} catch (error) {
+		await t.rollback();
+		console.error(error);
+		res
+			.status(500)
+			.json({ message: 'Error adding shipping address', error: error.message });
 	}
 });

@@ -33,6 +33,10 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.DECIMAL(12, 2),
 				allowNull: true,
 			},
+			is_sell: {
+				type: DataTypes.BOOLEAN,
+				defaultValue: false,
+			},
 		},
 		{
 			sequelize,

@@ -10,13 +10,13 @@ module.exports = {
 				type: Sequelize.INTEGER,
 			},
 			product_id: {
-				type: Sequelize.BIGINT,
+				type: Sequelize.INTEGER,
 				allowNull: false,
 				references: { model: 'Products', key: 'id' },
 				onDelete: 'CASCADE',
 			},
 			unit_id: {
-				type: Sequelize.BIGINT,
+				type: Sequelize.INTEGER,
 				allowNull: false,
 				references: { model: 'Units', key: 'id' },
 			},

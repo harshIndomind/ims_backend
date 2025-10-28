@@ -27,11 +27,28 @@ module.exports = {
         type: Sequelize.STRING(150),
         allowNull: true
       },
+      country_id: {
+        type: Sequelize.INTEGER,
+        references: {
+          model: 'Countries',
+          key: 'id',
+        }
+      },
+      state_id: {
+        type: Sequelize.INTEGER,
+        references: {
+          model: 'GstStateCodes',
+          key: 'id',
+        },
+        allowNull: true
+      },
       country: {
-        type: Sequelize.STRING(100)
+        type: Sequelize.STRING(100),
+        allowNull: true
       },
       state: {
-        type: Sequelize.STRING(100)
+        type: Sequelize.STRING(100),
+        allowNull: true
       },
       city: {
         type: Sequelize.STRING(100)

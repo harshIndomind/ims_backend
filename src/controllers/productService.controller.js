@@ -105,7 +105,7 @@ exports.createProduct = async (req, res) => {
 			is_manufactured: data.is_manufactured ?? null,
 			is_non_sellable: data.is_non_sellable ?? null,
 			is_enabled: data.is_enabled ?? null,
-			product_images: data.product_images || null
+			product_images: data.product_images || null,
 		});
 
 		// Create batch/serial records if applicable
@@ -128,15 +128,15 @@ exports.createProduct = async (req, res) => {
 						serial_no: serial.trim(),
 						sell_price: data.productSerials.sell_price ?? 0,
 						sell_price_incl_tax: data.productSerials.sell_price_incl_tax ?? 0,
-						purchase_price: data.productSerials.purchase_price ?? 0,
+						purchase_price: data.productSerials.purchase_price || null,
 						purchase_price_incl_tax:
-							data.productSerials.purchase_price_incl_tax ?? 0,
+							data.productSerials.purchase_price_incl_tax || null,
 					});
 				}
 			}
 		}
 
-		if(data.product_group_id && data.product_group_id != ''){
+		if (data.product_group_id && data.product_group_id != '') {
 			await product.setProduct_groups(data.product_group_id.split(','));
 		}
 
@@ -150,11 +150,11 @@ exports.createProduct = async (req, res) => {
 					message: 'You can only add up to 6 UOM conversions.',
 				});
 			}
-			
+
 			await Promise.all(
 				validUOMs.map((u) =>
 					ProductUOM.create({
-						product_id: productUpdated.id,
+						product_id: product.id,
 						unit_id: u.unit_id,
 						qty: u.qty,
 					})
@@ -184,7 +184,12 @@ exports.getAllProducts = async (req, res) => {
 					attributes: ['id', 'name'],
 				},
 				{ model: ProductBatch, as: 'batches' },
-				{ model: ProductSerial, as: 'serials' },
+				{
+					model: ProductSerial,
+					as: 'serials',
+					where: { is_sell: 0 },
+					required: false,
+				},
 			],
 			order: [['id', 'DESC']],
 		});
@@ -203,8 +208,16 @@ exports.getProductById = async (req, res) => {
 				// { model: Unit, as: 'unit' },
 				{ model: ProductUOM, as: 'uoms', attributes: ['unit_id', 'qty'] },
 				{ model: ProductGroup, as: 'product_groups' },
-				{ model: ProductBatch, as: 'batches' },
-				{ model: ProductSerial, as: 'serials' },
+				{
+					model: ProductBatch,
+					as: 'batches',
+				},
+				{
+					model: ProductSerial,
+					as: 'serials',
+					where: { is_sell: 0 },
+					required: false,
+				},
 			],
 		});
 
@@ -332,13 +345,33 @@ exports.updateProduct = async (req, res) => {
 		// Update batch records
 		if (data.stock_type === 'batch' && data.batchDetails?.length) {
 			// Delete old batches first
-			await ProductBatch.destroy({ where: { product_id: productId } });
+			// await ProductBatch.destroy({ where: { product_id: productId } });
+
+			// for (const batch of data.batchDetails) {
+			// 	await ProductBatch.create({
+			// 		product_id: productId,
+			// 		...batch,
+			// 	});
+			// }
 
 			for (const batch of data.batchDetails) {
-				await ProductBatch.create({
-					product_id: productId,
-					...batch,
-				});
+				if (batch.id) {
+					await ProductBatch.update(
+						{
+							batch_no: batch.batch_no,
+							qty: batch.qty,
+							sell_price: batch.sell_price,
+							sell_price_incl_tax: batch.sell_price_incl_tax,
+							purchase_price: batch.purchase_price,
+							purchase_price_incl_tax: batch.purchase_price_incl_tax,
+							barcode_no: batch.barcode_no,
+						},
+						{ where: { id: batch.id, product_id: productId } }
+					);
+				} else {
+					// new batch → create
+					await ProductBatch.create({ product_id: productId, ...batch });
+				}
 			}
 		}
 
@@ -362,7 +395,7 @@ exports.updateProduct = async (req, res) => {
 			}
 		}
 
-		if(data.product_group_id && data.product_group_id != ''){
+		if (data.product_group_id && data.product_group_id != '') {
 			await productUpdated.setProduct_groups(data.product_group_id.split(','));
 		}
 
@@ -378,8 +411,8 @@ exports.updateProduct = async (req, res) => {
 			}
 
 			await ProductUOM.destroy({ where: { product_id: productUpdated.id } });
-			console.log("validUOMs ", validUOMs);
-			
+			console.log('validUOMs ', validUOMs);
+
 			await Promise.all(
 				validUOMs.map((u) =>
 					ProductUOM.create({
@@ -429,9 +462,9 @@ exports.deleteProduct = async (req, res) => {
 		}
 
 		await product.destroy({ where: { id: req.params.id } });
-		await ProductUOM.destroy({ where: { product_id: req.params.id } })
-		await ProductSerial.destroy({ where: { product_id: req.params.id } })
-		await ProductBatch.destroy({ where: { product_id: req.params.id } })
+		await ProductUOM.destroy({ where: { product_id: req.params.id } });
+		await ProductSerial.destroy({ where: { product_id: req.params.id } });
+		await ProductBatch.destroy({ where: { product_id: req.params.id } });
 
 		res.json({
 			message: 'Product disabled and images deleted from S3 successfully',

@@ -8,14 +8,25 @@ module.exports = (sequelize, DataTypes) => {
 		 * The `models/index` file will call this method automatically.
 		 */
 		static associate(models) {
+			// 1. Documents
 			User.hasMany(models.DocumentsUpload, {
 				foreignKey: 'user_id',
 				as: 'vendor_docs',
 			});
 
+			// 2. BusinessPartner
 			User.hasOne(models.BusinessPartner, {
 				foreignKey: 'user_id',
-				as: 'partner', // optional alias for reverse lookup
+				as: 'partner',
+			});
+
+			// 3. Role
+			User.belongsTo(models.Role, { foreignKey: 'roleId' });
+
+			// 4. Organization
+			User.belongsTo(models.organization, {
+				foreignKey: 'org_id',
+				as: 'organization',
 			});
 		}
 	}
@@ -67,7 +78,7 @@ module.exports = (sequelize, DataTypes) => {
 			},
 			is_active: {
 				type: DataTypes.BOOLEAN,
-				defaultValue: false
+				defaultValue: false,
 			},
 			last_login: {
 				type: DataTypes.DATE,
@@ -80,14 +91,14 @@ module.exports = (sequelize, DataTypes) => {
 		}
 	);
 
-	User.associate = (models) => {
-		User.belongsTo(models.Role, { foreignKey: 'roleId' });
+	// User.associate = (models) => {
+	// 	User.belongsTo(models.Role, { foreignKey: 'roleId' });
 
-		User.belongsTo(models.organization, {
-			foreignKey: 'org_id',
-			as: 'organization',
-		});
-	};
+	// 	User.belongsTo(models.organization, {
+	// 		foreignKey: 'org_id',
+	// 		as: 'organization',
+	// 	});
+	// };
 
 	return User;
 };
