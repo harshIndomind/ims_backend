@@ -8,19 +8,19 @@ module.exports = (sequelize, DataTypes) => {
 		 * The `models/index` file will call this method automatically.
 		 */
 		static associate(models) {
-			DocumentsUpload.belongsTo(models.User, {
-				foreignKey: 'user_id',
+			DocumentsUpload.belongsTo(models.BusinessPartner, {
+				foreignKey: 'partner_id',
 				as: 'vendor',
 			});
 		}
 	}
 	DocumentsUpload.init(
 		{
-			user_id: {
+			partner_id: {
 				type: DataTypes.INTEGER,
 				allowNull: false,
 				references: {
-					model: 'Users',
+					model: 'BusinessPartners',
 					key: 'id',
 				},
 				onDelete: 'CASCADE',
@@ -50,6 +50,10 @@ module.exports = (sequelize, DataTypes) => {
 				defaultValue: 'UPLOADED',
 				allowNull: false,
 			},
+			user_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			}
 		},
 		{
 			sequelize,

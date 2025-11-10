@@ -1,4 +1,6 @@
-const { Role } = require('../models/index');
+const { where } = require('sequelize');
+const { Role, User } = require('../models/index');
+const { Op } = require('sequelize');
 class RoleRepository {
 	async create(data) {
 		try {
@@ -25,8 +27,18 @@ class RoleRepository {
 			throw error;
 		}
 	}
-	async allRoles(data) {
-		try {
+	async allRoles(id) {
+		try {			
+			const user = await User.findOne({ where: { id }, include: [{ model: Role, attributes: ['id', 'name'] }] });
+			
+			if (user && user.Role && user.Role.name === 'Admin') {
+				const roles = await Role.findAll({where: { name: { [Op.notIn]: ['Admin', 'Super Admin'] } }});
+				console.log("user.Role.name: ",roles);
+				console.log("Roles: ",roles);
+				
+				return roles;
+			}
+			
 			const roles = await Role.findAll();
 			return roles;
 		} catch (error) {

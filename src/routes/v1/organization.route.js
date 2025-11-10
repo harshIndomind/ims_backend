@@ -10,5 +10,6 @@ router.put('/:id', checkRole(['Super Admin', 'Admin', 'Project Tech Head', 'User
 router.delete('/:id', checkRole(['Super Admin', 'Admin', 'Project Tech Head', 'User', 'Support Engineer']), OrganizationController.deleteOrganization);
 router.get('/', checkRole(['Super Admin', 'Admin', 'Project Tech Head', 'User', 'Support Engineer']), OrganizationController.getAllOrganizations);
 router.get('/:id', checkRole(['Super Admin', 'Admin', 'Project Tech Head', 'User', 'Support Engineer']), OrganizationController.getOrganization);
+router.get('/organization/banks', checkRole(['Super Admin', 'Admin']), OrganizationController.getOrganizationBankDetails);
 
 module.exports = router;

@@ -6,6 +6,9 @@ const {
 	Role,
 	organization,
 	Alert,
+	BusinessPartner,
+	InvoiceCsvImport,
+	InvoiceCsvImportItem,
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const {
@@ -19,6 +22,7 @@ const AppError = require('../utils/AppError');
 const { sendToUser } = require('../utils/socket');
 const { Op } = require('sequelize');
 const moment = require('moment-timezone');
+const axios = require('axios');
 
 exports.uploadADocument = catchAsync(async (req, res) => {
 	const t = await sequelize.transaction();
@@ -35,19 +39,19 @@ exports.uploadADocument = catchAsync(async (req, res) => {
 			throw new AppError('Document number is required.', 409);
 		}
 
-		if (await isDocumentExists(user_id, docCatgoryId, doc_number)) {
-			throw new AppError(
-				'Sorry! The document you are trying to upload already exists. Please contact the admin.',
-				409
-			);
-		}
-
-		const currentUser = await User.findOne({
-			where: { id: user_id },
+		const currentUser = await BusinessPartner.findOne({
+			where: { user_id },
 			include: [
 				{
-					model: Role,
-					attributes: ['name'],
+					model: User,
+					as: 'user', // ✅ must match association alias
+					attributes: ['id', 'name', 'email'],
+					include: [
+						{
+							model: Role,
+							attributes: ['name'],
+						},
+					],
 				},
 				{
 					model: organization,
@@ -57,11 +61,20 @@ exports.uploadADocument = catchAsync(async (req, res) => {
 			],
 		});
 
+		console.log('currentUser ', currentUser);
+
 		if (!currentUser) {
 			throw new AppError('Vendor details not found!', 404);
 		}
 
-		if (currentUser.Role.name === 'Super Admin') {
+		if (await isDocumentExists(currentUser.id, docCatgoryId, doc_number)) {
+			throw new AppError(
+				'Sorry! The document you are trying to upload already exists. Please contact the admin.',
+				409
+			);
+		}
+
+		if (currentUser.user.Role.name === 'Super Admin') {
 			throw new AppError(
 				'Super Admins cannot upload documents because they are not associated with any organization.',
 				403
@@ -78,7 +91,7 @@ exports.uploadADocument = catchAsync(async (req, res) => {
 
 		// [ORG_CODE]_[VENDOR_CODE]_[DOC_SHORTCODE]_[DOC_NUMBER_BY_USER]
 		const ORG_CODE = currentUser.organization.org_code;
-		const VENDOR_CODE = currentUser.vendor_company_code;
+		const VENDOR_CODE = currentUser.code;
 		const DOC_SHORTCODE = docCategory.short_code;
 		const DOC_NUMBER_BY_USER = doc_number;
 		const documentName = `${ORG_CODE}_${VENDOR_CODE}_${DOC_SHORTCODE}_${DOC_NUMBER_BY_USER}`;
@@ -112,7 +125,7 @@ exports.uploadADocument = catchAsync(async (req, res) => {
 		console.log('S3 result => ', result);
 
 		const DocsCategory = await DocumentsUpload.create({
-			user_id,
+			partner_id: currentUser.id,
 			doc_number,
 			org_filename,
 			generated_filename,
@@ -167,8 +180,9 @@ exports.updateDocsCategory = catchAsync(async (req, res) => {
 });
 
 exports.getAUploadedDoc = catchAsync(async (req, res) => {
-	const { key } = req.params;
+	const { id } = req.params;
 	const DocsCategory = await DocumentsUpload.findOne({ where: { id } });
+
 	res.json(DocsCategory);
 });
 
@@ -218,9 +232,13 @@ exports.getAllUploadedDocs = catchAsync(async (req, res) => {
 	try {
 		const limit = parseInt(req.query.limit) || 10;
 		const offset = parseInt(req.query.offset) || 0;
-		const vendorId = parseInt(req.query.selectedVendorId) || 0;
+		const vendorUserId = parseInt(req.query.selectedVendorId) || 0;
 
 		const { role, id } = req.user;
+
+		const businessPartner = await BusinessPartner.findOne({
+			where: { user_id: id },
+		});
 
 		let columns = [];
 		let wheres = {};
@@ -228,7 +246,7 @@ exports.getAllUploadedDocs = catchAsync(async (req, res) => {
 		if (role == 'Vendor') {
 			columns = [
 				'id',
-				'user_id',
+				'partner_id',
 				'doc_id',
 				'doc_number',
 				'org_filename',
@@ -238,11 +256,11 @@ exports.getAllUploadedDocs = catchAsync(async (req, res) => {
 				'createdAt',
 				'updatedAt',
 			];
-			wheres['user_id'] = id;
+			wheres['partner_id'] = businessPartner.id;
 		} else {
 			columns = [
 				'id',
-				'user_id',
+				'partner_id',
 				'doc_id',
 				'doc_number',
 				'org_filename',
@@ -254,7 +272,18 @@ exports.getAllUploadedDocs = catchAsync(async (req, res) => {
 				'updatedAt',
 			];
 
-			if (vendorId > 0) wheres['user_id'] = vendorId;
+			if (vendorUserId > 0) {
+				const businessPartner = await BusinessPartner.findOne({
+					where: { user_id: vendorUserId },
+				});
+
+				if (!businessPartner) {
+					throw new AppError('Invalid vendor');
+					return;
+				}
+
+				wheres['partner_id'] = businessPartner.id;
+			}
 		}
 		console.log('wheres ', wheres);
 
@@ -263,9 +292,16 @@ exports.getAllUploadedDocs = catchAsync(async (req, res) => {
 			attributes: columns,
 			include: [
 				{
-					model: User,
-					as: 'vendor',
-					attributes: ['name', 'vendor_company_name'],
+					model: BusinessPartner,
+					as: 'vendor', // must match DocumentsUpload association
+					attributes: ['id', 'name', 'code', 'contact_no'],
+					include: [
+						{
+							model: User,
+							as: 'user', // must match BusinessPartner association
+							attributes: ['id', 'name', 'email'],
+						},
+					],
 				},
 			],
 			offset,
@@ -324,23 +360,23 @@ exports.deleteUploadedDoc = catchAsync(async (req, res) => {
 });
 
 async function isDocumentExists(
-	user_id = null,
+	partner_id = null,
 	doc_id = null,
 	doc_number = null
 ) {
-	if (!user_id || !doc_id || !doc_number) {
+	if (!partner_id || !doc_id || !doc_number) {
 		throw new AppError('Something went wrong!', 400);
 	}
 
 	const isExists = await DocumentsUpload.findOne({
 		where: {
-			user_id,
+			partner_id,
 			doc_id,
 			doc_number,
 		},
 	});
 
-	return !!isExists;
+	return isExists ? true : false;
 }
 
 exports.getIssuesCounts = catchAsync(async (req, res) => {
@@ -521,7 +557,20 @@ exports.updateDocumentStatus = catchAsync(async (req, res) => {
 
 		const docDetails = await DocumentsUpload.findOne({
 			where: { generated_filename },
-			include: [{ model: User, attributes: ['id', 'name', 'email'], as: 'vendor' }],
+			include: [
+				{
+					model: BusinessPartner,
+					as: 'vendor', // must match DocumentsUpload association
+					attributes: ['id', 'name', 'code', 'contact_no', 'user_id'],
+					include: [
+						{
+							model: User,
+							as: 'user', // must match BusinessPartner association
+							attributes: ['id', 'name', 'email'],
+						},
+					],
+				},
+			],
 		});
 
 		if (!docDetails) {
@@ -536,8 +585,7 @@ exports.updateDocumentStatus = catchAsync(async (req, res) => {
 			{ where: { generated_filename } }
 		);
 
-		console.log("docDetails User Name ", docDetails.vendor.name);
-		
+		console.log('docDetails User Name ', docDetails.vendor.name);
 
 		if (updated[0] === 0) {
 			return res.status(404).json({
@@ -546,7 +594,14 @@ exports.updateDocumentStatus = catchAsync(async (req, res) => {
 			});
 		}
 
-		const description = `Vendor: ${docDetails.vendor.name}, Filename: ${generated_filename} file status changed to ${getStatusMapping(
+		if (['RESULT', 'FAILED', 'DUPLICATE'].includes(status)) {
+			console.log('-----------------------------------------------------');
+			await importDocumentCSV(generated_filename, status);
+		}
+
+		const description = `Vendor: ${
+			docDetails.vendor.name
+		}, Filename: ${generated_filename} file status changed to ${getStatusMapping(
 			status
 		)}.`;
 
@@ -585,5 +640,175 @@ exports.updateDocumentStatus = catchAsync(async (req, res) => {
 			status: false,
 			message: error.message || 'Something went wrong',
 		});
+	}
+});
+
+async function importDocumentCSV(generated_filename, status) {
+	const t = await sequelize.transaction(); // ✅ You missed await here
+	try {
+		const key = await getS3FullPath(generated_filename);
+		const signedURL = await generateSignedUrl(`${key}.json`);
+
+		const { data } = await axios.get(signedURL);
+		console.log('data ', data);
+
+		let jsonData;
+
+		// ✅ Validate JSON properly
+		try {
+			jsonData = JSON.parse(data);
+		} catch (err) {
+			throw new Error('Invalid JSON format from S3');
+		}
+		console.log('jsonData ', typeof jsonData);
+
+		if (typeof jsonData !== 'object' || jsonData === null) {
+			throw new Error('Parsed JSON is not a valid object');
+		}
+
+		// ✅ Build main invoice data
+		const mainData = {
+			voucher_type: 'P',
+			uploaded_file_name: jsonData.OrginalDocumentName,
+			organization_code: jsonData.OrganizationCode,
+			vendor_code: jsonData.VCCode ?? null,
+			company_name: jsonData.CustomerName ?? null,
+			invoice_no: jsonData.InvoiceNumber ?? null,
+			invoice_date: jsonData.InvoiceDate
+				? new Date(jsonData.InvoiceDate)
+				: null,
+			ack_no: jsonData.InvoiceAcknowledgementNumber,
+			ack_date: jsonData.InvoiceAcknowledgementDate
+				? new Date(jsonData.InvoiceAcknowledgementDate)
+				: null,
+			due_date: jsonData.InvoiceDueDate
+				? new Date(jsonData.InvoiceDueDate)
+				: null,
+			cgst: jsonData.InvoiceCGSTValue ?? null,
+			sgst: jsonData.InvoiceSGSTValue ?? null,
+			total_amount: jsonData.InvoiceTotal ?? null,
+			seller_contact_no: jsonData.VendorPhoneNumber ?? null,
+			seller_email_address: jsonData.VendorEmailAddress ?? null,
+			seller_cin: jsonData.VendorCINNumber ?? null,
+			seller_gstin: jsonData.VendorGSTNumber ?? null,
+			seller_pan: jsonData.VendorPANNumber ?? null,
+			account_holder_name: jsonData.VendorBankAccountHolderName ?? null,
+			seller_bank_name: jsonData.VendorBankName ?? null,
+			seller_account_no: jsonData.VendorBankAccountNumber ?? null,
+			seller_ifsc_code: jsonData.VendorBankBranchIFSCCode ?? null,
+			seller_address: jsonData.VendorAddress ?? null,
+			seller_state: jsonData.VendorState ?? null,
+			seller_district: jsonData.VendorDistrict ?? null,
+			seller_pin_code: jsonData.VendorPinCode ?? null,
+			// Customer Details
+			place_of_supply: jsonData.CustomerBillToState ?? null,
+			bill_to_ship_To: jsonData.CustomerName ?? null,
+			buyer_email_address: jsonData.CustomerEmailAddress ?? null,
+			buyer_gstin: jsonData.CustomerGSTNumber ?? null,
+			buyer_contact_no: jsonData.CustomerPhoneNumber ?? null,
+			billing_buyer_address: jsonData.CustomerBillToAddress ?? null,
+			buyer_state: jsonData.CustomerBillToState ?? null,
+			buyer_district: jsonData.CustomerBillToDistrict ?? null,
+			buyer_pin_code: jsonData.CustomerBillToPinCode ?? null,
+			status,
+		};
+
+		// ✅ Create main record
+		const csvImport = await InvoiceCsvImport.create(mainData, {
+			transaction: t,
+		});
+		console.log('csvImport ', csvImport.id);
+
+		// ✅ Create line items safely using Promise.all
+		if (
+			csvImport?.id &&
+			Array.isArray(jsonData.LineItems) &&
+			jsonData.LineItems.length > 0
+		) {
+			await Promise.all(
+				jsonData.LineItems.map((item) =>
+					InvoiceCsvImportItem.create(
+						{
+							invoice_csv_import_id: csvImport.id,
+							item_code: item.ItemCode ?? null,
+							item_name: item.ItemName ?? null,
+							description_of_item: item.ItemDescription ?? null,
+							hsn_sac: item.ItemHsnCode ?? null,
+							quantity: item.ItemQuantity ?? null,
+							price_unit: item.ItemUnitPrice ?? null,
+							sub_total: item.ItemSubTotal ?? null,
+							item_discount_amount: item.ItemDiscountAmount ?? null,
+							item_discount_percentage: item.ItemDiscountPercentage ?? null,
+							item_net_price: item.ItemNetPrice ?? null,
+							item_cgst_percentage: item.ItemCGSTPercentage ?? null,
+							item_cgst_value: item.ItemCGSTValue ?? null,
+							item_sgst_percentage: item.ItemSGSTPercentage ?? null,
+							item_sgst_value: item.ItemSGSTValue ?? null,
+							item_igst_percentage: item.ItemIGSTPercentage ?? null,
+							item_igst_value: item.ItemIGSTValue ?? null,
+							item_tax_percentage: item.ItemTaxPercentage ?? null,
+							item_net_total: item.ItemNetTotal ?? null,
+						},
+						{ transaction: t }
+					)
+				)
+			);
+		}
+
+		// ✅ Commit transaction
+		await t.commit();
+		console.log('✅ Transaction committed successfully');
+	} catch (error) {
+		// ✅ Rollback if anything fails
+		if (!t.finished) {
+			await t.rollback();
+		}
+		console.error('❌ Error in importDocumentCSV:', error.message);
+	}
+}
+
+exports.getImportedInvoices = catchAsync(async (req, res) => {
+	try {
+		const limit = parseInt(req.query.limit) || 10;
+		const offset = parseInt(req.query.offset) || 0;
+
+		const importedPurchasedInvoices = await InvoiceCsvImport.findAndCountAll({
+			include: {
+				model: InvoiceCsvImportItem,
+				as: 'csv_items',
+			},
+			offset,
+			limit,
+		});
+		console.log('importedPurchasedInvoices ', importedPurchasedInvoices);
+
+		res.json({
+			message: 'Imported purchased invoices successfully.',
+			data: importedPurchasedInvoices.rows ?? [],
+			count: importedPurchasedInvoices.count,
+		});
+	} catch (error) {
+		res.status(500).json({ error: error.message });
+	}
+});
+
+exports.getSingleImportedInvoices = catchAsync(async (req, res) => {
+	try {
+		const { id } = req.params;
+
+		const importedPurchasedInvoice = await InvoiceCsvImport.findOne({
+			where: { id },
+			include: {
+				model: InvoiceCsvImportItem,
+				as: 'csv_items',
+			},
+		});
+
+		res.json({
+			message: 'Imported purchased invoice successfully.',
+			data: importedPurchasedInvoice,
+		});
+	} catch (error) {
+		res.status(500).json({ error: error.message });
 	}
 });

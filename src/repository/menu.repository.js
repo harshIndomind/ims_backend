@@ -188,7 +188,7 @@ class MenuRespository {
 			if (!role) throw new Error('Invalid Role ID');
 
 			// ✅ Admin sees all menus
-			if (role.name === 'Admin' || role.name === 'Super Admin') {
+			if (role.name === 'Super Admin') {
 				const allMenus = await Menu.findAll({
 					where: { parentId: null },
 					attributes: ['id', 'menuName', ['menuName', 'title'], 'icon', 'url'],

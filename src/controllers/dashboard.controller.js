@@ -5,6 +5,7 @@ const {
 	User,
 	Role,
 	organization,
+	BusinessPartner
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const {
@@ -42,7 +43,7 @@ async function getDocumentsCount() {
 async function getDocumentsCountByVendorId(id) {
 	const where = {};
 	if (parseInt(id) > 0) {
-		where['where'] = { user_id: id };
+		where['where'] = { partner_id: id };
 	}
 	const count = await DocumentsUpload.count(where);
 
@@ -52,7 +53,9 @@ async function getDocumentsCountByVendorId(id) {
 exports.getDashboardCounts = catchAsync(async (req, res) => {
 	const role = req.user.role;
 
-	let vendorId = req.user.id;
+	const businessPartner = await BusinessPartner.findOne({ where: { user_id: req.user.id } });
+
+	let vendorId = businessPartner?.id ?? '';
 	if (role !== 'Vendor') {
 		vendorId = req.query.vendorId;
 	}
@@ -83,7 +86,8 @@ exports.getDashboardChartsData = catchAsync(async (req, res) => {
 
 	let whereCondition = {};
 	if (role == 'Vendor') {
-		whereCondition = { user_id };
+		const businessPartner = await BusinessPartner.findOne({ where: { user_id } });
+		whereCondition = { partner_id: businessPartner.id };
 	}
 
 	// 👇 Add time filter

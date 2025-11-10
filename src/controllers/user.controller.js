@@ -148,7 +148,8 @@ const updateUser = catchAsync(async (req, res) => {
 exports.update = [...validateUpdateUser, updateUser];
 
 exports.getAllUsers = catchAsync(async (req, res) => {
-	const vendors = await userService.getAllUsers();
+	const {org_id} = req.user;
+	const vendors = await userService.getAllUsers(org_id);
 	res.status(201).json({
 		status: true,
 		message: 'Vendors fetched successfully',
@@ -169,8 +170,9 @@ exports.getUserById = catchAsync(async (req, res) => {
 
 exports.destroy = catchAsync(async (req, res) => {
 	const { id } = req.params;
-
-	const vendor = await userService.destroy({ where: { id } });
+	console.log("id => " , id);
+	
+	const vendor = await userService.destroy(id);
 	res.status(201).json({
 		status: true,
 		message: 'A vendor deleted successfully',

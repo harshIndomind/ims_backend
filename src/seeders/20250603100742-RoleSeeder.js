@@ -11,6 +11,11 @@ module.exports = {
 				createdAt: new Date(),
 				updatedAt: new Date(),
 			},
+			{
+				name: 'Vendor-Customer',
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			},
 		]);
 	},
 

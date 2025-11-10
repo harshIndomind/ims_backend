@@ -5,10 +5,10 @@ const checkRole = require('../../middlewares/checkRole');
 
 router.use(verifyToken); // all routes protected
 
-router.post('/', checkRole(['Super Admin', 'Admin', 'Vendor']), DocsCategoryController.createDocsCategory);
-router.put('/:id', checkRole(['Super Admin', 'Admin', 'Vendor']), DocsCategoryController.updateDocsCategory);
-router.delete('/:id', checkRole(['Super Admin', 'Admin', 'Vendor']), DocsCategoryController.deleteDocsCategory);
-router.get('/', checkRole(['Super Admin', 'Admin', 'Vendor']), DocsCategoryController.getAllDocsCategories);
-router.get('/:id', checkRole(['Super Admin', 'Admin', 'Vendor']), DocsCategoryController.getDocsCategory);
+router.post('/', checkRole(['Super Admin', 'Admin', 'Vendor', 'Vendor-Customer']), DocsCategoryController.createDocsCategory);
+router.put('/:id', checkRole(['Super Admin', 'Admin', 'Vendor', 'Vendor-Customer']), DocsCategoryController.updateDocsCategory);
+router.delete('/:id', checkRole(['Super Admin', 'Admin', 'Vendor', 'Vendor-Customer']), DocsCategoryController.deleteDocsCategory);
+router.get('/', checkRole(['Super Admin', 'Admin', 'Vendor', 'Vendor-Customer']), DocsCategoryController.getAllDocsCategories);
+router.get('/:id', checkRole(['Super Admin', 'Admin', 'Vendor', 'Vendor-Customer']), DocsCategoryController.getDocsCategory);
 
 module.exports = router;
