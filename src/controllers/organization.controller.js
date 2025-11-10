@@ -165,13 +165,14 @@ exports.updateOrganization = catchAsync(async (req, res) => {
 
 		if (bankDetails && bankDetails.length > 0) {
 			for (const detail of bankDetails) {
-				if (detail.id) {
+				if (Number(detail.id)) {
 					// 🔹 Update existing bank record
 					await OrganizationBankDetails.update(detail, {
 						where: { id: detail.id, org_id: id },
 						transaction: t,
 					});
 				} else {
+					delete detail.id;
 					// 🔹 Create new bank record
 					await OrganizationBankDetails.create(
 						{ ...detail, org_id: id },
