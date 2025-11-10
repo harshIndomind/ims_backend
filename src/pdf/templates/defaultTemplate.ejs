@@ -549,9 +549,9 @@
         <div style="border-bottom:1px dotted #ccc; padding-bottom:6px; margin-bottom:8px; font-weight:bold;">
             Bank Details
         </div>
-        <div style="margin-bottom:4px;"><strong>Bank Name:</strong> <%= invoice.bankDetails.bank_name %></div>
-        <div style="margin-bottom:4px;"><strong>Account No:</strong> <%= invoice.bankDetails.account_no %></div>
-        <div style="margin-bottom:8px;"><strong>IFSC:</strong> <%= invoice.bankDetails.bank_ifsc %></div>
+        <div style="margin-bottom:4px;"><strong>Bank Name:</strong> <%= invoice?.bankDetails?.bank_name || 'N/A' %></div>
+        <div style="margin-bottom:4px;"><strong>Account No:</strong> <%= invoice?.bankDetails?.account_no || 'N/A' %></div>
+        <div style="margin-bottom:8px;"><strong>IFSC:</strong> <%= invoice?.bankDetails?.bank_ifsc || 'N/A' %></div>
 
         <!-- Additional Notes -->
         <% if (invoice.additionalNotes && invoice.additionalNotes.length > 0) { %>
