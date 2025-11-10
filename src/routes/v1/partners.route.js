@@ -6,6 +6,7 @@ const checkRole = require('../../middlewares/checkRole');
 router.use(verifyToken); // all routes protected
 
 router.post('/', PartnersController.createPartner);
+router.patch('/can-login/:id', PartnersController.updateVendorCanLogin);
 router.put('/:id', PartnersController.updatePartner);
 router.delete('/:id', PartnersController.deletePartner);
 router.get('/', PartnersController.getAllPartners);
