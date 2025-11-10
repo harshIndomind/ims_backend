@@ -10,7 +10,7 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       product_id: {
-        type: Sequelize.BIGINT
+        type: Sequelize.INTEGER
       },
       batch_no: {
         type: Sequelize.STRING,

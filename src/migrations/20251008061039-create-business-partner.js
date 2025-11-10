@@ -10,11 +10,11 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       organization_id: {
-        type: Sequelize.BIGINT,
+        type: Sequelize.INTEGER,
         allowNull: false,
       },
       user_id: {
-        type: Sequelize.BIGINT,
+        type: Sequelize.INTEGER,
         allowNull: true,
       },
       type: {
@@ -28,6 +28,11 @@ module.exports = {
       code: {
         type: Sequelize.STRING(50),
 				allowNull: false,
+				unique: true,
+      },
+      account_code: {
+        type: Sequelize.STRING(50),
+				allowNull: true,
 				unique: true,
       },
       contact_no: {
@@ -50,7 +55,7 @@ module.exports = {
         defaultValue: false,
       },
       created_by: {
-        type: Sequelize.BIGINT
+        type: Sequelize.INTEGER
       },
       createdAt: {
         allowNull: false,

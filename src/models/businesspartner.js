@@ -36,11 +36,11 @@ module.exports = (sequelize, DataTypes) => {
 	BusinessPartner.init(
 		{
 			organization_id: {
-				type: DataTypes.BIGINT,
+				type: DataTypes.INTEGER,
 				allowNull: false,
 			},
 			user_id: {
-				type: DataTypes.BIGINT,
+				type: DataTypes.INTEGER,
 				allowNull: true,
 			},
 			type: {
@@ -56,6 +56,11 @@ module.exports = (sequelize, DataTypes) => {
 				allowNull: false,
 				unique: true,
 			},
+			account_code: {
+				type: DataTypes.STRING(50),
+				allowNull: true,
+				unique: true,
+			},
 			contact_no: DataTypes.STRING(20),
 			email: DataTypes.TEXT,
 			gstin: DataTypes.STRING(30),
@@ -68,7 +73,7 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.BOOLEAN,
 				defaultValue: false,
 			},
-			created_by: DataTypes.BIGINT,
+			created_by: DataTypes.INTEGER,
 		},
 		{
 			sequelize,

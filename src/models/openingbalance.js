@@ -15,7 +15,7 @@ module.exports = (sequelize, DataTypes) => {
 	}
 	OpeningBalance.init(
 		{
-			partner_id: DataTypes.BIGINT,
+			partner_id: DataTypes.INTEGER,
 			partner_type: DataTypes.ENUM('vendor', 'customer'),
 			balance_type: DataTypes.ENUM('credit', 'debit'),
 			amount: DataTypes.DECIMAL(10, 2),

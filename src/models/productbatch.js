@@ -13,7 +13,7 @@ module.exports = (sequelize, DataTypes) => {
 	}
 	ProductBatch.init(
 		{
-			product_id: DataTypes.BIGINT,
+			product_id: DataTypes.INTEGER,
 			batch_no: {
 				type: DataTypes.STRING,
 				allowNull: true,

@@ -20,7 +20,7 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.INTEGER,
 				allowNull: false,
 				references: {
-					model: 'BusinessPartner',
+					model: 'BusinessPartners',
 					key: 'id',
 				},
 				onDelete: 'CASCADE',
@@ -50,6 +50,10 @@ module.exports = (sequelize, DataTypes) => {
 				defaultValue: 'UPLOADED',
 				allowNull: false,
 			},
+			user_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			}
 		},
 		{
 			sequelize,

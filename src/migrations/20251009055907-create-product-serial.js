@@ -10,11 +10,13 @@ module.exports = {
 				type: Sequelize.INTEGER,
 			},
 			product_id: {
-				type: Sequelize.BIGINT,
+				type: Sequelize.INTEGER,
+				unique: true
 			},
 			serial_no: {
 				type: Sequelize.STRING,
 				allowNull: false,
+				unique: true
 			},
 			sell_price: {
 				type: Sequelize.DECIMAL(12, 2),

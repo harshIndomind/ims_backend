@@ -23,7 +23,7 @@ module.exports = (sequelize, DataTypes) => {
 	}
 	ProductGroup.init(
 		{
-			organization_id: DataTypes.BIGINT,
+			organization_id: DataTypes.INTEGER,
 			name: DataTypes.STRING,
 			description: DataTypes.TEXT,
 			is_active: DataTypes.BOOLEAN,

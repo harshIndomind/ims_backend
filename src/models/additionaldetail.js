@@ -15,7 +15,7 @@ module.exports = (sequelize, DataTypes) => {
 	}
 	AdditionalDetail.init(
 		{
-			partner_id: DataTypes.BIGINT,
+			partner_id: DataTypes.INTEGER,
 			fax: DataTypes.STRING(50),
 			website: DataTypes.STRING(150),
 			credit_limit: DataTypes.DECIMAL(10, 2),

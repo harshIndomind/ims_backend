@@ -33,7 +33,7 @@ module.exports = (sequelize, DataTypes) => {
 	User.init(
 		{
 			org_id: {
-				type: DataTypes.STRING,
+				type: DataTypes.INTEGER,
 				allowNull: true,
 			},
 			name: {

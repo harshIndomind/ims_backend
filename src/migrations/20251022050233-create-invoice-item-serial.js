@@ -18,7 +18,8 @@ module.exports = {
 				onDelete: 'CASCADE',
 			},
 			serial_no: {
-				type: Sequelize.STRING(100),
+				type: Sequelize.STRING,
+				unique: true,
 				references: {
 					model: 'ProductSerials',
 					key: 'serial_no',

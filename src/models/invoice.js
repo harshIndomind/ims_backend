@@ -28,6 +28,7 @@ module.exports = (sequelize, DataTypes) => {
 				{ foreignKey: 'id', sourceKey: 'bank_id', as: 'bankDetails' },
 				{ onDelete: 'CASCADE' }
 			);
+			Invoice.hasMany(models.PaymentInvoice, {foreignKey: 'invoice_id', as: 'payments'});
 		}
 	}
 	Invoice.init(
@@ -53,6 +54,8 @@ module.exports = (sequelize, DataTypes) => {
 			total_tax: DataTypes.DECIMAL(15, 2),
 			isRoundOff: { type: DataTypes.BOOLEAN, defaultValue: false },
 			grandTotal: DataTypes.DECIMAL(15, 2),
+			totalPaid: DataTypes.DECIMAL(15, 2),
+			remainingAmount: DataTypes.DECIMAL(15, 2),
 			paymentType: DataTypes.JSON,
 			customerInfo: DataTypes.JSON,
 			invoiceDetail: DataTypes.JSON,
@@ -67,6 +70,10 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.ENUM(['pending', 'completed']),
 				defaultValue: 'pending',
 			},
+			paymentStatus: {
+				type: DataTypes.STRING,
+				defaultValue: 'PENDING',
+			}
 		},
 		{
 			sequelize,

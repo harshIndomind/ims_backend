@@ -22,7 +22,7 @@ module.exports = (sequelize, DataTypes) => {
 	}
 	Address.init(
 		{
-			partner_id: DataTypes.BIGINT,
+			partner_id: DataTypes.INTEGER,
 			type: DataTypes.ENUM('billing', 'shipping'),
 			gstin: DataTypes.STRING(15),
 			name: { type: DataTypes.STRING(150), allowNull: true },
@@ -36,14 +36,14 @@ module.exports = (sequelize, DataTypes) => {
 			country_id: {
 				type: DataTypes.INTEGER,
 				references: {
-					model: 'Country',
+					model: 'Countries',
 					key: 'id',
 				},
 			},
 			state_id: {
 				type: DataTypes.INTEGER,
 				references: {
-					model: 'GstStateCode',
+					model: 'GstStateCodes',
 					key: 'id',
 				},
 			},

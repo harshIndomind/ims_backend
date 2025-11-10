@@ -15,18 +15,14 @@ module.exports = {
 				unique: true,
 			},
 			organization_id: {
-				type: Sequelize.BIGINT,
+				type: Sequelize.INTEGER,
 			},
 			tax_id: {
-				type: Sequelize.BIGINT,
+				type: Sequelize.INTEGER,
 			},
 			unit_id: {
-				type: Sequelize.BIGINT,
+				type: Sequelize.INTEGER,
 			},
-			// product_group_id: {
-			//   type: Sequelize.BIGINT,
-			//   allowNull: true,
-			// },
 			item_type: {
 				type: Sequelize.ENUM(['product', 'service']),
 			},

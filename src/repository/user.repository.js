@@ -7,7 +7,10 @@ const {
 	UserProject,
 	ResetPassword,
 	Alert,
-	AlertReads
+	AlertReads,
+	BusinessPartner,
+	Address,
+	GstStateCode,
 } = require('../models/index');
 const AppError = require('../utils/AppError');
 const { sendForgotPasswordMail } = require('../utils/mailer');
@@ -55,10 +58,10 @@ class UserRepository {
 		}
 	}
 
-	async allUsers() {
+	async allUsers(org_id) {
 		try {
 			const users = await User.findAll({
-				where: { roleId: { [Op.ne]: 1 } },
+				where: { roleId: { [Op.notIn]: [1, 2] }, org_id },
 				attributes: [
 					'id',
 					'name',
@@ -66,10 +69,10 @@ class UserRepository {
 					['image', 'imageUrl'],
 					'roleId',
 					'org_id',
-					'vendor_company_name',
-					'vendor_company_code',
-					'vendor_contact_no',
-					'vendor_address',
+					// 'vendor_company_name',
+					// 'vendor_company_code',
+					// 'vendor_contact_no',
+					// 'vendor_address',
 				],
 				include: [
 					{
@@ -116,10 +119,10 @@ class UserRepository {
 					'name',
 					'email',
 					['image', 'imageUrl'],
-					'vendor_company_name',
-					'vendor_company_code',
-					'vendor_contact_no',
-					'vendor_address',
+					// 'vendor_company_name',
+					// 'vendor_company_code',
+					// 'vendor_contact_no',
+					// 'vendor_address',
 				],
 				include: [
 					{
@@ -129,12 +132,67 @@ class UserRepository {
 					{
 						model: organization,
 						as: 'organization',
-						attributes: ['org_name', 'org_code'],
+						// attributes: ['org_name', 'org_code'],
+					},
+					{
+						model: BusinessPartner,
+						as: 'partner',
+						// attributes: ['org_name', 'org_code'],
+						include: {
+							model: Address,
+							as: 'addresses',
+							include: {
+								model: GstStateCode,
+								as: 'stateData',
+							},
+						},
 					},
 				],
 			});
 
-			return user;
+			const userData = user.get({ plain: true });
+
+			let response = {};
+			if (userData) {
+				response = { ...userData };
+				if (
+					userData.Role.name &&
+					['Admin', 'Super Admin'].includes(userData.Role.name)
+				) {
+					response['vendor_company_name'] =
+						userData?.organization?.org_name ?? '';
+					response['vendor_company_code'] =
+						userData?.organization?.org_code ?? '';
+					response['vendor_contact_no'] =
+						userData?.organization?.org_person_contact ?? '';
+					response['vendor_address'] =
+						userData?.organization?.org_address ?? '';
+				} else if (
+					userData.Role.name &&
+					['Vendor', 'Vendor-Customer'].includes(userData.Role.name) &&
+					userData?.partner
+				) {
+					const billing = userData?.partner?.addresses[0];
+					
+					const addressParts = [
+						billing.address1,
+						billing.address2,
+						billing?.city,
+						billing?.pincode,
+						billing?.stateData?.state_name,
+						billing?.countryData?.name,
+					];
+
+					const address = addressParts.filter(Boolean).join(', ');
+
+					response['vendor_company_name'] = userData?.partner?.name ?? '';
+					response['vendor_company_code'] = userData?.partner?.code ?? '';
+					response['vendor_contact_no'] = userData?.partner?.contact_no ?? '';
+					response['vendor_address'] = address ?? '';
+				}
+			}
+
+			return response;
 		} catch (error) {
 			console.error('Something went wrong in the repository layer');
 			throw error;
@@ -143,7 +201,7 @@ class UserRepository {
 
 	async delete(id) {
 		try {
-			console.log("id in repo => " , id);
+			console.log('id in repo => ', id);
 			await Alert.destroy({ where: { user_id: 3 } });
 			const user = await User.destroy({ where: { id } });
 

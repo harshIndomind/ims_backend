@@ -13,10 +13,11 @@ module.exports = (sequelize, DataTypes) => {
 	}
 	ProductSerial.init(
 		{
-			product_id: DataTypes.BIGINT,
+			product_id: DataTypes.INTEGER,
 			serial_no: {
 				type: DataTypes.STRING,
 				allowNull: false,
+				unique: true
 			},
 			sell_price: {
 				type: DataTypes.DECIMAL(12, 2),

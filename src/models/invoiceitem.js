@@ -32,6 +32,15 @@ module.exports = (sequelize, DataTypes) => {
 				as: 'serials',
 				onDelete: 'CASCADE',
 			});
+			InvoiceItem.belongsTo(models.Unit, {
+				foreignKey: 'selected_uom_id',
+				as: 'selectedUom',
+			});
+			InvoiceItem.hasMany(models.ProductUOM, {
+				foreignKey: 'product_id',
+				sourceKey: 'product_id',
+				as: 'uoms',
+			});
 		}
 	}
 	InvoiceItem.init(
@@ -52,6 +61,7 @@ module.exports = (sequelize, DataTypes) => {
 			total: DataTypes.DECIMAL(15, 2),
 			stock_type: DataTypes.ENUM(['normal', 'batch', 'serial']),
 			note: { type: DataTypes.TEXT, allowNull: true },
+			selected_uom_id: { type: DataTypes.INTEGER, allowNull: true },
 		},
 		{
 			sequelize,

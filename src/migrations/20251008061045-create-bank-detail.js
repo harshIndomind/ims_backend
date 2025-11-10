@@ -10,7 +10,11 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       partner_id: {
-        type: Sequelize.BIGINT
+        type: Sequelize.INTEGER,
+        references: {
+          model: 'BusinessPartners',
+          key: 'id'
+        }
       },
       bank_name: {
         type: Sequelize.STRING(150)

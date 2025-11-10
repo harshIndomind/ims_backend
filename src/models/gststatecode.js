@@ -19,7 +19,7 @@ module.exports = (sequelize, DataTypes) => {
 			country_id: {
 				type: DataTypes.INTEGER,
 				references: {
-					model: 'Country',
+					model: 'Countries',
 					key: 'id',
 				},
 				onUpdate: 'CASCADE',

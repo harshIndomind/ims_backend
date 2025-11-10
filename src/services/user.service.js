@@ -38,9 +38,9 @@ class UserService {
 		}
 	}
 
-	async getAllUsers() {
+	async getAllUsers(org_id) {
 		try {
-			const users = await this.userRepo.allUsers();
+			const users = await this.userRepo.allUsers(org_id);
 
 			return users;
 		} catch (error) {
@@ -74,9 +74,9 @@ class UserService {
 
 			if (!user) return null;
 
-			const userJson = user.toJSON();
+			// const userJson = user.toJSON();
 
-			return userJson
+			return user
 		} catch (error) {
 			console.error('Something went wrong in the service layer');
 			throw error;

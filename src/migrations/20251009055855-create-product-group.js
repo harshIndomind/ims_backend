@@ -10,7 +10,7 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       organization_id: {
-        type: Sequelize.BIGINT
+        type: Sequelize.INTEGER
       },
       name: {
         type: Sequelize.STRING

@@ -22,11 +22,11 @@ module.exports = (sequelize, DataTypes) => {
 	ProductUOM.init(
 		{
 			product_id: {
-				type: DataTypes.BIGINT,
+				type: DataTypes.INTEGER,
 				allowNull: false,
 			},
 			unit_id: {
-				type: DataTypes.BIGINT,
+				type: DataTypes.INTEGER,
 				allowNull: false,
 			},
 			qty: {

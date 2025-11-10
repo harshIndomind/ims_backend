@@ -10,7 +10,7 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       partner_id: {
-        type: Sequelize.BIGINT
+        type: Sequelize.INTEGER
       },
       fax: {
         type: Sequelize.STRING(50)

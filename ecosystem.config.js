@@ -11,6 +11,17 @@ module.exports = {
       },
     },
 
+    // Testing
+    {
+      name: 'test-indomind-vendor-backend',
+      script: 'src/index.js',
+      cwd: '/var/www/html/indomind.vc.test/api',
+      env: {
+        PORT: 7200,
+        NODE_ENV: 'test',
+      },
+    },
+
     // Production
     {
       name: 'ims-backend-prod',

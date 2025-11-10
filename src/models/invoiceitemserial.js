@@ -15,6 +15,7 @@ module.exports = (sequelize, DataTypes) => {
 			});
 			InvoiceItemSerial.belongsTo(models.ProductSerial, {
 				foreignKey: 'serial_no',
+				targetKey: 'serial_no',
 				as: 'serial',
 				onDelete: 'CASCADE',
 			});
@@ -23,7 +24,7 @@ module.exports = (sequelize, DataTypes) => {
 	InvoiceItemSerial.init(
 		{
 			invoice_item_id: DataTypes.INTEGER,
-			serial_no: DataTypes.STRING(100),
+			serial_no: { type: DataTypes.STRING, unique: true },
 		},
 		{
 			sequelize,

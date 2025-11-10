@@ -14,6 +14,7 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
 const { fn, col, Op, JSON } = require('sequelize');
 const bcrypt = require('bcrypt');
+const uomMap = require('../utils/uomConversionMap');
 
 exports.createPartner = catchAsync(async (req, res) => {
 	const t = await sequelize.transaction();
@@ -48,6 +49,7 @@ exports.createPartner = catchAsync(async (req, res) => {
 			type: type.name.replace('-', '_').toLowerCase(),
 			name: vendorCompany.name,
 			code: vendorCompany.code,
+			account_code: vendorCompany.account_code ?? null,
 			email: vendorCompany.email,
 			contact_no: vendorCompany.contactNo,
 			gstin: vendorCompany.gstin,
@@ -238,9 +240,10 @@ exports.updatePartner = catchAsync(async (req, res) => {
 			{
 				name: vendorCompany?.name || partner.name,
 				code: vendorCompany?.code || partner.code,
+				account_code: vendorCompany?.account_code || partner.account_code,
 				email: vendorCompany?.email || partner.email,
 				contact_no: vendorCompany?.contactNo || partner.contact_no,
-				gstin: vendorCompany?.gstin || partner.gstin,
+				gstin: vendorCompany?.gstin,
 				pan: vendorCompany?.pan || partner.pan,
 				registration_type:
 					vendorCompany?.registrationType || partner.registration_type,

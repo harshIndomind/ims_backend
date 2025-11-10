@@ -31,11 +31,7 @@ router.post(
 	upload.single('attachment'),
 	DocumentsUploadsController.uploadADocument
 );
-router.get(
-	'/:id',
-	checkRole(['Super Admin', 'Admin', 'Vendor', 'Vendor-Customer']),
-	DocumentsUploadsController.getAUploadedDoc
-);
+
 router.get(
 	'/',
 	checkRole(['Super Admin', 'Admin', 'Vendor', 'Vendor-Customer']),
@@ -68,6 +64,25 @@ router.get(
 	checkRole(['Super Admin', 'Admin', 'Vendor', 'Vendor-Customer']),
 	DocumentsUploadsController.sendDeleteRequestToAdmin
 );
+
+router.get(
+	'/imported-purchase-invoices',
+	checkRole(['Super Admin', 'Admin', 'Vendor', 'Vendor-Customer']),
+	DocumentsUploadsController.getImportedInvoices
+);
+
+router.get(
+	'/imported-purchase-invoices/:id',
+	checkRole(['Super Admin', 'Admin', 'Vendor', 'Vendor-Customer']),
+	DocumentsUploadsController.getSingleImportedInvoices
+);
+
+router.get(
+	'/:id',
+	checkRole(['Super Admin', 'Admin', 'Vendor', 'Vendor-Customer']),
+	DocumentsUploadsController.getAUploadedDoc
+);
+
 
 // router.get(
 // 	'/:id/history',

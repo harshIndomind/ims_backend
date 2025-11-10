@@ -1,0 +1,122 @@
+name: Deploy Testing Indomind Vendor Backend to EC2
+
+on:
+  push:
+    branches: [testing]
+
+jobs:
+  backup-ec2-code:
+    if: github.ref == 'refs/heads/testing'
+    runs-on: ubuntu-latest
+    environment: testing
+
+    steps:
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+          if [ -z "${{ secrets.EC2_HOST }}" ]; then
+            echo "❌ EC2_HOST is not set!"
+            exit 1
+          fi
+
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: SSH & Backup Current App on EC2
+        run: |
+          ssh ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} "APP_DIR='${{ secrets.APP_DIR }}' bash -s" << 'EOF'
+            set -e
+            echo "📦 Backing up from ${{ secrets.APP_DIR }}"
+            [ -z ${{ secrets.APP_DIR }} ] && echo "❌ APP_DIR is empty" && exit 1
+            rm -rf ~/test-indomind-vendor-backup
+            mkdir -p ~/test-indomind-vendor-backup
+
+            # Only copy if not empty
+            shopt -s nullglob
+            cp -a \$APP_DIR/* ~/test-indomind-vendor-backup/ || echo "⚠️ No files to backup"
+            
+            echo "✅ Backup completed"
+          EOF
+
+  sync-code-to-ec2:
+    needs: backup-ec2-code
+    runs-on: ubuntu-latest
+    environment: testing
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Rsync Code to EC2
+        run: |
+          rsync -avz --delete \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='.env*' \
+            --exclude='src/uploads' \
+            --exclude='storage' \
+            . ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:${{ secrets.APP_DIR }}
+
+  deploy-to-ec2:
+    needs: sync-code-to-ec2
+    runs-on: ubuntu-latest
+    environment: testing
+
+    steps:
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: SSH & Deploy with Rollback on Failure
+        run: |
+          ssh ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} "APP_DIR='${{ secrets.APP_DIR }}' bash -s" << 'EOF'
+            set -e
+          
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+
+            cd ${{ secrets.APP_DIR }}
+            nvm use 22
+          
+            echo "🚀 Starting testing..."
+                    
+            if ! npm ci --legacy-peer-deps; then
+              echo "❌ NPM install failed! Rolling back..."
+              rm -rf ./*
+              cp -a ~/test-indomind-vendor-backup/. .
+              pm2 delete test-indomind-vendor-backend || true
+              pm2 start ecosystem.config.js --only test-indomind-vendor-backend
+              pm2 save
+              sudo systemctl restart nginx
+              exit 1
+            fi
+          
+            pm2 delete test-indomind-vendor-backend || true
+            if ! pm2 start ecosystem.config.js --only test-indomind-vendor-backend; then
+              echo "❌ PM2 start failed! Rolling back..."
+              rm -rf ./*
+              cp -a ~/test-indomind-vendor-backup/. .
+              pm2 delete test-indomind-vendor-backend || true
+              pm2 start ecosystem.config.js --only test-indomind-vendor-backend
+              pm2 save
+              sudo systemctl restart nginx
+              exit 1
+            fi
+          
+            pm2 save
+            sudo systemctl restart nginx
+            echo "✅ Deployment successful"
+          EOF
+

@@ -34,9 +34,22 @@ async function prepareAndStartServer() {
 	console.log(`Date ${new Date().toString()}`);
 
 	app.use(cookieParser());
+	const whitelist = [
+		'http://localhost:3000',
+		'https://vctest.swayamm.com',
+		'https://vcdev.swayamm.com',
+	];
+
 	app.use(
 		cors({
-			origin: 'http://localhost:3000', // your frontend origin
+			origin: function (origin, callback) {
+				if (whitelist.includes(origin) || !origin) {
+					callback(null, true);
+				} else {
+					console.error(`Blocked by CORS: ${origin}`);
+					callback(new Error('Not allowed by CORS'));
+				}
+			},
 			credentials: true,
 		})
 	);
@@ -95,6 +108,7 @@ async function prepareAndStartServer() {
 		require('./routes/v1/productService.route')
 	);
 	app.use(`${apiPrefix}/v1/invoices`, require('./routes/v1/invoice.routes'));
+	app.use(`${apiPrefix}/v1/reports`, require('./routes/v1/reports.routes'));
 
 	app.get('/', (req, res) => {
 		res.status(200).json({ status: true, message: '✅ Its working.' });

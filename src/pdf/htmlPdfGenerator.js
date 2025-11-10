@@ -67,7 +67,7 @@ exports.generateInvoiceHTMLPDF = async (dataOrHtml, template, options = {}) => {
 	const isHtml = options.multi === true;
 	const html = isHtml
 		? dataOrHtml // already full HTML
-		: await generateInvoiceHTML(dataOrHtml, template);
+		: await this.generateInvoiceHTML(dataOrHtml, template);
 
 	const now = new Date();
 	const formatted = `${now.getFullYear()}-${(now.getMonth() + 1)
