@@ -124,7 +124,7 @@ async function prepareAndStartServer() {
 	const io = init(server);
 
 	if (APP_ENV === 'development') {
-		db.sequelize.sync().then(() => {
+		db.sequelize.authenticate().then(() => {
 			server.listen(PORT, () => {
 				console.log(`Dev server running on ${BASE_URL}`);
 			});

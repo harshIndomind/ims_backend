@@ -10,7 +10,14 @@ module.exports = (sequelize, DataTypes) => {
 		static associate(models) {
 			// organization.belongsTo(User, { foreignKey: 'user_id' }, { onDelete: 'CASCADE' });
 			// Organization.belongsTo(Plan, { foreignKey: 'plan_id' }, { onDelete: 'SET NULL' });
-			organization.hasMany(models.OrganizationBankDetails, { foreignKey: 'org_id', as: 'bankDetails' });
+			organization.hasMany(models.OrganizationBankDetails, {
+				foreignKey: 'org_id',
+				as: 'bankDetails',
+			});
+			organization.belongsTo(models.GstStateCode, {
+				foreignKey: 'state_id',
+				as: '_state',
+			});
 		}
 	}
 	organization.init(
@@ -35,8 +42,18 @@ module.exports = (sequelize, DataTypes) => {
 			org_address: { type: DataTypes.STRING, allowNull: true },
 			pincode: { type: DataTypes.INTEGER, allowNull: true },
 			state: { type: DataTypes.STRING, allowNull: true },
+			state_id: {
+				type: DataTypes.INTEGER,
+				references: {
+					model: 'GstStateCodes',
+					key: 'id',
+				},
+				onUpdate: 'CASCADE',
+				onDelete: 'SET NULL',
+				allowNull: true,
+			},
 			city: { type: DataTypes.STRING, allowNull: true },
-			// plan_id: {	
+			// plan_id: {
 			// 	type: DataTypes.INTEGER,
 			// 	allowNull: true,
 			// 	references: { model: 'Plans', key: 'id' },
