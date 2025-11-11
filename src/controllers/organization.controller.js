@@ -3,6 +3,7 @@ const {
 	User,
 	OrganizationBankDetails,
 	sequelize,
+	GstStateCode
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
@@ -26,6 +27,7 @@ exports.createOrganization = catchAsync(async (req, res) => {
 			pincode,
 			city,
 			state,
+			state_id,
 			update_gst_on_invoices,
 			bankDetails,
 		} = req.body;
@@ -54,7 +56,8 @@ exports.createOrganization = catchAsync(async (req, res) => {
 				org_address,
 				pincode,
 				city,
-				state,
+				// state,
+				state_id,
 				update_gst_on_invoices,
 				createdBy: loggedInUserId,
 			},
@@ -62,8 +65,8 @@ exports.createOrganization = catchAsync(async (req, res) => {
 		);
 
 		if (bankDetails && bankDetails.length > 0) {
-			console.log("bankDetails ", bankDetails);
-			
+			console.log('bankDetails ', bankDetails);
+
 			for (const detail of bankDetails) {
 				delete detail.id;
 				await OrganizationBankDetails.create(
@@ -95,8 +98,8 @@ exports.createOrganization = catchAsync(async (req, res) => {
 });
 
 exports.updateOrganization = catchAsync(async (req, res) => {
+	const t = await sequelize.transaction();
 	try {
-		const t = await sequelize.transaction();
 		const { id } = req.params;
 
 		const {
@@ -110,7 +113,8 @@ exports.updateOrganization = catchAsync(async (req, res) => {
 			org_address,
 			pincode,
 			city,
-			state,
+			// state,
+			state_id,
 			update_gst_on_invoices,
 			bankDetails,
 		} = req.body;
@@ -126,7 +130,7 @@ exports.updateOrganization = catchAsync(async (req, res) => {
 			);
 		}
 
-		const hashedPassword = await bcrypt.hash('12345678', 10);
+		// const hashedPassword = await bcrypt.hash('12345678', 10);
 
 		const isUserExists = await User.findOne({ where: { email: org_email } });
 
@@ -154,7 +158,8 @@ exports.updateOrganization = catchAsync(async (req, res) => {
 				org_address,
 				pincode,
 				city,
-				state,
+				// state,
+				state_id,
 				update_gst_on_invoices,
 			},
 			{
@@ -164,6 +169,19 @@ exports.updateOrganization = catchAsync(async (req, res) => {
 		);
 
 		if (bankDetails && bankDetails.length > 0) {
+			const existingIds = bankDetails
+				.filter((d) => Number(d.id))
+				.map((d) => d.id);
+
+			// 🔹 Delete records that are no longer in the new list
+			await OrganizationBankDetails.destroy({
+				where: {
+					org_id: id,
+					...(existingIds.length > 0 && { id: { [Op.notIn]: existingIds } }),
+				},
+				transaction: t,
+			});
+
 			for (const detail of bankDetails) {
 				if (Number(detail.id)) {
 					// 🔹 Update existing bank record
@@ -211,6 +229,11 @@ exports.getAllOrganizations = catchAsync(async (req, res) => {
 		const limit = parseInt(req.query.limit) || 10;
 		const offset = parseInt(req.query.offset) || 0;
 		const organizations = await organization.findAndCountAll({
+			include: {
+				model: GstStateCode,
+				as: '_state',
+				attributes: ['state_name', 'gst_code']
+			},
 			offset,
 			limit,
 			order: [['id', 'DESC']],
@@ -227,10 +250,39 @@ exports.getAllOrganizations = catchAsync(async (req, res) => {
 });
 
 exports.deleteOrganization = catchAsync(async (req, res) => {
-	const { id } = req.params;
+	const t = await sequelize.transaction();
 
-	await organization.destroy({ where: { id } });
-	res.json({ message: 'Organization deleted successfully' });
+	try {
+		const { id } = req.params;
+
+		const Organization = await organization.findByPk(id);
+
+		if (!Organization) {
+			await t.rollback();
+			return res.status(404).json({ message: 'Organization not found' });
+		}
+
+		const user = await User.findOne({
+			where: { org_id: Organization.id, roleId: 2 },
+			transaction: t,
+		});
+
+		if (user) {
+			await user.destroy({ transaction: t });
+		}
+
+		await Organization.destroy({ transaction: t });
+
+		await t.commit();
+
+		res.json({ message: 'Organization deleted successfully' });
+	} catch (error) {
+		await t.rollback();
+		console.error(error);
+		res
+			.status(500)
+			.json({ message: 'Failed to delete organization', error: error.message });
+	}
 });
 
 exports.getOrganizationBankDetails = catchAsync(async (req, res) => {
