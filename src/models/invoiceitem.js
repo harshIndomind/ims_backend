@@ -40,6 +40,7 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'product_id',
 				sourceKey: 'product_id',
 				as: 'uoms',
+				constraints: false,
 			});
 		}
 	}

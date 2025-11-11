@@ -11,11 +11,16 @@ module.exports = (sequelize, DataTypes) => {
 			ProductUOM.belongsTo(models.Product, {
 				foreignKey: 'product_id',
 				as: 'product',
+				onDelete: 'CASCADE',
+				onUpdate: 'CASCADE',
 			});
 
+			// Each ProductUOM belongs to a Unit
 			ProductUOM.belongsTo(models.Unit, {
 				foreignKey: 'unit_id',
 				as: 'unit',
+				onDelete: 'CASCADE',
+				onUpdate: 'CASCADE',
 			});
 		}
 	}

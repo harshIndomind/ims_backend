@@ -10,6 +10,7 @@ const {
 	organization,
 } = require('../models');
 const AppError = require('../utils/AppError');
+const { print } = require('../utils/common');
 const {
 	s3,
 	PutObjectCommand,
@@ -256,14 +257,14 @@ exports.createProduct = async (req, res) => {
 					validUOMs.push({ unit_id: data.unit_id, qty: 1 });
 				}
 			}
-
+			
 			await Promise.all(
 				validUOMs.map((u) =>
 					ProductUOM.create(
 						{
 							product_id: product.id,
-							unit_id: u.unit_id,
-							qty: u.qty,
+							unit_id: parseInt(u.unit_id),
+							qty: parseFloat(u.qty),
 						},
 						{ transaction: t }
 					)
@@ -567,7 +568,7 @@ exports.updateProduct = async (req, res) => {
 			// 	const unit = await Unit.findOne({ where: { id: data.unit_id } });
 
 			// 	if (unit?.id) {
-			// 		validUOMs.unshift({ unit_id: data.unit_id, qty: 1 });
+			// 		validUOMs.push({ unit_id: data.unit_id, qty: 1 });
 			// 	}
 			// }
 
@@ -575,7 +576,6 @@ exports.updateProduct = async (req, res) => {
 				{ where: { product_id: productUpdated.id } },
 				{ transaction: t }
 			);
-			console.log('validUOMs ', validUOMs);
 
 			await Promise.all(
 				validUOMs.map((u) =>
