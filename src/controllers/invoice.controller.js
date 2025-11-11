@@ -102,7 +102,7 @@ exports.createInvoice = catchAsync(async (req, res) => {
 						417
 					);
 				}
-			} else if (item.stock_type === 'normal') {
+			} else if (item.stock_type === 'normal' && item.item_type === 'product') {
 				// ✅ Check normal stock
 				const product = await Product.findByPk(item.product_id);
 				if (!product)
@@ -205,7 +205,7 @@ exports.createInvoice = catchAsync(async (req, res) => {
 					{ qty: -parseFloat(uomQty) },
 					{ where: { id: item.batch_id }, transaction: t }
 				);
-			} else if (item.stock_type === 'normal') {
+			} else if (item.stock_type === 'normal' && item.item_type === 'product') {
 				await Product.increment(
 					{ available_qty: -parseFloat(uomQty) },
 					{ where: { id: item.product_id }, transaction: t }
@@ -531,7 +531,7 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 					{ qty: parseFloat(uomQty) },
 					{ where: { id: parseInt(item.batch_id) }, transaction: t }
 				);
-			} else if (item.stock_type === 'normal') {
+			} else if (item.stock_type === 'normal' && item.item_type === 'product') {
 				await Product.increment(
 					{ available_qty: parseFloat(uomQty) },
 					{ where: { id: parseInt(item.product_id) }, transaction: t }
@@ -601,7 +601,7 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 						417
 					);
 				}
-			} else if (item.stock_type === 'normal') {
+			} else if (item.stock_type === 'normal' && item.item_type === 'product') {
 				const product = await Product.findByPk(item.product_id, {
 					transaction: t,
 				});
@@ -709,7 +709,7 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 					{ qty: -parseFloat(uomQty) },
 					{ where: { id: item.batch_id }, transaction: t }
 				);
-			} else if (item.stock_type === 'normal') {
+			} else if (item.stock_type === 'normal' && item.item_type === 'product') {
 				await Product.increment(
 					{ available_qty: -parseFloat(uomQty) },
 					{ where: { id: item.product_id }, transaction: t }

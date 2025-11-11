@@ -44,6 +44,12 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'product_id',
 				as: 'uoms',
 			});
+
+			Product.hasMany(models.InvoiceItem, {
+				foreignKey: 'product_id',
+				as: 'invoiceItems',
+				onDelete: 'CASCADE',
+			});
 		}
 	}
 	Product.init(
