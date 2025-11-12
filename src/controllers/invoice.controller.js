@@ -15,6 +15,8 @@ const {
 	Sequelize,
 	ProductUOM,
 	Unit,
+	User,
+	organization,
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
@@ -30,6 +32,7 @@ const { BASE_URL } = require('../config/serverConfig');
 const { format } = require('date-fns');
 const moment = require('moment');
 const { print } = require('../utils/common');
+const { generateSignedUrl } = require('../utils/s3Bucket');
 exports.createInvoice = catchAsync(async (req, res) => {
 	const t = await sequelize.transaction();
 	try {
@@ -245,13 +248,13 @@ exports.getInvoices = catchAsync(async (req, res) => {
 	const offset = parseInt(req.query.offset) || 0;
 	// Validate that both dates are valid
 	if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
-		throw new Error('Invalid date range');
+		throw new AppError('Invalid date range');
 	}
 
 	// Adjust the end date to include the full day (23:59:59)
 	toDate.setHours(23, 59, 59, 999);
 	if (!org_id && role !== 'Admin') {
-		throw AppError(`You don't authorize to access this api.`);
+		throw new AppError(`You don't authorize to access this api.`);
 	}
 
 	const invoices = await Invoice.findAndCountAll({
@@ -960,6 +963,7 @@ async function calculateSaleInvoice(invoice) {
 	const serialsData = await ProductSerial.findAll();
 	const batchData = await ProductBatch.findAll();
 	const invoiceData = invoice.get({ plain: true });
+	console.log('invoiceData ', invoiceData);
 
 	const totalTaxableAmount = invoiceData.productItems.reduce((sum, item) => {
 		const priceAfterDiscount =
@@ -989,9 +993,29 @@ async function calculateSaleInvoice(invoice) {
 		: 0;
 
 	const state = await GstStateCode.findByPk(invoiceData.customerInfo.state_id);
+	const userData = await User.findOne({
+		where: { org_id: invoiceData.orgId, roleId: 2 },
+		include: {
+			model: organization,
+			as: 'organization',
+		},
+	});
+	let businessLogo = null;
+	let business = null;
+	if (userData) {
+		business = userData.organization;
+		business.address = `${business.org_address},<br>
+${business.city} - ${business.pincode},<br>
+${business.state}`;
+		if (userData.logo) {
+			businessLogo = await generateSignedUrl(userData.logo);
+		}
+	}
 
 	const response = {
 		...invoiceData,
+		businessLogo,
+		business,
 		customerInfo: {
 			...invoiceData.customerInfo,
 			state_name: `${state?.state_name} (${state?.gst_code})` || 'N/A',
@@ -1655,7 +1679,9 @@ async function uomConversion(qty, product_id, selected_unit_id) {
 	// 2️⃣ Find conversion ratio
 	let conversionRatio = 1; // default for base unit
 
-	const selectUnit = await ProductUOM.findOne({where: {id: selected_unit_id}});
+	const selectUnit = await ProductUOM.findOne({
+		where: { id: selected_unit_id },
+	});
 
 	if (selectUnit.unit_id !== product.unit_id) {
 		const uom = product.uoms.find((u) => u.id === selected_unit_id);

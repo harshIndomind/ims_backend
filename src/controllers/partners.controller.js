@@ -10,12 +10,14 @@ const {
 	Country,
 	GstStateCode,
 	organization,
+	RegistrationType,
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
 const { fn, col, Op, JSON } = require('sequelize');
 const bcrypt = require('bcrypt');
 const uomMap = require('../utils/uomConversionMap');
+const { print } = require('../utils/common');
 
 exports.createPartner = catchAsync(async (req, res) => {
 	const t = await sequelize.transaction();
@@ -32,6 +34,22 @@ exports.createPartner = catchAsync(async (req, res) => {
 			additionalDetails,
 			openingBalance,
 		} = req.body;
+
+		const businessData = await BusinessPartner.findOne({
+			where: { code: vendorCompany.code },
+		});
+
+		if (businessData) {
+			throw new AppError('Vendor Code must be unique');
+		}
+
+		const userData = await User.findOne({
+			where: { email: email },
+		});
+
+		if (userData) {
+			throw new AppError('A user with this email already exists.');
+		}
 
 		const type = await Role.findOne({ where: { id: roleId }, transaction: t });
 		if (!type) throw new AppError('Role not found', 404);
@@ -56,6 +74,7 @@ exports.createPartner = catchAsync(async (req, res) => {
 			gstin: vendorCompany.gstin,
 			pan: vendorCompany.pan,
 			registration_type: vendorCompany.registrationType,
+			registration_type_id: vendorCompany.registrationType,
 			addresses: [{ type: 'billing', ...billingAddress }],
 		};
 
@@ -107,10 +126,12 @@ exports.createPartner = catchAsync(async (req, res) => {
 			.json({ message: type.name + ' created successfully', partner });
 	} catch (error) {
 		await t.rollback();
-		console.error(error);
 		res
 			.status(500)
-			.json({ message: 'Error creating partner', error: error.message });
+			.json({
+				message: error.message || 'Error creating partner',
+				error: error.message,
+			});
 	}
 });
 
@@ -137,6 +158,10 @@ exports.getAllPartners = catchAsync(async (req, res) => {
 			{
 				model: organization,
 				as: 'organization',
+			},
+			{
+				model: RegistrationType,
+				as: 'registrationType',
 			},
 		],
 	});
@@ -170,6 +195,10 @@ exports.getPartnerById = catchAsync(async (req, res) => {
 				model: User,
 				as: 'user',
 				attributes: ['id', 'name', 'email', 'roleId'],
+			},
+			{
+				model: RegistrationType,
+				as: 'registrationType',
 			},
 		],
 	});
@@ -252,6 +281,8 @@ exports.updatePartner = catchAsync(async (req, res) => {
 				gstin: vendorCompany?.gstin,
 				pan: vendorCompany?.pan || partner.pan,
 				registration_type:
+					vendorCompany?.registrationType || partner.registration_type,
+				registration_type_id:
 					vendorCompany?.registrationType || partner.registration_type,
 				organization_id: orgId || partner.organization_id,
 			},
@@ -440,9 +471,7 @@ exports.updateVendorCanLogin = catchAsync(async (req, res) => {
 	const t = await sequelize.transaction();
 	try {
 		const { id } = req.params;
-		const {
-			is_active
-		} = req.body;
+		const { is_active } = req.body;
 
 		const partner = await BusinessPartner.findByPk(id, { transaction: t });
 		if (!partner) throw new AppError('Partner not found', 404);
@@ -452,19 +481,25 @@ exports.updateVendorCanLogin = catchAsync(async (req, res) => {
 		if (user) {
 			await user.update(
 				{
-					is_active
+					is_active,
 				},
 				{ transaction: t }
 			);
 		}
 
 		await t.commit();
-		res.status(200).json({ message: `Vendor can login status is now ${is_active ? 'enabled.' : 'disabled.'}`, partner });
+		res.status(200).json({
+			message: `Vendor can login status is now ${
+				is_active ? 'enabled.' : 'disabled.'
+			}`,
+			partner,
+		});
 	} catch (error) {
 		await t.rollback();
 		console.error(error);
-		res
-			.status(500)
-			.json({ message: 'Error updating vendor can login status', error: error.message });
+		res.status(500).json({
+			message: 'Error updating vendor can login status',
+			error: error.message,
+		});
 	}
 });

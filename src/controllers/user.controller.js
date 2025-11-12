@@ -2,6 +2,18 @@ const { UserService } = require('../services/index');
 const catchAsync = require('../utils/catchAsync');
 const bcrypt = require('bcrypt');
 const { body, validationResult } = require('express-validator');
+const { print } = require('../utils/common');
+const {
+	s3,
+	PutObjectCommand,
+	DeleteObjectCommand,
+	generateSignedUrl,
+} = require('../utils/s3Bucket');
+const path = require('node:path');
+const fs = require('node:fs');
+const { User } = require('../models/index');
+const AppError = require('../utils/AppError');
+const crypto = require('crypto');
 
 const userService = new UserService();
 
@@ -43,22 +55,31 @@ const validateUser = [
 ];
 
 const validateUpdateUser = [
-  body('name').trim().notEmpty().withMessage('Name is required'),
-  body('email').trim().isEmail().withMessage('Invalid email'),
-  body('password')
-    .optional()
-    .isLength({ min: 6 })
-    .withMessage('Password must be at least 6 characters'),
-  body('roleId').toInt().isInt().withMessage('Role ID must be an integer'),
-  body('orgId').toInt().isInt().withMessage('Organization ID must be an integer'),
-  body('vendorCompanyName').trim().notEmpty().withMessage('Vendor Company Name is required'),
-  body('vendorCompanyCode').trim().notEmpty().withMessage('Vendor Company Code is required'),
-  body('vendorContactNo')
-    .optional()
-    .trim()
-    .matches(/^[0-9+\-()\s]*$/)
-    .withMessage('Invalid contact number'),
-  body('vendorAddress').optional().trim(),
+	body('name').trim().notEmpty().withMessage('Name is required'),
+	body('email').trim().isEmail().withMessage('Invalid email'),
+	body('password')
+		.optional()
+		.isLength({ min: 6 })
+		.withMessage('Password must be at least 6 characters'),
+	body('roleId').toInt().isInt().withMessage('Role ID must be an integer'),
+	body('orgId')
+		.toInt()
+		.isInt()
+		.withMessage('Organization ID must be an integer'),
+	body('vendorCompanyName')
+		.trim()
+		.notEmpty()
+		.withMessage('Vendor Company Name is required'),
+	body('vendorCompanyCode')
+		.trim()
+		.notEmpty()
+		.withMessage('Vendor Company Code is required'),
+	body('vendorContactNo')
+		.optional()
+		.trim()
+		.matches(/^[0-9+\-()\s]*$/)
+		.withMessage('Invalid contact number'),
+	body('vendorAddress').optional().trim(),
 ];
 
 const createUser = catchAsync(async (req, res) => {
@@ -117,7 +138,7 @@ const updateUser = catchAsync(async (req, res) => {
 		vendorCompanyName,
 		vendorCompanyCode,
 		vendorContactNo,
-		vendorAddress
+		vendorAddress,
 	} = req.body;
 
 	const payload = {
@@ -131,9 +152,9 @@ const updateUser = catchAsync(async (req, res) => {
 		vendor_address: vendorAddress,
 	};
 
-	if(password){
+	if (password) {
 		const hashedPassword = await bcrypt.hash(password, 10);
-		payload.password = hashedPassword
+		payload.password = hashedPassword;
 	}
 
 	const vendor = await userService.update(id, payload);
@@ -148,7 +169,7 @@ const updateUser = catchAsync(async (req, res) => {
 exports.update = [...validateUpdateUser, updateUser];
 
 exports.getAllUsers = catchAsync(async (req, res) => {
-	const {org_id} = req.user;
+	const { org_id } = req.user;
 	const vendors = await userService.getAllUsers(org_id);
 	res.status(201).json({
 		status: true,
@@ -170,8 +191,8 @@ exports.getUserById = catchAsync(async (req, res) => {
 
 exports.destroy = catchAsync(async (req, res) => {
 	const { id } = req.params;
-	console.log("id => " , id);
-	
+	console.log('id => ', id);
+
 	const vendor = await userService.destroy(id);
 	res.status(201).json({
 		status: true,
@@ -194,7 +215,16 @@ exports.getTechSupportUsers = catchAsync(async (req, res) => {
 exports.updateUserProfile = catchAsync(async (req, res) => {
 	const id = req.user.id;
 	const { name, password } = req.body;
-	const image = req.file;
+	// const image = req.file;
+	const image = req.files?.image?.[0] ?? null;
+	const logo = req.files?.logo?.[0] ?? null;
+
+	const userData = await User.findByPk(id);
+
+	if (!userData) {
+		throw new AppError('User not found.');
+		return;
+	}
 
 	const updateData = { name };
 
@@ -202,8 +232,53 @@ exports.updateUserProfile = catchAsync(async (req, res) => {
 		updateData.password = await bcrypt.hash(password, 10);
 	}
 
+	print(image, 'image => ');
+	print(logo, 'logo => ');
 	if (image) {
-		updateData.image = image.relativePath;
+		if (userData.image) {
+			const command = new DeleteObjectCommand({
+				Bucket: process.env.AWS_BUCKET_NAME,
+				Key: userData.image,
+			});
+
+			await s3.send(command);
+		}
+		const generated_filename = generateUniqueFilename(image.originalname);
+		const fullPath = `server_uploads/profile/${generated_filename}`;
+		const fileStream = fs.createReadStream(image.path);
+		const uploadParams = {
+			Bucket: process.env.AWS_BUCKET_NAME,
+			Key: fullPath,
+			Body: fileStream,
+			ContentType: image.mimetype,
+		};
+
+		const result = await s3.send(new PutObjectCommand(uploadParams));
+		updateData.image = fullPath;
+	}
+
+	if (logo) {
+		if (userData.logo) {
+			const command = new DeleteObjectCommand({
+				Bucket: process.env.AWS_BUCKET_NAME,
+				Key: userData.logo,
+			});
+
+			await s3.send(command);
+		}
+		print(logo, 'hasLogo => ')
+		const generated_filename = generateUniqueFilename(logo.originalname);
+		const fullPath = `server_uploads/company_logos/${generated_filename}`;
+		const fileStream = fs.createReadStream(logo.path);
+		const uploadParams = {
+			Bucket: process.env.AWS_BUCKET_NAME,
+			Key: fullPath,
+			Body: fileStream,
+			ContentType: logo.mimetype,
+		};
+
+		const result = await s3.send(new PutObjectCommand(uploadParams));
+		updateData.logo = fullPath;
 	}
 
 	const user = await userService.update(id, updateData);
@@ -247,3 +322,10 @@ exports.resetPassword = catchAsync(async (req, res) => {
 		data: null,
 	});
 });
+
+function generateUniqueFilename(originalName) {
+	const timestamp = Date.now(); // milliseconds
+	const randomHash = crypto.randomBytes(6).toString('hex'); // 12 chars
+	const extension = path.extname(originalName); // e.g., '.jpeg'
+	return `${timestamp}-${randomHash}${extension}`;
+}

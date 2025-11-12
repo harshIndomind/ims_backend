@@ -3,6 +3,7 @@ const { JWT_REFRESH_SECRET } = require('../config/serverConfig');
 const catchAsync = require('../utils/catchAsync');
 const jwt = require('jsonwebtoken');
 const { generateAccessToken } = require('../utils/generateToken');
+const { User, Role, BusinessPartner, Address, organization } = require('../models/index');
 
 exports.register = catchAsync(async (req, res) => {
 	const user = await AuthService.register(req.body);
@@ -22,6 +23,31 @@ exports.refreshToken = catchAsync(async (req, res) => {
 
 	try {
 		const decoded = jwt.verify(token, JWT_REFRESH_SECRET);
+		const user = await User.findOne({
+			where: { id: decoded.id, is_active: 1 },
+			include: [
+				{ model: Role },
+				{
+					model: BusinessPartner,
+					as: 'partner',
+					include: { model: Address, as: 'addresses' },
+				},
+				{ model: organization, as: 'organization' },
+			],
+		});
+		if (!user) throw new AppError('User not found!', 401);
+
+		if (user.image) {
+			decoded.avatar = await generateSignedUrl(user.image);
+		}
+
+		let state_id = null;
+		if (user.Role.name === 'Admin') {
+			state_id = user.organization.state_id;
+		} else if (['Vendor', 'Vendor-Customer'].includes(user.Role.name)) {
+			state_id = user?.partner?.addresses[0].state_id;
+		}
+
 		const payload = {
 			id: decoded.id,
 			role: decoded.role,
@@ -29,7 +55,7 @@ exports.refreshToken = catchAsync(async (req, res) => {
 			roleId: decoded.roleId,
 			avatar: decoded.avatar,
 			org_id: decoded.org_id,
-			state_id: 9
+			state_id,
 		};
 
 		const accessToken = generateAccessToken(payload);

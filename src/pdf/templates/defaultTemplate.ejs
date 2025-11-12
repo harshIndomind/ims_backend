@@ -25,16 +25,17 @@
             align-items: center;
             margin-bottom: 25px;
             padding: 15px 20px;
-            background: linear-gradient(90deg, #2980b9 0%, #3498db 100%);
-            color: white;
+            /*background: linear-gradient(90deg, #2980b9 0%, #3498db 100%);*/
+            background: #f1f1f1;
+            color: #333;
             border-radius: 6px;
         }
 
         .logo {
-            width: 100px;
+            width: 200px;
             height: auto;
             border-radius: 4px;
-            background-color: white;
+            /*background-color: white;*/
             padding: 4px;
         }
 
@@ -66,7 +67,7 @@
         .header-right h4 {
             margin: 0 0 4px;
             font-size: 15px;
-            color: #fff;
+            color: #333;
             text-transform: uppercase;
         }
 
@@ -289,7 +290,9 @@
             }
 
             .header {
-                background: linear-gradient(90deg, #2980b9 0%, #3498db 100%) !important;
+                /* background: linear-gradient(90deg, #2980b9 0%, #3498db 100%) !important; */
+                background: #f1f1f1  !important;
+                color: #333 !important;
                 -webkit-print-color-adjust: exact !important;
             }
 
@@ -314,7 +317,11 @@
     <div class="invoice-section">
         <div class="header">
             <div class="header-left">
-                <img src="https://placehold.co/100x60" alt="Company Logo" class="logo" />
+                <% if(invoice.businessLogo){ %>
+                    <img src="<%= invoice.businessLogo %>" alt="Company Logo" class="logo" />
+                    <% }else { %>
+                        <img src="https://placehold.co/100x60" alt="Company Logo" class="logo" />
+                        <% } %>
             </div>
 
             <div class="header-center">
@@ -322,12 +329,25 @@
             </div>
 
             <div class="header-right">
-                <h4>INDOMIND AI LLP</h4>
-                <p>
+                <h4>
+                    <%= invoice.business.org_name ?? '' %>
+                </h4>
+                <!-- <p>
                     Ofis Square Tower<br>
                     Block A, Sector 3, Noida, Uttar Pradesh 201301<br>
                     GSTIN: 07ABCDE1234F1Z5<br>
                     support@indomind.ai
+                </p> -->
+                <p>
+                    <% if(invoice.business.address) {%>
+                        <%- invoice.business.address %><br>
+                    <% } %>
+                    <% if(invoice.business.org_gst_number) {%>
+                        <strong>GSTIN:</strong> <%- invoice.business.org_gst_number %><br>
+                    <% } %>
+                    <% if(invoice.business.org_email) {%>
+                        <strong>Email:</strong> <%- invoice.business.org_email %><br>
+                    <% } %>
                 </p>
                 <h5><strong>
                         <%= invoice.copyTitle %>
@@ -549,117 +569,140 @@
         <div style="border-bottom:1px dotted #ccc; padding-bottom:6px; margin-bottom:8px; font-weight:bold;">
             Bank Details
         </div>
-        <div style="margin-bottom:4px;"><strong>Bank Name:</strong> <%= invoice?.bankDetails?.bank_name || 'N/A' %></div>
-        <div style="margin-bottom:4px;"><strong>Account No:</strong> <%= invoice?.bankDetails?.account_no || 'N/A' %></div>
-        <div style="margin-bottom:8px;"><strong>IFSC:</strong> <%= invoice?.bankDetails?.bank_ifsc || 'N/A' %></div>
+        <div style="margin-bottom:4px;"><strong>Bank Name:</strong> <%= invoice?.bankDetails?.bank_name || ' N/A' %>
+    </div>
+    <div style="margin-bottom:4px;"><strong>Account No:</strong>
+        <%= invoice?.bankDetails?.account_no || 'N/A' %>
+    </div>
+    <div style="margin-bottom:8px;"><strong>IFSC:</strong>
+        <%= invoice?.bankDetails?.bank_ifsc || 'N/A' %>
+    </div>
 
-        <!-- Additional Notes -->
-        <% if (invoice.additionalNotes && invoice.additionalNotes.length > 0) { %>
-            <% invoice.additionalNotes.forEach((item) => { %>
-                <div style="border-top:1px dotted #ccc; margin-top:8px; padding-top:6px;">
-                    <div style="font-weight:bold;">
-                        <%= item.title %>
-                    </div>
-                    <div style="margin-top:4px; white-space:pre-line;"><%= item.detail %></div>
+    <!-- Additional Notes -->
+    <% if (invoice.additionalNotes && invoice.additionalNotes.length> 0) { %>
+        <% invoice.additionalNotes.forEach((item)=> { %>
+            <div style="border-top:1px dotted #ccc; margin-top:8px; padding-top:6px;">
+                <div style="font-weight:bold;">
+                    <%= item.title %>
                 </div>
+                <div style="margin-top:4px; white-space:pre-line;">
+                    <%= item.detail %>
+                </div>
+            </div>
             <% }) %>
-        <% } %>
-    </div>
-
-    <!-- Right Column -->
-    <div style="width:40%; border:1px dotted #ccc; border-radius:4px; padding:10px; box-sizing:border-box;position:relative;">
-        <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-            <span><strong>Taxable Amount</strong></span>
-            <span><%= parseFloat(invoice.totalTaxableAmount).toFixed(2) %></span>
-        </div>
-
-        <% if (!invoice.same_state) { %>
-            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-                <span><strong>Add : IGST</strong></span>
-                <span><%= parseFloat(invoice.totalIgst).toFixed(2) %></span>
-            </div>
-        <% } else { %>
-            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-                <span><strong>Add : CGST</strong></span>
-                <span><%= parseFloat(invoice.totalCgst).toFixed(2) %></span>
-            </div>
-            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-                <span><strong>Add : SGST</strong></span>
-                <span><%= parseFloat(invoice.totalSgst).toFixed(2) %></span>
-            </div>
-        <% } %>
-
-        <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-            <span><strong>Total Tax</strong></span>
-            <span><%= parseFloat(invoice.total_tax).toFixed(2) %></span>
-        </div>
-
-        <% if (invoice.customField1 && invoice.customField1.calculatedValue) { %>
-            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-                <span><strong>
-                    <%= invoice.customField1.label || ' Additional Charge / Discount' %>
-                                            <%= invoice.customField1.valueType==='percentage' ?
-                                                `(${invoice.customField1.value}%)` : '' %>
-                                                </strong></span>
-                                                <span>
-                                                    <% if (invoice.customField1.operationType=='-' ) { %>-<% } %>
-                                                            <%= parseFloat(invoice.customField1.calculatedValue).toFixed(2)
-                                                                %>
-                                                </span>
-    </div>
-    <% } %>
-
-        <% if (invoice.customField2 && invoice.customField2.calculatedValue) { %>
-            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-                <span><strong>
-                        <%= invoice.customField2.label || 'Additional Charge / Discount' %>
-                            <%= invoice.customField2.valueType==='percentage' ? `(${invoice.customField2.value}%)` : ''
-                                %>
-                    </strong></span>
-                <span>
-                    <% if (invoice.customField2.operationType=='-' ) { %>-<% } %>
-                            <%= parseFloat(invoice.customField2.calculatedValue).toFixed(2) %>
-                </span>
-            </div>
-            <% } %>
-
-                <div
-                    style="border-top:1px dotted #ccc; margin-top:6px; padding-top:6px; display:flex; justify-content:space-between; color:#e74c3c;">
-                    <strong>Total Amount After Tax</strong>
-                    <strong>₹ <%= parseFloat(invoice.grandTotal).toFixed(2) %>
-                    </strong>
-                </div>
-                <!-- Footer Note -->
-                <div style="border-top:1px dotted #ccc; margin-top:15px; padding-top:8px; color:#555; font-size:8px;">
-                    <!-- (E & O.E.) -->
-                    <div style="text-align:right; margin-bottom:6px;">
-                        <em>(E & O.E.)</em>
+                <% } %>
                     </div>
 
-                    <!-- Certification + Company Name -->
-                    <div style="border-top:1px dotted #ccc; margin-top:8px; padding-top:8px;">
-                        <div style="text-align:center; line-height:1.4;">
-                            <div>Certified that the particulars given above are
-                                true and correct.</div>
-                            <div style="margin-top:4px; font-weight:bold;">For
-                                INDOMIND AI LLP</div>
-                        </div>
-                    </div>
-
-                    <!-- Signature Space -->
+                    <!-- Right Column -->
                     <div
-                        style="border-top:1px dotted #ccc; margin-top:20px; padding-top:25px; min-height:80px; text-align:center;">
-                        <strong>Authorised Signatory</strong>
+                        style="width:40%; border:1px dotted #ccc; border-radius:4px; padding:10px; box-sizing:border-box;position:relative;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                            <span><strong>Taxable Amount</strong></span>
+                            <span>
+                                <%= parseFloat(invoice.totalTaxableAmount).toFixed(2) %>
+                            </span>
+                        </div>
+
+                        <% if (!invoice.same_state) { %>
+                            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                                <span><strong>Add : IGST</strong></span>
+                                <span>
+                                    <%= parseFloat(invoice.totalIgst).toFixed(2) %>
+                                </span>
+                            </div>
+                            <% } else { %>
+                                <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                                    <span><strong>Add : CGST</strong></span>
+                                    <span>
+                                        <%= parseFloat(invoice.totalCgst).toFixed(2) %>
+                                    </span>
+                                </div>
+                                <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                                    <span><strong>Add : SGST</strong></span>
+                                    <span>
+                                        <%= parseFloat(invoice.totalSgst).toFixed(2) %>
+                                    </span>
+                                </div>
+                                <% } %>
+
+                                    <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                                        <span><strong>Total Tax</strong></span>
+                                        <span>
+                                            <%= parseFloat(invoice.total_tax).toFixed(2) %>
+                                        </span>
+                                    </div>
+
+                                    <% if (invoice.customField1 && invoice.customField1.calculatedValue) { %>
+                                        <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                                            <span><strong>
+                                                    <%= invoice.customField1.label || ' Additional Charge / Discount' %>
+                                                        <%= invoice.customField1.valueType==='percentage' ?
+                                                            `(${invoice.customField1.value}%)` : '' %>
+                                                </strong></span>
+                                            <span>
+                                                <% if (invoice.customField1.operationType=='-' ) { %>-<% } %>
+                                                        <%= parseFloat(invoice.customField1.calculatedValue).toFixed(2)
+                                                            %>
+                                            </span>
+                                        </div>
+                                        <% } %>
+
+                                            <% if (invoice.customField2 && invoice.customField2.calculatedValue) { %>
+                                                <div
+                                                    style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                                                    <span><strong>
+                                                            <%= invoice.customField2.label
+                                                                || 'Additional Charge / Discount' %>
+                                                                <%= invoice.customField2.valueType==='percentage' ?
+                                                                    `(${invoice.customField2.value}%)` : '' %>
+                                                        </strong></span>
+                                                    <span>
+                                                        <% if (invoice.customField2.operationType=='-' && parseFloat(invoice.customField2.calculatedValue).toFixed(2) > 0) { %>-<% } %>
+                                                                <%= parseFloat(invoice.customField2.calculatedValue).toFixed(2)
+                                                                    %>
+                                                    </span>
+                                                </div>
+                                                <% } %>
+
+                                                    <div
+                                                        style="border-top:1px dotted #ccc; margin-top:6px; padding-top:6px; display:flex; justify-content:space-between; color:#e74c3c;">
+                                                        <strong>Total Amount After Tax</strong>
+                                                        <strong>₹ <%= parseFloat(invoice.grandTotal).toFixed(2) %>
+                                                        </strong>
+                                                    </div>
+                                                    <!-- Footer Note -->
+                                                    <div
+                                                        style="border-top:1px dotted #ccc; margin-top:15px; padding-top:8px; color:#555; font-size:8px;">
+                                                        <!-- (E & O.E.) -->
+                                                        <div style="text-align:right; margin-bottom:6px;">
+                                                            <em>(E & O.E.)</em>
+                                                        </div>
+
+                                                        <!-- Certification + Company Name -->
+                                                        <div
+                                                            style="border-top:1px dotted #ccc; margin-top:8px; padding-top:8px;">
+                                                            <div style="text-align:center; line-height:1.4;">
+                                                                <div>Certified that the particulars given above are
+                                                                    true and correct.</div>
+                                                                <div style="margin-top:4px; font-weight:bold;">For
+                                                                    <%= invoice.business.org_name ?? '' %></div>
+                                                            </div>
+                                                        </div>
+
+                                                        <!-- Signature Space -->
+                                                        <div
+                                                            style="border-top:1px dotted #ccc; margin-top:20px; padding-top:25px; min-height:80px; text-align:center;">
+                                                            <strong>Authorised Signatory</strong>
+                                                        </div>
+                                                    </div>
+
                     </div>
-                </div>
+                    </div>
 
-                </div>
-                </div>
-
-                <!-- <div class="footer">
+                    <!-- <div class="footer">
                     <p>Thank you for your business!</p>
                 </div> -->
-                </div>
+                    </div>
 
 </body>
 
