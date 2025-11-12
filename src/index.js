@@ -109,6 +109,7 @@ async function prepareAndStartServer() {
 	);
 	app.use(`${apiPrefix}/v1/invoices`, require('./routes/v1/invoice.routes'));
 	app.use(`${apiPrefix}/v1/reports`, require('./routes/v1/reports.routes'));
+	app.use(`${apiPrefix}/v1/registration-types`, require('./routes/v1/registration-types.routes'));
 
 	app.get('/', (req, res) => {
 		res.status(200).json({ status: true, message: '✅ Its working.' });

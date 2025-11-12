@@ -10,6 +10,7 @@ const {
 	Country,
 	GstStateCode,
 	organization,
+	RegistrationType,
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
@@ -56,6 +57,7 @@ exports.createPartner = catchAsync(async (req, res) => {
 			gstin: vendorCompany.gstin,
 			pan: vendorCompany.pan,
 			registration_type: vendorCompany.registrationType,
+			registration_type_id: vendorCompany.registrationType,
 			addresses: [{ type: 'billing', ...billingAddress }],
 		};
 
@@ -138,6 +140,10 @@ exports.getAllPartners = catchAsync(async (req, res) => {
 				model: organization,
 				as: 'organization',
 			},
+			{
+				model: RegistrationType,
+				as: 'registrationType',
+			},
 		],
 	});
 
@@ -170,6 +176,10 @@ exports.getPartnerById = catchAsync(async (req, res) => {
 				model: User,
 				as: 'user',
 				attributes: ['id', 'name', 'email', 'roleId'],
+			},
+			{
+				model: RegistrationType,
+				as: 'registrationType',
 			},
 		],
 	});
@@ -252,6 +262,8 @@ exports.updatePartner = catchAsync(async (req, res) => {
 				gstin: vendorCompany?.gstin,
 				pan: vendorCompany?.pan || partner.pan,
 				registration_type:
+					vendorCompany?.registrationType || partner.registration_type,
+				registration_type_id:
 					vendorCompany?.registrationType || partner.registration_type,
 				organization_id: orgId || partner.organization_id,
 			},
@@ -440,9 +452,7 @@ exports.updateVendorCanLogin = catchAsync(async (req, res) => {
 	const t = await sequelize.transaction();
 	try {
 		const { id } = req.params;
-		const {
-			is_active
-		} = req.body;
+		const { is_active } = req.body;
 
 		const partner = await BusinessPartner.findByPk(id, { transaction: t });
 		if (!partner) throw new AppError('Partner not found', 404);
@@ -452,19 +462,25 @@ exports.updateVendorCanLogin = catchAsync(async (req, res) => {
 		if (user) {
 			await user.update(
 				{
-					is_active
+					is_active,
 				},
 				{ transaction: t }
 			);
 		}
 
 		await t.commit();
-		res.status(200).json({ message: `Vendor can login status is now ${is_active ? 'enabled.' : 'disabled.'}`, partner });
+		res.status(200).json({
+			message: `Vendor can login status is now ${
+				is_active ? 'enabled.' : 'disabled.'
+			}`,
+			partner,
+		});
 	} catch (error) {
 		await t.rollback();
 		console.error(error);
-		res
-			.status(500)
-			.json({ message: 'Error updating vendor can login status', error: error.message });
+		res.status(500).json({
+			message: 'Error updating vendor can login status',
+			error: error.message,
+		});
 	}
 });

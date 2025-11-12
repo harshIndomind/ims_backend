@@ -32,6 +32,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'partner_id',
 				as: 'openingBalances',
 			});
+			BusinessPartner.belongsTo(models.RegistrationType, {
+				foreignKey: 'registration_type_id',
+				as: 'registrationType',
+			});
 		}
 	}
 	BusinessPartner.init(
@@ -73,6 +77,15 @@ module.exports = (sequelize, DataTypes) => {
 			is_active: {
 				type: DataTypes.BOOLEAN,
 				defaultValue: false,
+			},
+			registration_type_id: {
+				type: DataTypes.INTEGER,
+				references: {
+					model: 'RegistrationTypes',
+					key: 'id',
+				},
+				onUpdate: 'CASCADE',
+				onDelete: 'RESTRICT',
 			},
 			created_by: DataTypes.INTEGER,
 		},
