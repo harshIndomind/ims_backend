@@ -17,7 +17,7 @@ const { sendForgotPasswordMail } = require('../utils/mailer');
 const crypto = require('crypto');
 const { Op } = require('sequelize');
 const bcrypt = require('bcrypt');
-
+const { generateSignedUrl } = require('../utils/s3Bucket');
 class UserRepository {
 	// constructor(userModel) {
 	// 	this.userModel = userModel;
@@ -118,7 +118,9 @@ class UserRepository {
 					'id',
 					'name',
 					'email',
-					['image', 'imageUrl'],
+					'image',
+					'logo',
+					// ['image', 'imageUrl'],
 					// 'vendor_company_name',
 					// 'vendor_company_code',
 					// 'vendor_contact_no',
@@ -153,6 +155,12 @@ class UserRepository {
 			const userData = user.get({ plain: true });
 
 			let response = {};
+			if (userData.image) {
+				userData.imageUrl = await generateSignedUrl(user.image);
+			}
+			if (userData.logo) {
+				userData.logoUrl = await generateSignedUrl(user.logo);
+			}
 			if (userData) {
 				response = { ...userData };
 				if (
@@ -173,7 +181,7 @@ class UserRepository {
 					userData?.partner
 				) {
 					const billing = userData?.partner?.addresses[0];
-					
+
 					const addressParts = [
 						billing.address1,
 						billing.address2,

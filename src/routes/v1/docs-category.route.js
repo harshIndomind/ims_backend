@@ -31,7 +31,7 @@ router.delete(
 );
 router.get(
 	'/',
-	checkRole(['Super Admin', 'Admin']),
+	checkRole(['Super Admin', 'Admin', 'Vendor', 'Vendor-Customer']),
 	DocsCategoryController.getAllDocsCategories
 );
 router.get(

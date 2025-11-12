@@ -1,12 +1,13 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const { User, Role } = require('../models/index');
+const { User, Role, BusinessPartner, Address, organization } = require('../models/index');
 const { JWT_ACCESS_SECRET } = require('../config/serverConfig');
 const {
 	generateAccessToken,
 	generateRefreshToken,
 } = require('../utils/generateToken');
 const AppError = require('../utils/AppError');
+const { generateSignedUrl } = require('../utils/s3Bucket');
 
 exports.register = async ({ name, email, password, roleId }) => {
 	const hashed = await bcrypt.hash(password, 10);
@@ -14,13 +15,43 @@ exports.register = async ({ name, email, password, roleId }) => {
 };
 
 exports.login = async ({ email, password }, res) => {
-	const user = await User.findOne({ where: { email, is_active: 1 }, include: Role });
+	const user = await User.findOne({
+		where: { email, is_active: 1 },
+		include: [
+			{ model: Role },
+			{
+				model: BusinessPartner,
+				as: 'partner',
+				include: { model: Address, as: 'addresses' },
+			},
+			{ model: organization, as: 'organization' },
+		],
+	});
 	if (!user) throw new AppError('User not found!', 401);
+
+	if (user.image) {
+		user.image = await generateSignedUrl(user.image);
+	}
 
 	const isMatch = await bcrypt.compare(password, user.password);
 	if (!isMatch) throw new AppError('Invalid credentials', 401);
 
-	const payload = { id: user.id, role: user.Role.name, companyId: user.companyIds, roleId: user.roleId, avatar: user.image, org_id: user.org_id, state_id: 9 };
+	let state_id = null;
+	if (user.Role.name === 'Admin') {
+		state_id = user.organization.state_id;
+	} else if (['Vendor', 'Vendor-Customer'].includes(user.Role.name)) {
+		state_id = user?.partner?.addresses[0].state_id;
+	}
+
+	const payload = {
+		id: user.id,
+		role: user.Role.name,
+		companyId: user.companyIds,
+		roleId: user.roleId,
+		avatar: user.image,
+		org_id: user.org_id,
+		state_id,
+	};
 	const accessToken = generateAccessToken(payload);
 	const refreshToken = generateRefreshToken(payload);
 
@@ -50,6 +81,6 @@ exports.login = async ({ email, password }, res) => {
 		roleId: user.roleId,
 		imageUrl: user.image,
 		org_id: user.org_id,
-		state_id: 9
+		state_id
 	};
 };

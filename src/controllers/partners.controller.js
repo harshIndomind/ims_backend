@@ -17,6 +17,7 @@ const AppError = require('../utils/AppError');
 const { fn, col, Op, JSON } = require('sequelize');
 const bcrypt = require('bcrypt');
 const uomMap = require('../utils/uomConversionMap');
+const { print } = require('../utils/common');
 
 exports.createPartner = catchAsync(async (req, res) => {
 	const t = await sequelize.transaction();
@@ -33,6 +34,22 @@ exports.createPartner = catchAsync(async (req, res) => {
 			additionalDetails,
 			openingBalance,
 		} = req.body;
+
+		const businessData = await BusinessPartner.findOne({
+			where: { code: vendorCompany.code },
+		});
+
+		if (businessData) {
+			throw new AppError('Vendor Code must be unique');
+		}
+
+		const userData = await User.findOne({
+			where: { email: email },
+		});
+
+		if (userData) {
+			throw new AppError('A user with this email already exists.');
+		}
 
 		const type = await Role.findOne({ where: { id: roleId }, transaction: t });
 		if (!type) throw new AppError('Role not found', 404);
@@ -109,10 +126,12 @@ exports.createPartner = catchAsync(async (req, res) => {
 			.json({ message: type.name + ' created successfully', partner });
 	} catch (error) {
 		await t.rollback();
-		console.error(error);
 		res
 			.status(500)
-			.json({ message: 'Error creating partner', error: error.message });
+			.json({
+				message: error.message || 'Error creating partner',
+				error: error.message,
+			});
 	}
 });
 
