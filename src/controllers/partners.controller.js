@@ -36,11 +36,21 @@ exports.createPartner = catchAsync(async (req, res) => {
 		} = req.body;
 
 		const businessData = await BusinessPartner.findOne({
-			where: { code: vendorCompany.code },
+			where: {
+				[Op.or]: [
+					{ code: vendorCompany.code },
+					{ account_code: vendorCompany.account_code },
+				],
+			},
+			attributes: ['id'],
 		});
 
 		if (businessData) {
-			throw new AppError('Vendor Code must be unique');
+			const field =
+				businessData.code === vendorCompany.code
+					? 'Vendor code'
+					: 'Account code';
+			throw new AppError(`${field} already exists`);
 		}
 
 		const userData = await User.findOne({
@@ -68,7 +78,9 @@ exports.createPartner = catchAsync(async (req, res) => {
 			type: type.name.replace('-', '_').toLowerCase(),
 			name: vendorCompany.name,
 			code: vendorCompany.code,
-			account_code: vendorCompany.account_code ?? null,
+			account_code: vendorCompany.account_code
+				? vendorCompany.account_code
+				: null,
 			email: vendorCompany.email,
 			contact_no: vendorCompany.contactNo,
 			gstin: vendorCompany.gstin,
@@ -125,13 +137,12 @@ exports.createPartner = catchAsync(async (req, res) => {
 			.status(201)
 			.json({ message: type.name + ' created successfully', partner });
 	} catch (error) {
+		print(error, 'error=> ');
 		await t.rollback();
-		res
-			.status(500)
-			.json({
-				message: error.message || 'Error creating partner',
-				error: error.message,
-			});
+		res.status(500).json({
+			message: error.message || 'Error creating partner',
+			error: error.message,
+		});
 	}
 });
 
@@ -258,6 +269,23 @@ exports.updatePartner = catchAsync(async (req, res) => {
 		const partner = await BusinessPartner.findByPk(id, { transaction: t });
 		if (!partner) throw new AppError('Partner not found', 404);
 
+		const existing = await BusinessPartner.findOne({
+			where: {
+				id: { [Op.ne]: id }, // exclude current record
+				[Op.or]: [
+					{ code: vendorCompany.code },
+					{ account_code: vendorCompany.account_code },
+				],
+			},
+			transaction: t,
+		});
+
+		if (existing) {
+			const field =
+				existing.code === vendorCompany.code ? 'Vendor code' : 'Account code';
+			throw new AppError(`${field} already exists`);
+		}
+
 		// Update associated User (exclude email)
 		const user = await User.findByPk(partner.user_id, { transaction: t });
 		if (user) {
@@ -275,7 +303,9 @@ exports.updatePartner = catchAsync(async (req, res) => {
 			{
 				name: vendorCompany?.name || partner.name,
 				code: vendorCompany?.code || partner.code,
-				account_code: vendorCompany?.account_code || partner.account_code,
+				account_code: vendorCompany.account_code
+					? vendorCompany.account_code
+					: null,
 				email: vendorCompany?.email || partner.email,
 				contact_no: vendorCompany?.contactNo || partner.contact_no,
 				gstin: vendorCompany?.gstin,
@@ -357,7 +387,7 @@ exports.updatePartner = catchAsync(async (req, res) => {
 		console.error(error);
 		res
 			.status(500)
-			.json({ message: 'Error updating partner', error: error.message });
+			.json({ message: error.message || 'Error updating partner', error: error.message });
 	}
 });
 
@@ -502,4 +532,32 @@ exports.updateVendorCanLogin = catchAsync(async (req, res) => {
 			error: error.message,
 		});
 	}
+});
+
+exports.getOrganizationVendors = catchAsync(async (req, res) => {
+	const { org_id } = req.params;
+
+	const whereClause = {};
+	whereClause.organization_id = org_id;
+
+	const partners = await BusinessPartner.findAll({
+		where: whereClause,
+		// include: [
+		// 	{
+		// 		model: User,
+		// 		as: 'user',
+		// 		attributes: ['id', 'name', 'email', 'roleId', 'is_active'],
+		// 	},
+		// 	{
+		// 		model: organization,
+		// 		as: 'organization',
+		// 	},
+		// 	{
+		// 		model: RegistrationType,
+		// 		as: 'registrationType',
+		// 	},
+		// ],
+	});
+
+	res.status(200).json({ data: partners });
 });

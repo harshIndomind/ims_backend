@@ -607,7 +607,7 @@ exports.updateDocumentStatus = catchAsync(async (req, res) => {
 
 		const alert = await Alert.create({
 			title: 'Status Updated',
-			user_id: docDetails.user_id,
+			user_id: docDetails.vendor.user.id,
 			description,
 			createdAt: moment().tz('Asia/Kolkata').toDate(), // ✅ IST time
 		});
@@ -625,7 +625,7 @@ exports.updateDocumentStatus = catchAsync(async (req, res) => {
 			attributes: ['id'],
 		});
 
-		const allIds = [...allAdmins.map((a) => a.id), docDetails.user_id];
+		const allIds = [...allAdmins.map((a) => a.id), docDetails.vendor.user.id];
 
 		for (const id of allIds) {
 			sendToUser(id, 'new_alert', alert);
@@ -650,7 +650,6 @@ async function importDocumentCSV(generated_filename, status) {
 		const signedURL = await generateSignedUrl(`${key}.json`);
 
 		const { data } = await axios.get(signedURL);
-		console.log('data ', data);
 
 		let jsonData;
 

@@ -1,36 +1,25 @@
 const {
 	DocumentsUpload,
-	sequelize,
-	docs_category,
 	User,
 	Role,
 	organization,
-	BusinessPartner
+	BusinessPartner,
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
-const {
-	s3,
-	PutObjectCommand,
-	DeleteObjectCommand,
-	generateSignedUrl,
-} = require('../utils/s3Bucket');
-const path = require('path');
-const AppError = require('../utils/AppError');
-const { Op, fn, col, where } = require('sequelize');
+const { Op, fn, col } = require('sequelize');
 
 async function getOrganizationsCount() {
 	const count = await organization.count();
 	return count;
 }
 
-async function getVendorsCount() {
-	const count = await User.count({
-		include: [
-			{
-				model: Role,
-				where: { name: 'Vendor' },
-			},
-		],
+async function getVendorsCount(organizationId) {
+	let whereClause = {};
+	if (organizationId > 0) {
+		whereClause = { organization_id: organizationId };
+	}
+	const count = await BusinessPartner.count({
+		where: whereClause,
 	});
 	return count;
 }
@@ -40,11 +29,25 @@ async function getDocumentsCount() {
 	return count;
 }
 
-async function getDocumentsCountByVendorId(id) {
+async function getDocumentsCountByVendorId(organizationId, vendorId) {
 	const where = {};
-	if (parseInt(id) > 0) {
-		where['where'] = { partner_id: id };
+
+	if (parseInt(vendorId) > 0) {
+		where['where'] = { partner_id: vendorId };
+	} else if (parseInt(organizationId) > 0) {
+		const orgVendors = await BusinessPartner.findAll({
+			where: { organization_id: organizationId },
+			attributes: ['id'],
+			raw: true,
+		});
+
+		const vendorIds = orgVendors.map((v) => v.id);
+		console.log('vendorIds ', vendorIds);
+
+		where['where'] = { partner_id: { [Op.in]: vendorIds } };
 	}
+	console.log('where ', where);
+
 	const count = await DocumentsUpload.count(where);
 
 	return count;
@@ -53,24 +56,38 @@ async function getDocumentsCountByVendorId(id) {
 exports.getDashboardCounts = catchAsync(async (req, res) => {
 	const role = req.user.role;
 
-	const businessPartner = await BusinessPartner.findOne({ where: { user_id: req.user.id } });
+	const businessPartner = await BusinessPartner.findOne({
+		where: { user_id: req.user.id },
+	});
 
 	let vendorId = businessPartner?.id ?? '';
+	let organizationId = req.query.organizationId;
 	if (role !== 'Vendor') {
 		vendorId = req.query.vendorId;
+		organizationId = req.query.organizationId;
+	}
+	let organizationsCount = 1;
+	if (role === 'Super Admin') {
+		organizationsCount = await getOrganizationsCount();
 	}
 
-	const organizationsCount = await getOrganizationsCount();
-	const vendorsCount = await getVendorsCount();
+	let vendorsCount = 0;
+	if (role === 'Admin' || role === 'Super Admin') {
+		vendorsCount = await getVendorsCount(organizationId);
+	}
+
 	const documentsCount = await getDocumentsCount();
-	const documentsVendorCount = await getDocumentsCountByVendorId(vendorId);
+	const documentsVendorCount = await getDocumentsCountByVendorId(
+		organizationId,
+		vendorId
+	);
 	const counts = {};
-	if (organizationsCount && vendorsCount) {
+	// if (organizationsCount && vendorsCount) {
 		counts['organizationsCount'] = organizationsCount;
 		counts['vendorsCount'] = vendorsCount;
-		counts['documentsCount'] = documentsCount;
+		// counts['documentsCount'] = documentsCount;
 		counts['vendorDocumentsCount'] = documentsVendorCount;
-	}
+	// }
 
 	res.status(200).json({
 		status: true,
@@ -82,15 +99,37 @@ exports.getDashboardCounts = catchAsync(async (req, res) => {
 exports.getDashboardChartsData = catchAsync(async (req, res) => {
 	const role = req.user.role;
 	const user_id = req.user.id;
-	const timeRange = req.query.timeRange;
+	const { timeRange, vendorId, organizationId } = req.query;
 
 	let whereCondition = {};
-	if (role == 'Vendor') {
-		const businessPartner = await BusinessPartner.findOne({ where: { user_id } });
-		whereCondition = { partner_id: businessPartner.id };
+
+	// 1️⃣ Vendor-based role → restrict to vendor’s own BP
+	if (['Vendor', 'Vendor-Customer'].includes(role)) {
+		const businessPartner = await BusinessPartner.findOne({
+			where: { user_id },
+			attributes: ['id'],
+		});
+		whereCondition.partner_id = businessPartner.id;
+	} else {
+		// 2️⃣ If vendorId explicitly provided → highest priority
+		if (parseInt(vendorId) > 0) {
+			whereCondition.partner_id = vendorId;
+		}
+		// 3️⃣ If organizationId provided → get all vendor IDs from that org
+		else if (parseInt(organizationId) > 0) {
+			const orgVendors = await BusinessPartner.findAll({
+				where: { organization_id: organizationId },
+				attributes: ['id'],
+				raw: true,
+			});
+
+			const vendorIds = orgVendors.map((v) => v.id);
+
+			whereCondition.partner_id = { [Op.in]: vendorIds };
+		}
 	}
 
-	// 👇 Add time filter
+	// 4️⃣ Date filter
 	const now = new Date();
 	let pastDate = new Date();
 
@@ -99,13 +138,12 @@ exports.getDashboardChartsData = catchAsync(async (req, res) => {
 	} else if (timeRange === '30d') {
 		pastDate.setDate(now.getDate() - 30);
 	} else {
-		pastDate.setDate(now.getDate() - 90); // default to 90 days
+		pastDate.setDate(now.getDate() - 90);
 	}
 
-	whereCondition.createdAt = {
-		[Op.gte]: pastDate,
-	};
+	whereCondition.createdAt = { [Op.gte]: pastDate };
 
+	// 5️⃣ Get Stats
 	const uploadStats = await DocumentsUpload.findAll({
 		where: whereCondition,
 		attributes: [

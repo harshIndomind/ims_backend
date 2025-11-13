@@ -1607,11 +1607,20 @@ exports.exportSaleInvoices = catchAsync(async (req, res) => {
 			row.getCell(1).value = index + 1; // Sr. No.
 			row.getCell(2).value = inv.invoiceNo; // Invoice No.
 			row.getCell(3).value = inv.partner.name; // Company Name
-			const isoDate = new Date(
-				moment(inv.invoiceDetail.date).format('YYYY/DD/MM')
-			);
+			const inputDate = inv.invoiceDetail.date; // e.g., "13/11/2025"
+			console.log('inv.invoiceDetail.date ', inputDate);
 
-			row.getCell(4).value = format(isoDate, 'dd-MM-yyyy'); // Date
+			const momentDate = moment(inputDate, 'DD/MM/YYYY', true);
+
+			if (!momentDate.isValid()) {
+				console.error('Invalid date format:', inputDate);
+				return; // or handle accordingly
+			}
+
+			const isoDate = momentDate.toDate();
+			console.log('isoDate ', isoDate);
+
+			row.getCell(4).value = format(isoDate, 'dd-MM-yyyy');
 			row.getCell(5).value = inv.grandTotal; // Total
 			row.getCell(6).value = inv.paymentStatus.toUpperCase(); // Payment Status
 			row.getCell(7).value = inv.status.toUpperCase(); // Final Status

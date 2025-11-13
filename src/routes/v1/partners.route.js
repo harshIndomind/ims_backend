@@ -7,6 +7,7 @@ router.use(verifyToken); // all routes protected
 
 router.post('/', PartnersController.createPartner);
 router.patch('/can-login/:id', PartnersController.updateVendorCanLogin);
+router.get('/organization/:org_id', PartnersController.getOrganizationVendors);
 router.put('/:id', PartnersController.updatePartner);
 router.delete('/:id', PartnersController.deletePartner);
 router.get('/', PartnersController.getAllPartners);
