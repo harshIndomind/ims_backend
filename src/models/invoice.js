@@ -42,7 +42,6 @@ module.exports = (sequelize, DataTypes) => {
 			},
 			invoiceNo: {
 				type: DataTypes.STRING,
-				unique: true,
 				allowNull: false,
 			},
 			invoicePostfix: {

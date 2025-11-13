@@ -18,6 +18,7 @@ const {
 	generateSignedUrl,
 } = require('../utils/s3Bucket');
 const uomMap = require('../utils/uomConversionMap');
+const path = require('node:path');
 
 // Create Product
 exports.createProduct = async (req, res) => {
@@ -51,33 +52,30 @@ exports.createProduct = async (req, res) => {
 		if (typeof data.uom === 'string') {
 			data.uom = JSON.parse(data.uom);
 		}
-		console.log('====================Start Create Product====================');
-		console.log('createProduct => ', data);
-		console.log('====================End Create Product====================');
-		// return
-		if (req.files && req.files.length > 0) {
-			const uploadedFiles = [];
 
-			for (const file of req.files) {
-				const folderName = 'vcp_product_services_images'; // or your desired folder
-				const generated_filename = `${Date.now()}_${file.originalname}`;
-				const fullPath = `${folderName}/${generated_filename}`;
+		// if (req.files && req.files.length > 0) {
+		// 	const uploadedFiles = [];
 
-				const uploadParams = {
-					Bucket: process.env.AWS_BUCKET_NAME,
-					Key: fullPath,
-					Body: file.buffer,
-					ContentType: file.mimetype,
-				};
+		// 	for (const file of req.files) {
+		// 		const folderName = 'vcp_product_services_images'; // or your desired folder
+		// 		const generated_filename = `${Date.now()}_${file.originalname}`;
+		// 		const fullPath = `${folderName}/${generated_filename}`;
 
-				await s3.send(new PutObjectCommand(uploadParams));
+		// 		const uploadParams = {
+		// 			Bucket: process.env.AWS_BUCKET_NAME,
+		// 			Key: fullPath,
+		// 			Body: file.buffer,
+		// 			ContentType: file.mimetype,
+		// 		};
 
-				uploadedFiles.push(fullPath);
-			}
-			console.log('uploadedFiles ', uploadedFiles);
+		// 		await s3.send(new PutObjectCommand(uploadParams));
 
-			data.product_images = uploadedFiles.join(',');
-		}
+		// 		uploadedFiles.push(fullPath);
+		// 	}
+		// 	console.log('uploadedFiles ', uploadedFiles);
+
+		// 	data.product_images = uploadedFiles.join(',');
+		// }
 
 		// Remove unwanted batchDetails when not needed
 		if (data.stock_type !== 'batch') delete data.batchDetails;
@@ -353,7 +351,7 @@ exports.getProductById = async (req, res) => {
 			const images = productData.product_images.split(',');
 			for (const image of images) {
 				const signedURL = await generateSignedUrl(image);
-				signedImages.push(signedURL);
+				signedImages.push({name: image.split('/')[1],url: signedURL, type: path.extname(image.split('/')[1])});
 			}
 		}
 
@@ -395,25 +393,25 @@ exports.updateProduct = async (req, res) => {
 		console.log('====================End Update Product====================');
 
 		// Handle file uploads if any
-		if (req.files && req.files.length > 0) {
-			const uploadedFiles = [];
-			for (const file of req.files) {
-				const folderName = 'vcp_product_services_images';
-				const generated_filename = `${Date.now()}_${file.originalname}`;
-				const fullPath = `${folderName}/${generated_filename}`;
+		// if (req.files && req.files.length > 0) {
+		// 	const uploadedFiles = [];
+		// 	for (const file of req.files) {
+		// 		const folderName = 'vcp_product_services_images';
+		// 		const generated_filename = `${Date.now()}_${file.originalname}`;
+		// 		const fullPath = `${folderName}/${generated_filename}`;
 
-				const uploadParams = {
-					Bucket: process.env.AWS_BUCKET_NAME,
-					Key: fullPath,
-					Body: file.buffer,
-					ContentType: file.mimetype,
-				};
+		// 		const uploadParams = {
+		// 			Bucket: process.env.AWS_BUCKET_NAME,
+		// 			Key: fullPath,
+		// 			Body: file.buffer,
+		// 			ContentType: file.mimetype,
+		// 		};
 
-				await s3.send(new PutObjectCommand(uploadParams));
-				uploadedFiles.push(fullPath);
-			}
-			data.product_images = uploadedFiles.join(',');
-		}
+		// 		await s3.send(new PutObjectCommand(uploadParams));
+		// 		uploadedFiles.push(fullPath);
+		// 	}
+		// 	data.product_images = uploadedFiles.join(',');
+		// }
 
 		// Remove unnecessary fields based on stock_type
 		if (data.stock_type !== 'batch') delete data.batchDetails;
