@@ -1605,7 +1605,7 @@ exports.exportSaleInvoices = catchAsync(async (req, res) => {
 		response.forEach((inv, index) => {
 			const row = sheet.getRow(rowStart++);
 			row.getCell(1).value = index + 1; // Sr. No.
-			row.getCell(2).value = inv.invoiceNo; // Invoice No.
+			row.getCell(2).value = `${inv.invoicePrefix || ''}${inv.invoiceNo}${inv.invoicePostfix || ''}`; // Invoice No.
 			row.getCell(3).value = inv.partner.name; // Company Name
 			const inputDate = inv.invoiceDetail.date; // e.g., "13/11/2025"
 			console.log('inv.invoiceDetail.date ', inputDate);
