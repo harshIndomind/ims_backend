@@ -4,6 +4,7 @@ const catchAsync = require('../utils/catchAsync');
 const jwt = require('jsonwebtoken');
 const { generateAccessToken } = require('../utils/generateToken');
 const { User, Role, BusinessPartner, Address, organization } = require('../models/index');
+const { generateSignedUrl } = require('../utils/s3Bucket');
 
 exports.register = catchAsync(async (req, res) => {
 	const user = await AuthService.register(req.body);
@@ -69,7 +70,7 @@ exports.refreshToken = catchAsync(async (req, res) => {
 		});
 
 		res.json({ message: 'A new refresh token is generated...', accessToken });
-	} catch (err) {
+	} catch (err) {		
 		return res.status(403).json({ message: 'Invalid token' });
 	}
 });
