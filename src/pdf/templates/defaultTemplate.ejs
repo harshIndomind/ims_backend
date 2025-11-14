@@ -571,6 +571,9 @@
         </div>
         <div style="margin-bottom:4px;"><strong>Bank Name:</strong> <%= invoice?.bankDetails?.bank_name || ' N/A' %>
     </div>
+    <div style="margin-bottom:4px;"><strong>Account Holder Name:</strong>
+        <%= invoice?.bankDetails?.account_name || 'N/A' %>
+    </div>
     <div style="margin-bottom:4px;"><strong>Account No:</strong>
         <%= invoice?.bankDetails?.account_no || 'N/A' %>
     </div>
