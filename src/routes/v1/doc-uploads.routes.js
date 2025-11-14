@@ -67,9 +67,11 @@ router.get(
 
 router.get(
 	'/imported-purchase-invoices',
-	checkRole(['Super Admin', 'Admin', 'Vendor', 'Vendor-Customer']),
+	checkRole(['Super Admin', 'Admin']),
 	DocumentsUploadsController.getImportedInvoices
 );
+
+router.get('/imported-purchase-invoices/export', DocumentsUploadsController.exportSaleInvoices);
 
 router.get(
 	'/imported-purchase-invoices/:id',
