@@ -955,7 +955,7 @@ exports.downloadInvoicePdf = catchAsync(async (req, res) => {
 		res.json({ pdfUrl: pdfPath });
 	} catch (err) {
 		console.error(err);
-		res.status(500).json({ message: 'Failed to generate HTML' });
+		res.status(500).json({ message: err.message || 'Failed to generate HTML' });
 	}
 });
 

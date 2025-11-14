@@ -21,8 +21,12 @@ const path = require('path');
 const AppError = require('../utils/AppError');
 const { sendToUser } = require('../utils/socket');
 const { Op } = require('sequelize');
-const moment = require('moment-timezone');
+// const moment = require('moment-timezone');
 const axios = require('axios');
+const ExcelJS = require('exceljs');
+const { BASE_URL } = require('../config/serverConfig');
+const { format } = require('date-fns');
+const moment = require('moment');
 
 exports.uploadADocument = catchAsync(async (req, res) => {
 	const t = await sequelize.transaction();
@@ -770,8 +774,24 @@ exports.getImportedInvoices = catchAsync(async (req, res) => {
 	try {
 		const limit = parseInt(req.query.limit) || 10;
 		const offset = parseInt(req.query.offset) || 0;
+		const { from_date, to_date } = req.query;
+		const fromDate = new Date(from_date);
+		const toDate = new Date(to_date);
+
+		// Validate that both dates are valid
+		if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+			throw new Error('Invalid date range');
+		}
+
+		// Adjust the end date to include the full day (23:59:59)
+		toDate.setHours(23, 59, 59, 999);
 
 		const importedPurchasedInvoices = await InvoiceCsvImport.findAndCountAll({
+			where: {
+				createdAt: {
+					[Op.between]: [fromDate, toDate],
+				},
+			},
 			include: {
 				model: InvoiceCsvImportItem,
 				as: 'csv_items',
@@ -810,4 +830,282 @@ exports.getSingleImportedInvoices = catchAsync(async (req, res) => {
 	} catch (error) {
 		res.status(500).json({ error: error.message });
 	}
+});
+
+exports.exportSaleInvoices = catchAsync(async (req, res) => {
+	const { org_id, role } = req.user;
+	const { from_date, to_date } = req.query;
+	const fromDate = new Date(from_date);
+	const toDate = new Date(to_date);
+
+	// Validate that both dates are valid
+	if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+		throw new Error('Invalid date range');
+	}
+
+	// Adjust the end date to include the full day (23:59:59)
+	toDate.setHours(23, 59, 59, 999);
+	if (!org_id && role !== 'Admin') {
+		throw AppError(`You don't authorize to access this api.`);
+	}
+
+	const invoices = await InvoiceCsvImport.findAll({
+		where: {
+			createdAt: {
+				[Op.between]: [fromDate, toDate],
+			},
+		},
+		include: {
+			model: InvoiceCsvImportItem,
+			as: 'csv_items',
+		},
+		order: [['createdAt', 'DESC']],
+	});
+
+	let response = invoices.map((inv) => inv.get({ plain: true }));
+
+	const workbook = new ExcelJS.Workbook();
+	const templatePath = path.join(
+		__dirname,
+		'../templates/processed-purchase-invoices-template.xlsx'
+	);
+	const options = {
+		dateFormats: ['DD/MM/YYYY'],
+	};
+	await workbook.xlsx.readFile(templatePath, options);
+
+	const sheet = workbook.getWorksheet('Sheet1');
+	let rowStart = 2;
+
+	if (response) {
+		response.forEach((inv, index) => {
+			sheet.duplicateRow(rowStart, 1, true);
+
+			const row = sheet.getRow(rowStart);
+			const inputInvoiceDate = inv.invoice_date;
+			const inputAckDate = inv.ack_date;
+			const inputDueDate = inv.due_date;
+			const momentInvoiceDate = moment(inputInvoiceDate, 'DD/MM/YYYY', true);
+			const momentAckDate = moment(inputAckDate, 'DD/MM/YYYY', true);
+			const momentDueDate = moment(inputDueDate, 'DD/MM/YYYY', true);
+			if (!momentInvoiceDate.isValid()) {
+				console.error('Invalid date format:', inputInvoiceDate);
+				return;
+			}
+			if (!momentAckDate.isValid()) {
+				console.error('Invalid date format:', inputAckDate);
+				return;
+			}
+			if (!momentDueDate.isValid()) {
+				console.error('Invalid date format:', inputDueDate);
+				return;
+			}
+			const isoIvoiceDate = momentInvoiceDate.toDate();
+			const isoAckDate = momentAckDate.toDate();
+			const isoDueDate = momentDueDate.toDate();
+
+			row.getCell(1).value = index + 1; // SR. NO.
+			row.getCell(2).value = inv.voucher_type; // VOUCHER TYPE
+			row.getCell(3).value = inv.uploaded_file_name; // UPLOADED FILENAME
+			row.getCell(4).value = inv.organization_code; // ORGANIZATION CODE
+			row.getCell(5).value = inv.vendor_code; // VENDOR CODE
+			row.getCell(6).value = inv.company_name; // COMPANY NAME
+			row.getCell(7).value = inv.invoice_no; // INVOICE NO
+			row.getCell(8).value = format(isoIvoiceDate, 'dd-MM-yyyy'); // INVOICE DATE
+			row.getCell(9).value = inv.ack_no; // ACK NO
+			row.getCell(10).value = format(isoAckDate, 'dd-MM-yyyy'); // ACK DATE
+			row.getCell(11).value = format(isoDueDate, 'dd-MM-yyyy'); // DUE DATE
+			row.getCell(12).value = inv.cgst; // CGST
+			row.getCell(13).value = inv.sgst; // SGST
+			row.getCell(14).value = inv.total_amount; // TOTAL AMOUNT
+			row.getCell(15).value = inv.seller_contact_no; // SELLER CONTACT NO
+			row.getCell(16).value = inv.seller_email_address; // SELLER EMAIL ADDRESS
+			row.getCell(17).value = inv.seller_cin; // SELLER CIN
+			row.getCell(18).value = inv.seller_gstin; // SELLER GSTIN
+			row.getCell(19).value = inv.seller_pan; // SELLER PAN
+			row.getCell(20).value = inv.account_holder_name; // ACCOUNT HOLDER NAME
+			row.getCell(21).value = inv.seller_bank_name; // SELLER BANK NAME
+			row.getCell(22).value = inv.seller_account_no; // SELLER ACCOUNT NO
+			row.getCell(23).value = inv.seller_ifsc_code; // SELLER IFSC CODE
+			row.getCell(24).value = inv.seller_address; // SELLER ADDRESS
+			row.getCell(25).value = inv.seller_state; // SELLER STATE
+			row.getCell(26).value = inv.seller_district; // SELLER DISTRICT
+			row.getCell(27).value = inv.seller_pin_code; // SELLER PIN CODE
+			row.getCell(28).value = inv.place_of_supply; // PLACE OF SUPPLY
+			row.getCell(29).value = inv.bill_to_ship_to; // BILL TO SHIP TO
+			row.getCell(30).value = inv.buyer_email_address; // BUYER EMAIL ADDRESS
+			row.getCell(31).value = inv.buyer_gstin; // BUYER GSTIN
+			row.getCell(32).value = inv.buyer_contact_no; // BUYER CONTACT NO
+			row.getCell(33).value = inv.billing_buyer_address; // BILLING BUYER ADDRESS
+			row.getCell(34).value = inv.buyer_state; // BUYER STATE
+			row.getCell(35).value = inv.buyer_district; // BUYER DISTRICT
+			row.getCell(36).value = inv.buyer_pin_code; // BUYER PIN CODE
+			row.getCell(37).value = inv.createdAt; // CREATEDAT
+			row.getCell(38).value = inv.status; // STATUS
+			row.getCell(39).value = inv.porting_status; // PORTING STATUS
+
+			row.commit();
+
+			// if (inv.csv_items && inv.csv_items.length > 0) {
+			// 	inv.csv_items.forEach((item, itemIndex) => {
+			// 		const csvRow = sheet.getRow(rowStart);
+
+			// 		// 🎨 Apply alternating invoice colors
+			// 		const bgColor = index % 2 === 0 ? 'FFFFE0' : 'E6F7FF';
+			// 		// light yellow / light blue
+
+			// 		csvRow.fill = {
+			// 			type: 'pattern',
+			// 			pattern: 'solid',
+			// 			fgColor: { argb: bgColor },
+			// 		};
+
+			// 		csvRow.getCell(41).value = item.item_code;
+			// 		csvRow.getCell(42).value = item.item_name;
+			// 		csvRow.getCell(43).value = item.description_of_item;
+			// 		csvRow.getCell(44).value = item.hsn_sac;
+			// 		csvRow.getCell(45).value = item.quantity;
+			// 		csvRow.getCell(46).value = item.price_unit;
+			// 		csvRow.getCell(47).value = item.sub_total;
+			// 		csvRow.getCell(48).value = item.item_discount_amount;
+			// 		csvRow.getCell(49).value = item.item_discount_percentage;
+			// 		csvRow.getCell(50).value = item.item_net_price;
+			// 		csvRow.getCell(51).value = item.item_cgst_percentage;
+			// 		csvRow.getCell(52).value = item.item_cgst_value;
+			// 		csvRow.getCell(53).value = item.item_sgst_percentage;
+			// 		csvRow.getCell(54).value = item.item_sgst_value;
+			// 		csvRow.getCell(55).value = item.item_igst_percentage;
+			// 		csvRow.getCell(56).value = item.item_igst_value;
+			// 		csvRow.getCell(57).value = item.item_tax_percentage;
+			// 		csvRow.getCell(58).value = item.item_net_total;
+
+			// 		csvRow.commit();
+			// 	});
+			// }
+
+			// Insert first item in same row
+			if (inv.csv_items && inv.csv_items.length > 0) {
+				const first = inv.csv_items[0];
+				row.getCell(41).value = first.item_code;
+				row.getCell(42).value = first.item_name;
+				row.getCell(43).value = first.description_of_item;
+				row.getCell(44).value = first.hsn_sac;
+				row.getCell(45).value = first.quantity;
+				row.getCell(46).value = first.price_unit;
+				row.getCell(47).value = first.sub_total;
+				row.getCell(48).value = first.item_discount_amount;
+				row.getCell(49).value = first.item_discount_percentage;
+				row.getCell(50).value = first.item_net_price;
+				row.getCell(51).value = first.item_cgst_percentage;
+				row.getCell(52).value = first.item_cgst_value;
+				row.getCell(53).value = first.item_sgst_percentage;
+				row.getCell(54).value = first.item_sgst_value;
+				row.getCell(55).value = first.item_igst_percentage;
+				row.getCell(56).value = first.item_igst_value;
+				row.getCell(57).value = first.item_tax_percentage;
+				row.getCell(58).value = first.item_net_total;
+
+				row.commit();
+			}
+
+			// For all remaining items, add NEW rows but leave invoice columns empty
+			for (let i = 1; i < inv.csv_items.length; i++) {
+				const item = inv.csv_items[i];
+				rowStart++; // move to next row
+				const itemRow = sheet.getRow(rowStart);
+
+				const startCol = 1; // Column A
+				const endCol = 58; // Column BF
+
+				for (let col = startCol; col <= endCol; col++) {
+					itemRow.getCell(col).fill = {
+						type: 'pattern',
+						pattern: 'solid',
+						fgColor: { argb: 'FFF2CC' }, // light cream color
+					};
+				}
+				// Invoice fields remain EMPTY
+				// Only fill item columns:
+				itemRow.getCell(41).value = item.item_code;
+				itemRow.getCell(42).value = item.item_name;
+				itemRow.getCell(43).value = item.description_of_item;
+				itemRow.getCell(44).value = item.hsn_sac;
+				itemRow.getCell(45).value = item.quantity;
+				itemRow.getCell(46).value = item.price_unit;
+				itemRow.getCell(47).value = item.sub_total;
+				itemRow.getCell(48).value = item.item_discount_amount;
+				itemRow.getCell(49).value = item.item_discount_percentage;
+				itemRow.getCell(50).value = item.item_net_price;
+				itemRow.getCell(51).value = item.item_cgst_percentage;
+				itemRow.getCell(52).value = item.item_cgst_value;
+				itemRow.getCell(53).value = item.item_sgst_percentage;
+				itemRow.getCell(54).value = item.item_sgst_value;
+				itemRow.getCell(55).value = item.item_igst_percentage;
+				itemRow.getCell(56).value = item.item_igst_value;
+				itemRow.getCell(57).value = item.item_tax_percentage;
+				itemRow.getCell(58).value = item.item_net_total;
+
+				itemRow.commit();
+			}
+			rowStart++;
+		});
+
+		sheet.spliceRows(rowStart, 2); 
+
+
+		sheet.columns.forEach((column) => {
+			let maxLength = 0;
+
+			column.eachCell({ includeEmpty: true }, (cell) => {
+				cell.alignment = { vertical: 'middle', horizontal: 'left' };
+				let columnLength = 10; // minimum width
+				if (cell.value) {
+					if (cell.type === ExcelJS.ValueType.Date) {
+						// Show how Excel will display it
+						columnLength = 19; // "dd/mm/yyyy hh:mm:ss" is 19 chars
+					} else {
+						columnLength = cell.value.toString().length;
+					}
+				}
+				if (columnLength > maxLength) {
+					maxLength = columnLength;
+				}
+			});
+			column.width = Math.min(maxLength + 2, 25);
+		});
+	}
+
+	const now = new Date();
+	const formatted = `${now.getFullYear()}-${(now.getMonth() + 1)
+		.toString()
+		.padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')}_${now
+		.getHours()
+		.toString()
+		.padStart(2, '0')}-${now.getMinutes().toString().padStart(2, '0')}-${now
+		.getSeconds()
+		.toString()
+		.padStart(2, '0')}`;
+
+	const fileName = formatted + '_processed_purchased_invoices.xlsx';
+	// const tmpPath = path.join(__dirname, `../../storage/invoices/${fileName}`);
+	// await workbook.xlsx.writeFile(tmpPath, options);
+
+	// const baseUrl = BASE_URL || 'http://localhost:5000';
+
+	// const fileDownloadPath = `${baseUrl}/storage/invoices/${fileName}`;
+
+	// res.status(200).json({
+	// 	message: 'Sale invoices exported successfully',
+	// 	path: fileDownloadPath,
+	// });
+
+	res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+	res.setHeader(
+		'Content-Type',
+		'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+	);
+
+	await workbook.xlsx.write(res);
+
+	res.end();
 });
