@@ -832,7 +832,7 @@ exports.getSingleImportedInvoices = catchAsync(async (req, res) => {
 	}
 });
 
-exports.exportSaleInvoices = catchAsync(async (req, res) => {
+exports.exportProcessedPurchaseInvoices = catchAsync(async (req, res) => {
 	const { org_id, role } = req.user;
 	const { from_date, to_date } = req.query;
 	const fromDate = new Date(from_date);
@@ -1016,12 +1016,12 @@ exports.exportSaleInvoices = catchAsync(async (req, res) => {
 
 				const startCol = 1; // Column A
 				const endCol = 58; // Column BF
-
+				const bgColor = i % 2 === 0 ? 'FFFFE0' : 'E6F7FF';
 				for (let col = startCol; col <= endCol; col++) {
 					itemRow.getCell(col).fill = {
 						type: 'pattern',
 						pattern: 'solid',
-						fgColor: { argb: 'FFF2CC' }, // light cream color
+						fgColor: { argb: bgColor }, // light cream color
 					};
 				}
 				// Invoice fields remain EMPTY
@@ -1050,8 +1050,7 @@ exports.exportSaleInvoices = catchAsync(async (req, res) => {
 			rowStart++;
 		});
 
-		sheet.spliceRows(rowStart, 2); 
-
+		sheet.spliceRows(rowStart, 2);
 
 		sheet.columns.forEach((column) => {
 			let maxLength = 0;
@@ -1108,4 +1107,31 @@ exports.exportSaleInvoices = catchAsync(async (req, res) => {
 	await workbook.xlsx.write(res);
 
 	res.end();
+});
+
+exports.generateVouchers = catchAsync(async (req, res) => {
+	const { ids } = req.body;
+
+	// Validate
+	if (!Array.isArray(ids) || ids.length === 0) {
+		return res.status(400).json({ message: 'Ids are required for porting.' });
+	}
+
+	console.log('ids type:', typeof ids);
+	console.log('ids:', ids);
+
+	// Optional intended delay
+	setTimeout(async () => {
+		try {
+			await InvoiceCsvImport.update(
+				{ porting_status: 1 },
+				{ where: { id: { [Op.in]: ids } } }
+			);
+
+			return res.json({ message: 'Purchase invoices ported successfully' });
+		} catch (err) {
+			console.error(err);
+			return res.status(500).json({ message: 'Internal server error' });
+		}
+	}, 2000);
 });

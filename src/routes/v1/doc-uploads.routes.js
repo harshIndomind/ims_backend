@@ -71,7 +71,8 @@ router.get(
 	DocumentsUploadsController.getImportedInvoices
 );
 
-router.get('/imported-purchase-invoices/export', DocumentsUploadsController.exportSaleInvoices);
+router.get('/imported-purchase-invoices/export', DocumentsUploadsController.exportProcessedPurchaseInvoices);
+router.post('/imported-purchase-invoices/bulk-action', DocumentsUploadsController.generateVouchers);
 
 router.get(
 	'/imported-purchase-invoices/:id',
