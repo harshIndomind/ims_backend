@@ -19,5 +19,6 @@ module.exports = {
 	DB_DATABASE: process.env.DB_DATABASE,
 	DB_HOST: process.env.DB_HOST,
 	CLIENT_BASE_URL: process.env.CLIENT_BASE_URL,
-	WEBHOOK_SECRET_KEY: process.env.WEBHOOK_SECRET_KEY
+	WEBHOOK_SECRET_KEY: process.env.WEBHOOK_SECRET_KEY,
+	PORTING_FILE: process.env.PORTING_FILE,
 };
