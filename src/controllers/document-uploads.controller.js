@@ -24,7 +24,7 @@ const { Op } = require('sequelize');
 // const moment = require('moment-timezone');
 const axios = require('axios');
 const ExcelJS = require('exceljs');
-const { BASE_URL } = require('../config/serverConfig');
+const { BASE_URL, PORTING_FILE } = require('../config/serverConfig');
 const { format } = require('date-fns');
 const moment = require('moment');
 
@@ -1119,8 +1119,9 @@ exports.generateVouchers = catchAsync(async (req, res) => {
 
 	const templatePath = path.join(
 		__dirname,
-		'../templates/Voucher_Porting_Template.xlsx'
+		`../templates/${PORTING_FILE}`
 	);
+	console.log("templatePath ", templatePath);
 	
 	setTimeout(async () => {
 		try {
