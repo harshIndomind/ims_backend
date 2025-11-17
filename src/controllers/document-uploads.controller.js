@@ -1117,10 +1117,11 @@ exports.generateVouchers = catchAsync(async (req, res) => {
 		return res.status(400).json({ message: 'Ids are required for porting.' });
 	}
 
-	console.log('ids type:', typeof ids);
-	console.log('ids:', ids);
-
-	// Optional intended delay
+	const templatePath = path.join(
+		__dirname,
+		'../templates/Voucher_Porting_Template.xlsx'
+	);
+	
 	setTimeout(async () => {
 		try {
 			await InvoiceCsvImport.update(
@@ -1128,7 +1129,17 @@ exports.generateVouchers = catchAsync(async (req, res) => {
 				{ where: { id: { [Op.in]: ids } } }
 			);
 
-			return res.json({ message: 'Purchase invoices ported successfully' });
+			return res.download(
+				templatePath,
+				'Voucher-Porting-Template.xlsx',
+				(err) => {
+					if (err) {
+						console.error(err);
+						return res.status(500).json({ message: 'Failed to download file' });
+					}
+				}
+			);
+			// return res.json({ message: 'Purchase invoices ported successfully' });
 		} catch (err) {
 			console.error(err);
 			return res.status(500).json({ message: 'Internal server error' });
