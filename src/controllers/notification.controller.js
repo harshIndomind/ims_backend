@@ -85,14 +85,45 @@ exports.markNotificationAsRead = catchAsync(async (req, res, next) => {
 });
 
 exports.markAllNotificationsAsRead = catchAsync(async (req, res, next) => {
-	const userId = req.params.userId;
+	const userId = req.user.id;
 	if (!userId) {
-		return next(new AppError('User ID is required', 400));
+		throw new AppError('User ID is required', 400);
 	}
 
-	await Alert.update(
-		{ is_read: true },
-		{ where: { user_id: userId, is_read: false } }
+	const isAdmin =
+		req.user && (req.user.role === 'Super Admin' || req.user.role === 'Admin');
+
+	const whereClause = isAdmin ? {} : { user_id: userId };
+
+	const notifications = await Alert.findAll({
+		where: whereClause,
+		order: [['createdAt', 'DESC']],
+		include: [
+			{
+				model: AlertRead,
+				as: 'reads',
+				where: { user_id: userId },
+				required: false,
+			},
+		],
+	});
+
+	const notReadNotifications = notifications
+		.filter((n) => !n.reads || n.reads.length === 0)
+		.map((n) => n.id);
+
+	if (notReadNotifications.length === 0) {
+		throw new AppError('No new notifications found.', 404);
+	}
+
+	await Promise.all(
+		notReadNotifications.map((alert_id) =>
+			AlertRead.upsert({
+				alert_id,
+				user_id: userId,
+				read_at: moment().tz('Asia/Kolkata').toDate(),
+			})
+		)
 	);
 
 	res.status(200).json({

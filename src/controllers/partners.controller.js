@@ -11,6 +11,7 @@ const {
 	GstStateCode,
 	organization,
 	RegistrationType,
+	Invoice
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
@@ -387,12 +388,10 @@ exports.updatePartner = catchAsync(async (req, res) => {
 	} catch (error) {
 		await t.rollback();
 		console.error(error);
-		res
-			.status(500)
-			.json({
-				message: error.message || 'Error updating partner',
-				error: error.message,
-			});
+		res.status(500).json({
+			message: error.message || 'Error updating partner',
+			error: error.message,
+		});
 	}
 });
 
@@ -403,6 +402,17 @@ exports.deletePartner = catchAsync(async (req, res) => {
 		const { id } = req.params;
 		const partner = await BusinessPartner.findByPk(id, { transaction: t });
 		if (!partner) throw new AppError('Partner not found', 404);
+
+		const invoiceCount = await Invoice.count({
+			where: { customerId: partner.id },
+		});
+
+		if (invoiceCount > 0) {
+			return res.status(400).json({
+				message:
+					'Cannot delete vendor/customer: Invoices exist for this vendor/customer.',
+			});
+		}
 
 		// Delete associated records first to avoid foreign key issues
 		await User.destroy({ where: { id: partner.user_id }, transaction: t });
