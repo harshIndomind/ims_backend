@@ -5,6 +5,11 @@ const verifyToken = require('../../middlewares/verifyToken');
 router.use(verifyToken);
 console.log("notification routes....");
 
+router.patch(
+	'/markReadAll',
+	Notification.markAllNotificationsAsRead
+);
+
 router.get(
 	'/:id',
 	Notification.getUnreadNotifications
@@ -14,6 +19,7 @@ router.patch(
 	'/:alertId/read',
 	Notification.markNotificationAsRead
 );
+
 console.log("notification routes 1....");
 
 module.exports = router;

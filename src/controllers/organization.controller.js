@@ -3,7 +3,9 @@ const {
 	User,
 	OrganizationBankDetails,
 	sequelize,
-	GstStateCode
+	GstStateCode,
+	Invoice,
+	BusinessPartner,
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
@@ -232,7 +234,7 @@ exports.getAllOrganizations = catchAsync(async (req, res) => {
 			include: {
 				model: GstStateCode,
 				as: '_state',
-				attributes: ['state_name', 'gst_code']
+				attributes: ['state_name', 'gst_code'],
 			},
 			offset,
 			limit,
@@ -250,38 +252,64 @@ exports.getAllOrganizations = catchAsync(async (req, res) => {
 });
 
 exports.deleteOrganization = catchAsync(async (req, res) => {
-	const t = await sequelize.transaction();
-
 	try {
 		const { id } = req.params;
 
 		const Organization = await organization.findByPk(id);
 
 		if (!Organization) {
-			await t.rollback();
 			return res.status(404).json({ message: 'Organization not found' });
 		}
 
-		const user = await User.findOne({
-			where: { org_id: Organization.id, roleId: 2 },
-			transaction: t,
+		const businessPartnerCount = await BusinessPartner.count({
+			where: { organization_id: Organization.id },
 		});
 
-		if (user) {
-			await user.destroy({ transaction: t });
+		if (businessPartnerCount > 0) {
+			return res.status(400).json({
+				message:
+					'Cannot delete organization: Vendors/Customers exist for this organization.',
+			});
 		}
 
-		await Organization.destroy({ transaction: t });
+		const invoiceCount = await Invoice.count({
+			where: { orgId: Organization.id },
+		});
 
-		await t.commit();
+		if (invoiceCount > 0) {
+			return res.status(400).json({
+				message:
+					'Cannot delete organization: Invoices exist for this organization.',
+			});
+		}
 
-		res.json({ message: 'Organization deleted successfully' });
+		const t = await sequelize.transaction();
+
+		try {
+			const user = await User.findOne({
+				where: { org_id: Organization.id, roleId: 2 },
+				transaction: t,
+			});
+
+			if (user) {
+				await user.destroy({ transaction: t });
+			}
+
+			await Organization.destroy({ transaction: t });
+
+			await t.commit();
+
+			return res.json({ message: 'Organization deleted successfully' });
+		} catch (err) {
+			await t.rollback();
+			throw err;
+		}
 	} catch (error) {
-		await t.rollback();
 		console.error(error);
-		res
-			.status(500)
-			.json({ message: 'Failed to delete organization', error: error.message });
+		return res.status(500).json({
+			message: 'Failed to delete organization',
+			error: error.message,
+		});
 	}
 });
 

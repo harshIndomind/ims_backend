@@ -517,6 +517,7 @@ function getFolderLocationStatusWise(doc_status = 'UPLOADED') {
 		DUPLICATE: '/duplicates/',
 		FAILED: '/failed/',
 		RESULT: '/results/',
+		EDITED: '/results/',
 	};
 
 	return map[doc_status] || '/';
@@ -529,6 +530,7 @@ function getStatusMapping(doc_status = 'UPLOADED') {
 		DUPLICATE: 'duplicate',
 		FAILED: 'failed',
 		RESULT: 'results',
+		EDITED: 'edited',
 	};
 
 	return map[doc_status] || '/';
@@ -550,6 +552,7 @@ exports.updateDocumentStatus = catchAsync(async (req, res) => {
 			'DUPLICATE',
 			'FAILED',
 			'RESULT',
+			'EDITED',
 		];
 
 		if (!validStatuses.includes(status)) {
@@ -598,7 +601,7 @@ exports.updateDocumentStatus = catchAsync(async (req, res) => {
 			});
 		}
 
-		if (['RESULT', 'FAILED', 'DUPLICATE'].includes(status)) {
+		if (['RESULT', 'EDITED'].includes(status)) {
 			console.log('-----------------------------------------------------');
 			await importDocumentCSV(generated_filename, status);
 		}
