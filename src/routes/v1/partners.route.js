@@ -16,6 +16,7 @@ router.post(
 	validate,
 	PartnersController.createPartner
 );
+router.get('/export', PartnersController.exportPartners);
 router.patch('/can-login/:id', PartnersController.updateVendorCanLogin);
 router.get('/organization/:org_id', PartnersController.getOrganizationVendors);
 router.put(

@@ -35,6 +35,11 @@ router.get(
 	OrganizationController.getAllOrganizations
 );
 router.get(
+	'/export',
+	checkRole(['Super Admin', 'Admin']),
+	OrganizationController.exportOrganizations
+);
+router.get(
 	'/:id',
 	checkRole(['Super Admin', 'Admin']),
 	OrganizationController.getOrganization

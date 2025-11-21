@@ -11,7 +11,7 @@ const {
 	GstStateCode,
 	organization,
 	RegistrationType,
-	Invoice
+	Invoice,
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
@@ -19,7 +19,10 @@ const { fn, col, Op, JSON } = require('sequelize');
 const bcrypt = require('bcrypt');
 const uomMap = require('../utils/uomConversionMap');
 const { print } = require('../utils/common');
-
+const ExcelJS = require('exceljs');
+const { format } = require('date-fns');
+const moment = require('moment');
+const path = require('node:path');
 exports.createPartner = catchAsync(async (req, res) => {
 	const t = await sequelize.transaction();
 	try {
@@ -576,3 +579,260 @@ exports.getOrganizationVendors = catchAsync(async (req, res) => {
 
 	res.status(200).json({ data: partners });
 });
+
+exports.exportPartners = catchAsync(async (req, res) => {
+	const { org_id, role } = req.user;
+	// const { from_date, to_date } = req.query;
+	// const fromDate = new Date(from_date);
+	// const toDate = new Date(to_date);
+
+	// // Validate that both dates are valid
+	// if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+	// 	throw new Error('Invalid date range');
+	// }
+
+	// // Adjust the end date to include the full day (23:59:59)
+	// toDate.setHours(23, 59, 59, 999);
+	// if (!org_id && role !== 'Admin') {
+	// 	throw AppError(`You don't authorize to access this api.`);
+	// }
+
+	const partners = await BusinessPartner.findAll({
+		// where: {
+		// 	createdAt: {
+		// 		[Op.between]: [fromDate, toDate],
+		// 	},
+		// },
+		include: [
+			{
+				model: organization,
+				as: 'organization',
+			},
+			{
+				model: Address,
+				as: 'addresses',
+				include: [
+					{ model: Country, as: 'countryData', attributes: ['id', 'name'] },
+					{
+						model: GstStateCode,
+						as: 'stateData',
+						attributes: ['id', 'state_name'],
+					},
+				],
+				required: false,
+				// where: { type: { [Op.eq]: 'shipping' } },
+			},
+			'bankDetails',
+			'additionalDetails',
+			{
+				model: OpeningBalance,
+				as: 'openingBalances',
+				separate: true,
+				order: [['id', 'ASC']],
+			},
+			{
+				model: User,
+				as: 'user',
+				attributes: ['id', 'name', 'email', 'roleId'],
+			},
+			{
+				model: RegistrationType,
+				as: 'registrationType',
+			},
+		],
+		order: [['createdAt', 'ASC']],
+	});
+
+	let response = partners.map((org) => org.get({ plain: true }));
+
+	const workbook = new ExcelJS.Workbook();
+	const templatePath = path.join(
+		__dirname,
+		'../templates/vendors_customers_blank_template.xlsx'
+	);
+	const options = {
+		dateFormats: ['DD/MM/YYYY'],
+	};
+	await workbook.xlsx.readFile(templatePath, options);
+
+	const sheet = workbook.getWorksheet('Sheet1');
+	let rowStart = 3;
+
+	if (response) {
+		response.forEach((inv, index) => {
+			const bgColor = index % 2 === 0 ? 'EEEEEE' : 'E6F7FF';
+
+			// sheet.duplicateRow(rowStart, 2, true);
+
+			const row = sheet.getRow(rowStart);
+
+			row.getCell(1).value = index + 1; // SR. NO.
+			row.getCell(2).value = inv.type ?? '-'; // Company Type
+			row.getCell(3).value = inv.organization.org_name ?? '-'; // Organization Name
+			row.getCell(4).value = inv.user.name ?? '' ?? '-'; // Name
+			row.getCell(5).value = inv.user.email ?? '-'; // Email
+			row.getCell(6).value = inv.registrationType.type ?? '-'; // Registration Type
+			row.getCell(7).value = inv.gstin ?? '-'; // GSTIN
+			row.getCell(8).value = inv.name ?? '-'; // Company Name
+			row.getCell(9).value = inv.code ?? '-'; // Company Code
+			row.getCell(10).value = inv.account_code ?? '-'; // Company Account Code
+			row.getCell(11).value = inv.contact_no ?? '-'; // Contact No.
+			row.getCell(12).value = inv.pan ?? '-'; // PAN No.
+			row.getCell(13).value = inv.email ?? '-'; // Email’s
+
+			// Bank Details
+			row.getCell(22).value = inv.bankDetails ? inv.bankDetails.bank_name : '-'; // Bank name
+			row.getCell(23).value = inv.bankDetails ? inv.bankDetails.ifsc_code : '-'; // ifsc code
+			row.getCell(24).value = inv.bankDetails
+				? inv.bankDetails.account_no
+				: '-'; // accound no
+			row.getCell(25).value = inv.bankDetails
+				? inv.bankDetails.branch_name
+				: '-'; // branch no
+
+			// Additional Details
+			row.getCell(26).value = inv.additionalDetails
+				? inv.additionalDetails.fax
+				: '-'; // fax
+			row.getCell(27).value = inv.additionalDetails
+				? inv.additionalDetails.website
+				: '-'; // Website
+			row.getCell(28).value = inv.additionalDetails
+				? inv.additionalDetails.credit_limit
+				: '-'; // Credit Limit
+			row.getCell(29).value = inv.additionalDetails
+				? inv.additionalDetails.due_days
+				: '-'; // Due Days
+			row.getCell(30).value = inv.additionalDetails
+				? inv.additionalDetails.note
+				: '-'; // Note
+
+			// Opening Details
+			row.getCell(31).value = inv.openingBalances?.[0]?.balance_type ?? '-'; // Vendor Balance
+			row.getCell(32).value = inv.openingBalances?.[0]?.amount ?? '-'; // Amount
+			row.getCell(33).value = inv.openingBalances?.[1]?.balance_type ?? '-'; // Customer Balance
+			row.getCell(34).value = inv.openingBalances?.[1]?.amount ?? '-'; // Amount
+
+			colorRow(row, bgColor);
+			row.commit();
+
+			// Insert first item in same row
+			if (inv.addresses && inv.addresses.length > 0) {
+				const first = inv.addresses[0];
+				row.getCell(14).value = first.type ?? '-'; // Address Type
+				row.getCell(15).value = first.address1 ?? '-'; // Address 1
+				row.getCell(16).value = first.address2 ?? '-'; // Address 2
+				row.getCell(17).value = first.landmark ?? '-'; // Landmark
+				row.getCell(18).value = first.countryData.name ?? '-'; // Country
+				row.getCell(19).value = first.stateData.state_name ?? '-'; // State
+				row.getCell(20).value = first.city ?? '-'; // City
+				row.getCell(21).value = first.pincode ?? '-'; // Pincode
+
+				row.commit();
+			}
+
+			if (inv.addresses && inv.addresses.length > 0) {
+				// For all remaining items, add NEW rows but leave invoice columns empty
+				for (let i = 1; i < inv.addresses.length; i++) {
+					const item = inv.addresses[i];
+					rowStart++; // move to next row
+					const itemRow = sheet.getRow(rowStart);
+
+					itemRow.getCell(14).value = item.type ?? '-'; // Address Type
+					itemRow.getCell(15).value = item.address1 ?? '-'; // Address 1
+					itemRow.getCell(16).value = item.address2 ?? '-'; // Address 2
+					itemRow.getCell(17).value = item.landmark ?? '-'; // Landmark
+					itemRow.getCell(18).value = item.countryData.name ?? '-'; // Country
+					itemRow.getCell(19).value = item.stateData.state_name ?? '-'; // State
+					itemRow.getCell(20).value = item.city ?? '-'; // City
+					itemRow.getCell(21).value = item.pincode ?? '-'; // Pincode
+
+					itemRow.commit();
+					colorRow(itemRow, bgColor);
+				}
+			}
+			rowStart++;
+		});
+
+		sheet.columns.forEach((column) => {
+			let maxLength = 0;
+
+			column.eachCell({ includeEmpty: true }, (cell, rowNumber) => {
+				if (rowNumber !== 1 && rowNumber !== 2) {
+					cell.alignment = { vertical: 'middle', horizontal: 'left' };
+					let columnLength = 10; // minimum width
+					if (cell.value) {
+						if (cell.type === ExcelJS.ValueType.Date) {
+							// Show how Excel will display it
+							columnLength = 19; // "dd/mm/yyyy hh:mm:ss" is 19 chars
+						} else {
+							columnLength = cell.value.toString().length;
+						}
+					}
+					if (columnLength > maxLength) {
+						maxLength = columnLength;
+					}
+				}
+			});
+			column.width = Math.min(maxLength + 2, 25);
+		});
+
+		sheet.eachRow((row, rowNumber) => {
+			if (rowNumber !== 1 && rowNumber !== 2) {
+				row.eachCell((cell) => {
+					// Font
+					cell.font = { name: 'Arial', size: 10 };
+
+					// Border
+					cell.border = {
+						top: { style: 'dotted' },
+						left: { style: 'dotted' },
+						bottom: { style: 'dotted' },
+						right: { style: 'dotted' },
+					};
+				});
+			}
+		});
+	}
+
+	const now = new Date();
+	const formatted = `${now.getFullYear()}-${(now.getMonth() + 1)
+		.toString()
+		.padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')}_${now
+		.getHours()
+		.toString()
+		.padStart(2, '0')}-${now.getMinutes().toString().padStart(2, '0')}-${now
+		.getSeconds()
+		.toString()
+		.padStart(2, '0')}`;
+
+	const fileName = formatted + '_exported_vendors_and_customers.xlsx';
+
+	res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+	res.setHeader(
+		'Content-Type',
+		'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+	);
+
+	await workbook.xlsx.write(res);
+
+	res.end();
+});
+
+function colorRow(row, bgColor) {
+	console.log(`Coloring row no ${row} with color ${bgColor}`);
+
+	for (let col = 1; col <= 34; col++) {
+		const cell = row.getCell(col);
+
+		// Clear template fill first (IMPORTANT)
+		cell.fill = null;
+
+		// Now apply new fill
+		cell.fill = {
+			type: 'pattern',
+			pattern: 'solid',
+			fgColor: { argb: bgColor },
+		};
+	}
+}

@@ -78,8 +78,6 @@ async function prepareAndStartServer() {
 		`${apiPrefix}/v1/docs-uploads`,
 		require('./routes/v1/doc-uploads.routes')
 	);
-	// app.use(`${apiPrefix}/v1/projects`, require('./routes/v1/project.routes'));
-	// app.use(`${apiPrefix}/v1/issues`, require('./routes/v1/issue.routes'));
 	app.use(`${apiPrefix}/v1/roles`, require('./routes/v1/role.routes'));
 	app.use(`${apiPrefix}/v1/menus`, require('./routes/v1/menu.routes'));
 	app.use(
