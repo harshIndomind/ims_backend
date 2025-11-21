@@ -949,43 +949,6 @@ exports.exportProcessedPurchaseInvoices = catchAsync(async (req, res) => {
 
 			row.commit();
 
-			// if (inv.csv_items && inv.csv_items.length > 0) {
-			// 	inv.csv_items.forEach((item, itemIndex) => {
-			// 		const csvRow = sheet.getRow(rowStart);
-
-			// 		// 🎨 Apply alternating invoice colors
-			// 		const bgColor = index % 2 === 0 ? 'FFFFE0' : 'E6F7FF';
-			// 		// light yellow / light blue
-
-			// 		csvRow.fill = {
-			// 			type: 'pattern',
-			// 			pattern: 'solid',
-			// 			fgColor: { argb: bgColor },
-			// 		};
-
-			// 		csvRow.getCell(41).value = item.item_code;
-			// 		csvRow.getCell(42).value = item.item_name;
-			// 		csvRow.getCell(43).value = item.description_of_item;
-			// 		csvRow.getCell(44).value = item.hsn_sac;
-			// 		csvRow.getCell(45).value = item.quantity;
-			// 		csvRow.getCell(46).value = item.price_unit;
-			// 		csvRow.getCell(47).value = item.sub_total;
-			// 		csvRow.getCell(48).value = item.item_discount_amount;
-			// 		csvRow.getCell(49).value = item.item_discount_percentage;
-			// 		csvRow.getCell(50).value = item.item_net_price;
-			// 		csvRow.getCell(51).value = item.item_cgst_percentage;
-			// 		csvRow.getCell(52).value = item.item_cgst_value;
-			// 		csvRow.getCell(53).value = item.item_sgst_percentage;
-			// 		csvRow.getCell(54).value = item.item_sgst_value;
-			// 		csvRow.getCell(55).value = item.item_igst_percentage;
-			// 		csvRow.getCell(56).value = item.item_igst_value;
-			// 		csvRow.getCell(57).value = item.item_tax_percentage;
-			// 		csvRow.getCell(58).value = item.item_net_total;
-
-			// 		csvRow.commit();
-			// 	});
-			// }
-
 			// Insert first item in same row
 			if (inv.csv_items && inv.csv_items.length > 0) {
 				const first = inv.csv_items[0];
@@ -1089,17 +1052,6 @@ exports.exportProcessedPurchaseInvoices = catchAsync(async (req, res) => {
 		.padStart(2, '0')}`;
 
 	const fileName = formatted + '_processed_purchased_invoices.xlsx';
-	// const tmpPath = path.join(__dirname, `../../storage/invoices/${fileName}`);
-	// await workbook.xlsx.writeFile(tmpPath, options);
-
-	// const baseUrl = BASE_URL || 'http://localhost:5000';
-
-	// const fileDownloadPath = `${baseUrl}/storage/invoices/${fileName}`;
-
-	// res.status(200).json({
-	// 	message: 'Sale invoices exported successfully',
-	// 	path: fileDownloadPath,
-	// });
 
 	res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
 	res.setHeader(
