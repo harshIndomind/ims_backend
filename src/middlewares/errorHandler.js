@@ -12,10 +12,10 @@ module.exports = (err, req, res, next) => {
 
 	// Log using Winston
 	logger.error({
-		message: err.message,
-		statusCode,
-		stack: err.stack,
 		timestamp: new Date().toISOString(),
+		statusCode,
+		message: err.message,
+		stack: err.stack,
 		request: {
 			method: req.method,
 			url: req.originalUrl,
