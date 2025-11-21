@@ -34,7 +34,7 @@ module.exports = (sequelize, DataTypes) => {
 				},
 				onDelete: 'CASCADE',
 			},
-			doc_number: { type: DataTypes.STRING, allowNull: false, unique: true },
+			doc_number: { type: DataTypes.STRING, allowNull: false },
 			org_filename: { type: DataTypes.STRING, allowNull: false },
 			generated_filename: { type: DataTypes.STRING, allowNull: false },
 			uploaded_path: { type: DataTypes.STRING, allowNull: false },
