@@ -597,7 +597,13 @@ exports.exportPartners = catchAsync(async (req, res) => {
 	// 	throw AppError(`You don't authorize to access this api.`);
 	// }
 
+	const whereClause = {};
+	if(role === 'Admin'){
+		whereClause['organization_id'] = org_id;
+	}
+	
 	const partners = await BusinessPartner.findAll({
+		where: whereClause,
 		// where: {
 		// 	createdAt: {
 		// 		[Op.between]: [fromDate, toDate],
