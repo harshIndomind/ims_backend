@@ -842,8 +842,12 @@ function checkForDuplicateSerials(productItems) {
 exports.generateInvoiceNumber = catchAsync(async (req, res) => {
 	const user = req.user;
 
+	let errorMsg = 'Invalid user or organization ID';
 	if (!user || !user.org_id || user.role !== 'Admin') {
-		return res.status(400).json({ message: 'Invalid user or organization ID' });
+		if (user.role === 'Super Admin') {
+			errorMsg = 'As a super admin user you can\'t create a sale invoice.';
+		}
+		return res.status(400).json({ message: errorMsg });
 	}
 
 	// Find the latest invoice with the given prefix and postfix
@@ -1605,7 +1609,9 @@ exports.exportSaleInvoices = catchAsync(async (req, res) => {
 		response.forEach((inv, index) => {
 			const row = sheet.getRow(rowStart++);
 			row.getCell(1).value = index + 1; // Sr. No.
-			row.getCell(2).value = `${inv.invoicePrefix || ''}${inv.invoiceNo}${inv.invoicePostfix || ''}`; // Invoice No.
+			row.getCell(2).value = `${inv.invoicePrefix || ''}${inv.invoiceNo}${
+				inv.invoicePostfix || ''
+			}`; // Invoice No.
 			row.getCell(3).value = inv.partner.name; // Company Name
 			const inputDate = inv.invoiceDetail.date; // e.g., "13/11/2025"
 			console.log('inv.invoiceDetail.date ', inputDate);
