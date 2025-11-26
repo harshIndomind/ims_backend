@@ -261,6 +261,7 @@ exports.updatePartner = catchAsync(async (req, res) => {
 	try {
 		const { id } = req.params;
 		const {
+			password,
 			vendorCompany,
 			billingAddress,
 			bankDetails,
@@ -295,14 +296,19 @@ exports.updatePartner = catchAsync(async (req, res) => {
 
 		// Update associated User (exclude email)
 		const user = await User.findByPk(partner.user_id, { transaction: t });
+
 		if (user) {
-			await user.update(
-				{
-					name: name || user.name,
-					roleId: roleId || user.roleId,
-				},
-				{ transaction: t }
-			);
+			let updateData = {
+				name: name || user.name,
+				roleId: roleId || user.roleId,
+			};
+
+			if (password) {
+				const hashedPassword = await bcrypt.hash(password, 10);
+				updateData.password = hashedPassword; // <-- Save hashed password
+			}
+
+			await user.update(updateData, { transaction: t });
 		}
 
 		// Update main partner details
@@ -598,10 +604,10 @@ exports.exportPartners = catchAsync(async (req, res) => {
 	// }
 
 	const whereClause = {};
-	if(role === 'Admin'){
+	if (role === 'Admin') {
 		whereClause['organization_id'] = org_id;
 	}
-	
+
 	const partners = await BusinessPartner.findAll({
 		where: whereClause,
 		// where: {
