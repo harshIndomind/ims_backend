@@ -101,3 +101,4 @@ exports.generateInvoiceHTMLPDF = async (dataOrHtml, template, options = {}) => {
 
 	return `${baseUrl}/storage/invoices/${pdfName}`;
 };
+

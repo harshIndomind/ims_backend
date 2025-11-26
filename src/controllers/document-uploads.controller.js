@@ -801,8 +801,8 @@ exports.getImportedInvoices = catchAsync(async (req, res) => {
 			},
 			offset,
 			limit,
+			distinct: true,
 		});
-		console.log('importedPurchasedInvoices ', importedPurchasedInvoices);
 
 		res.json({
 			message: 'Imported purchased invoices successfully.',
@@ -849,7 +849,7 @@ exports.exportProcessedPurchaseInvoices = catchAsync(async (req, res) => {
 	// Adjust the end date to include the full day (23:59:59)
 	toDate.setHours(23, 59, 59, 999);
 	if (!org_id && role !== 'Admin') {
-		throw AppError(`You don't authorize to access this api.`);
+		throw new AppError(`You don't authorize to access this api.`);
 	}
 
 	const invoices = await InvoiceCsvImport.findAll({
