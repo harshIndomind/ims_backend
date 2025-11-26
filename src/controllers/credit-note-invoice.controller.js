@@ -789,7 +789,9 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 		// 2️⃣ Remove old invoice items & serial mappings
 		await CreditNoteInvoiceItemSerial.destroy({
 			where: {
-				credit_note_invoice_item_id: { [Op.in]: invoice.productItems.map((i) => i.id) },
+				credit_note_invoice_item_id: {
+					[Op.in]: invoice.productItems.map((i) => i.id),
+				},
 			},
 			transaction: t,
 		});
@@ -1058,7 +1060,10 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 						{ qty: parseFloat(uomQty) },
 						{ where: { id: item.batch_id }, transaction: t }
 					);
-				} else if (item.stock_type === 'normal' && item.item_type === 'product') {
+				} else if (
+					item.stock_type === 'normal' &&
+					item.item_type === 'product'
+				) {
 					await Product.increment(
 						{ available_qty: parseFloat(uomQty) },
 						{ where: { id: item.product_id }, transaction: t }
@@ -1104,12 +1109,12 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 				},
 				{ transaction: t }
 			);
-	
+
 			await Invoice.update(
 				{ totalPaid: creditNoteGrandTotal },
 				{ where: { id: invoice_id }, transaction: t }
 			);
-	
+
 			// 2️⃣ Update the invoice totals
 			await Invoice.update(
 				{
@@ -1120,7 +1125,6 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 				{ where: { id: invoice_id }, transaction: t }
 			);
 		}
-
 
 		await t.commit();
 
@@ -1150,7 +1154,7 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 	const t = await sequelize.transaction();
 
 	try {
-		const invoice = await CreditNoteInvoice.findOne({
+		const creditNote = await CreditNoteInvoice.findOne({
 			where: { id, orgId: org_id },
 			include: [
 				{
@@ -1165,54 +1169,82 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 				},
 			],
 		});
-		if (!invoice) {
-			return res.status(404).json({ message: 'Invoice not found' });
+		if (!creditNote) {
+			return res.status(404).json({ message: 'Credit note not found' });
 		}
 
+		const reverseStock = creditNote.invoiceDetail.reverseStock || false;
+
 		// 1️⃣ Revert stock
-		for (const item of invoice.productItems) {
+		for (const item of creditNote.productItems) {
 			if (item.stock_type === 'batch') {
-				await ProductBatch.increment(
-					{ qty: parseFloat(item.qty) },
-					{ where: { id: parseInt(item.batch_id) }, transaction: t }
-				);
-			} else if (item.stock_type === 'normal') {
-				await Product.increment(
-					{ available_qty: parseFloat(item.qty) },
-					{ where: { id: parseInt(item.product_id) }, transaction: t }
-				);
+				if (reverseStock) {
+					await ProductBatch.increment(
+						{ qty: -parseFloat(item.qty) },
+						{ where: { id: parseInt(item.batch_id) }, transaction: t }
+					);
+				}
+			} else if (item.stock_type === 'normal' && item.item_type === 'product') {
+				if (reverseStock) {
+					await Product.increment(
+						{ available_qty: -parseFloat(item.qty) },
+						{ where: { id: parseInt(item.product_id) }, transaction: t }
+					);
+				}
 			} else if (item.stock_type === 'serial') {
-				await ProductSerial.update(
-					{ is_sell: 0 },
-					{
-						where: {
-							serial_no: {
-								[Op.in]: item.serials.map((s) => s.serial_no),
+				if (reverseStock) {
+					await ProductSerial.update(
+						{ is_sell: 1 },
+						{
+							where: {
+								serial_no: {
+									[Op.in]: item.serials.map((s) => s.serial_no),
+								},
 							},
-						},
-						transaction: t,
-					}
-				);
+							transaction: t,
+						}
+					);
+				}
 			}
 		}
 
-		// 2️⃣ Delete invoice items & serial mappings
-		await InvoiceItemSerial.destroy({
+		const isPaymentExists = await Payment.findOne({
+			where: { credit_note_id: creditNote.id },
+		});
+
+		if (isPaymentExists) {
+			const existingInvoice = await Invoice.findOne({ where: { id: creditNote.invoice_id } });
+
+			if(!existingInvoice){
+				throw new AppError("Invoice not found")
+			}
+
+			await Payment.destroy({
+				where: {
+					credit_note_id: invoice.id,
+				},
+				transaction: t,
+			});
+		}
+
+		await CreditNoteInvoiceItemSerial.destroy({
 			where: {
-				invoice_item_id: { [Op.in]: invoice.productItems.map((i) => i.id) },
+				credit_note_invoice_item_id: {
+					[Op.in]: invoice.productItems.map((i) => i.id),
+				},
 			},
 			transaction: t,
 		});
-		await InvoiceItem.destroy({
-			where: { invoice_id: invoice.id },
+
+		await CreditNoteInvoiceItem.destroy({
+			where: { credit_note_invoice_id: invoice.id },
 			transaction: t,
 		});
 
-		// 3️⃣ Delete invoice
-		await invoice.destroy({ transaction: t });
+		await CreditNoteinvoice.destroy({ transaction: t });
 
 		await t.commit();
-		res.status(200).json({ message: 'Invoice deleted successfully' });
+		res.status(200).json({ message: 'Credit note deleted successfully' });
 	} catch (error) {
 		if (!t.finished) {
 			await t.rollback();
