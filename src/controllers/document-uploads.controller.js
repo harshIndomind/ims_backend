@@ -802,6 +802,7 @@ exports.getImportedInvoices = catchAsync(async (req, res) => {
 			offset,
 			limit,
 			distinct: true,
+			order: [['createdAt', 'DESC']],
 		});
 
 		res.json({
