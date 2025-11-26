@@ -207,6 +207,8 @@ class MenuRespository {
 					],
 				});
 				return allMenus.map((menu) => menu.toJSON());
+
+				// return this.buildTree(await Menu.findAll());
 			}
 
 			// ✅ For other roles, fetch only menus linked to role
@@ -252,7 +254,7 @@ class MenuRespository {
 					const menuJson = menu.toJSON();
 					const hasChild = menuJson.children?.length > 0;
 
-					if(!hasChild){
+					if (!hasChild) {
 						return menuJson.url === '' ? null : menuJson;
 					}
 
@@ -267,23 +269,23 @@ class MenuRespository {
 		}
 	}
 
-	async buildNestedMenu(menus) {
-		const menuMap = {};
-		menus.forEach((menu) => {
-			menuMap[menu.id] = { ...menu.dataValues, children: [] };
-		});
+	async buildTree(list) {
+		const map = {};
+		const roots = [];
 
-		const rootMenus = [];
+		list.forEach(
+			(item) => (map[item.id] = { ...item.dataValues, children: [] })
+		);
 
-		menus.forEach((menu) => {
-			if (menu.parentId === null) {
-				rootMenus.push(menuMap[menu.id]);
-			} else if (menuMap[menu.parentId]) {
-				menuMap[menu.parentId].children.push(menuMap[menu.id]);
+		list.forEach((item) => {
+			if (item.parentId) {
+				map[item.parentId].children.push(map[item.id]);
+			} else {
+				roots.push(map[item.id]);
 			}
 		});
 
-		return rootMenus;
+		return roots;
 	}
 
 	async getParentMenus() {

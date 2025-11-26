@@ -69,11 +69,13 @@ exports.createInvoice = catchAsync(async (req, res) => {
 		}
 
 		for (const item of productItems) {
-			const uomQty = await uomConversion(
-				parseInt(item.qty),
-				parseInt(item.product_id),
-				parseInt(item.selected_uom_id)
-			);
+			if(item.selected_uom_id != null && item.selected_uom_id != -1){
+				const uomQty = await uomConversion(
+					parseInt(item.qty),
+					parseInt(item.product_id),
+					parseInt(item.selected_uom_id)
+				);
+			}
 			if (item.stock_type === 'batch') {
 				// ✅ Check batch stock
 				const batch = await ProductBatch.findByPk(item.batch_id);
@@ -167,7 +169,7 @@ exports.createInvoice = catchAsync(async (req, res) => {
 					total: parseFloat(item.total || 0),
 					stock_type: item.stock_type,
 					note: item.note,
-					selected_uom_id: item.selected_uom_id,
+					selected_uom_id: (item.selected_uom_id != null && item.selected_uom_id != -1) ? item.selected_uom_id : null,
 				},
 				{ transaction: t }
 			);
@@ -196,23 +198,24 @@ exports.createInvoice = catchAsync(async (req, res) => {
 				);
 			}
 
-			const uomQty = await uomConversion(
-				parseInt(item.qty),
-				parseInt(item.product_id),
-				parseInt(item.selected_uom_id)
-			);
-			// ➤ Deduct stock
-			if (item.stock_type === 'batch') {
-				print(uomQty, 'uomQty => ');
-				await ProductBatch.increment(
-					{ qty: -parseFloat(uomQty) },
-					{ where: { id: item.batch_id }, transaction: t }
+			if(item.selected_uom_id != null && item.selected_uom_id != -1){
+				const uomQty = await uomConversion(
+					parseInt(item.qty),
+					parseInt(item.product_id),
+					parseInt(item.selected_uom_id)
 				);
-			} else if (item.stock_type === 'normal' && item.item_type === 'product') {
-				await Product.increment(
-					{ available_qty: -parseFloat(uomQty) },
-					{ where: { id: item.product_id }, transaction: t }
-				);
+				// ➤ Deduct stock
+				if (item.stock_type === 'batch') {
+					await ProductBatch.increment(
+						{ qty: -parseFloat(uomQty) },
+						{ where: { id: item.batch_id }, transaction: t }
+					);
+				} else if (item.stock_type === 'normal' && item.item_type === 'product') {
+					await Product.increment(
+						{ available_qty: -parseFloat(uomQty) },
+						{ where: { id: item.product_id }, transaction: t }
+					);
+				}
 			}
 		}
 

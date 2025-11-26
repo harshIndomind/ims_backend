@@ -91,6 +91,16 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.STRING,
 				allowNull: true,
 			},
+			credit_note_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+				references: {
+					model: 'CreditNoteInvoices',
+					key: 'id',
+				},
+				onUpdate: 'CASCADE',
+				onDelete: 'SET NULL',
+			},
 		},
 		{
 			sequelize,

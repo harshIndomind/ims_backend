@@ -210,7 +210,7 @@ exports.createProduct = async (req, res) => {
 			}
 		}
 
-		if (data.stock_type === 'serial') {
+		if (data.stock_type === 'serial') {			
 			const serials = data.productSerials.serial_no.split(',');
 
 			if (serials?.length > 0) {
