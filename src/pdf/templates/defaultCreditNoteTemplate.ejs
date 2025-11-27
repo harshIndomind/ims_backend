@@ -446,21 +446,27 @@
                         <h4>Invoice Details</h4>
                         <div class="info-detail">
                             <div class="info-row">
-                                <strong>Invoice No:</strong>
+                                <strong>Credit Note No:</strong>
                                 <span>
                                     <%= invoice?.combineInvoiceNumber || '' %>
                                 </span>
                             </div>
                             <div class="info-row">
-                                <strong>Invoice Date:</strong>
+                                <strong>Credit Note Date:</strong>
                                 <span>
                                     <%= new Date(invoice?.invoiceDetail?.date).toLocaleDateString() || '' %>
                                 </span>
                             </div>
                             <div class="info-row">
-                                <strong>Due Date:</strong>
+                                <strong>Against Invoice No:</strong>
                                 <span>
-                                    <%= new Date(invoice.dueDate).toLocaleDateString() || '' %>
+                                    <%= invoice?.combineAgainstInvoiceNumber || '' %>
+                                </span>
+                            </div>
+                             <div class="info-row">
+                                <strong>Against Invoice Date:</strong>
+                                <span>
+                                    <%= new Date(invoice.invoice.invoiceDetail.date).toLocaleDateString() || '' %>
                                 </span>
                             </div>
                         </div>
