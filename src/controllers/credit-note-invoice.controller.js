@@ -356,8 +356,8 @@ exports.createInvoice = catchAsync(async (req, res) => {
 				customer_id: customerInfo.customer_id,
 				paymentDate: new Date(),
 				amount: parseFloat(grandTotal || 0),
-				is_payment_adv: isPaymentAdv,
-				advAmount: 0,
+				is_payment_adv: isPaymentAdv > 0,
+				advAmount: isPaymentAdv,
 				paymentType: 'CREDIT_NOTE',
 				remarks: 'AUTO GENERATED CREDIT NOTE PAYMENT',
 				credit_note_id: invoice.id,
@@ -1155,9 +1155,16 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 				throw new AppError('Invoice not found');
 			}
 
+			const amountPaid = +isPaymentExists.amount;
+			const invoiceGrandTotal = +existingInvoice.grandTotal;
+			const invoiceTotalPaid = +existingInvoice.totalPaid - amountPaid;
+			const remainingAmount = +existingInvoice.remainingAmount + amountPaid;
+
+			existingInvoice.update({paymentStatus: 'PENDING', status: 'pending', totalPaid: invoiceTotalPaid, remainingAmount: remainingAmount}, {transaction: t})
+
 			await Payment.destroy({
 				where: {
-					credit_note_id: invoice.id,
+					credit_note_id: creditNote.id,
 				},
 				transaction: t,
 			});
@@ -1166,18 +1173,18 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 		await CreditNoteInvoiceItemSerial.destroy({
 			where: {
 				credit_note_invoice_item_id: {
-					[Op.in]: invoice.productItems.map((i) => i.id),
+					[Op.in]: creditNote.productItems.map((i) => i.id),
 				},
 			},
 			transaction: t,
 		});
 
 		await CreditNoteInvoiceItem.destroy({
-			where: { credit_note_invoice_id: invoice.id },
+			where: { credit_note_invoice_id: creditNote.id },
 			transaction: t,
 		});
 
-		await CreditNoteinvoice.destroy({ transaction: t });
+		await creditNote.destroy({ transaction: t });
 
 		await t.commit();
 		res.status(200).json({ message: 'Credit note deleted successfully' });
