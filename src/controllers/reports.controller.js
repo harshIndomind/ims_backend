@@ -12,6 +12,7 @@ const {
 	GstStateCode,
 	Payment,
 	PaymentInvoice,
+	CreditNoteInvoice
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
@@ -24,6 +25,7 @@ const {
 const path = require('path');
 const ExcelJS = require('exceljs');
 const { BASE_URL } = require('../config/serverConfig');
+const { print } = require('../utils/common');
 
 function isInterstate(placeOfSupply, supplierState) {
 	if (!placeOfSupply || !supplierState) return false;
@@ -140,6 +142,7 @@ exports.generateGSTR1 = catchAsync(async (req, res) => {
 	try {
 		const invoicesDataForHSNReport = await getInvoicesDataForHSNReport(req);
 		const invoicesData = await getInvoices(req);
+		const getGSTR1Docs = await getGSTR1DocsReport(req);
 
 		const supplierStateData = await GstStateCode.findByPk(req.user.state_id);
 
@@ -177,6 +180,7 @@ exports.generateGSTR1 = catchAsync(async (req, res) => {
 
 		const hsnb2b = workbook.getWorksheet('hsn(b2b)');
 		const hsnb2c = workbook.getWorksheet('hsn(b2c)');
+		const docs = workbook.getWorksheet('docs');
 
 		// addHeader(b2b, headers);
 		// addHeader(b2cl, headers);
@@ -190,6 +194,7 @@ exports.generateGSTR1 = catchAsync(async (req, res) => {
 		let startB2csRow = 5;
 		let startHsnb2bRow = 5;
 		let startHsnb2cRow = 5;
+		let startDocsRow = 5;
 
 		// Fill rows
 		// invoices.forEach((inv) => {
@@ -348,46 +353,30 @@ exports.generateGSTR1 = catchAsync(async (req, res) => {
 					row.commit();
 				});
 			}
+
+			if (getGSTR1Docs) {
+				// const totals = invoicesDataForHSNReport['hsn(b2c)'].totals;
+				const header = docs.getRow(3);
+				const totalNumber = getGSTR1Docs.reduce((acc, item) => acc + item.totalNumber, 0);
+				const cancelledNumber = getGSTR1Docs.reduce((acc, item) => acc + item.cancelled, 0);
+				console.log("totalNumbers ",  {totalNumber, cancelledNumber});
+				
+				header.getCell(4).value = String(totalNumber); // Total HSN No.
+				header.getCell(5).value = String(cancelledNumber); // Total Value
+			
+				header.commit();
+				getGSTR1Docs.forEach((item) => {
+					const row = docs.getRow(startDocsRow++);
+					row.getCell(1).value = item.title; //HSN
+					row.getCell(2).value = item.start; //Description
+					row.getCell(3).value = item.end; //UQC
+					row.getCell(4).value = item.totalNumber; //Total Quantity
+					row.getCell(5).value = item.cancelled; //Total Value
+					row.commit();
+				});
+			}
 		}
 
-		// Optional: Summary sheet
-		const summary = workbook.addWorksheet('Summary');
-		summary.addRow([
-			'Section',
-			'Total Invoices',
-			'Total Taxable Value',
-			'Total IGST',
-			'Total CGST',
-			'Total SGST',
-			'Total Invoice Value',
-		]);
-
-		function totalsForSheet(ws) {
-			const rows = ws.getRows(2, ws.rowCount - 1) || [];
-			let tInv = 0,
-				tTax = 0,
-				tIgst = 0,
-				tCgst = 0,
-				tSgst = 0,
-				tInvVal = 0;
-			rows.forEach((r) => {
-				tInv++;
-				tTax += Number(r.getCell('F').value || 0); // Taxable Value at col F (6)
-				tIgst += Number(r.getCell('G').value || 0);
-				tCgst += Number(r.getCell('H').value || 0);
-				tSgst += Number(r.getCell('I').value || 0);
-				tInvVal += Number(r.getCell('J').value || 0);
-			});
-			return [tInv, tTax, tIgst, tCgst, tSgst, tInvVal];
-		}
-
-		const b2bTotals = totalsForSheet(b2b);
-		const b2clTotals = totalsForSheet(b2cl);
-		const b2csTotals = totalsForSheet(b2cs);
-
-		summary.addRow(['B2B', ...b2bTotals]);
-		summary.addRow(['B2CL', ...b2clTotals]);
-		summary.addRow(['B2CS', ...b2csTotals]);
 
 		// Auto-size first sheet columns a bit more and set date formats
 		[b2b, b2cl, b2cs].forEach((ws) => {
@@ -427,7 +416,7 @@ exports.generateGSTR1 = catchAsync(async (req, res) => {
 		res.json({
 			message: 'GSTR-1 report generated.',
 			data: {
-				rows: { ...allCategory, ...invoicesDataForHSNReport },
+				rows: { ...allCategory, ...invoicesDataForHSNReport, docs: getGSTR1Docs },
 				path: fileDownloadPath,
 			},
 		});
@@ -861,4 +850,150 @@ async function getInvoicesDataForHSNReport(req) {
 	// console.log('separate ', JSON.stringify(separate));
 
 	return separate || [];
+}
+
+async function getGSTR1DocsReport(req) {
+	const { org_id, role } = req.user;
+	const { from_date, to_date } = req.body;
+
+	const fromDate = parseDate(from_date);
+	const toDate = parseDate(to_date);
+
+	// Ensure valid dates
+	if (isNaN(fromDate) || isNaN(toDate)) {
+		throw new Error('Invalid date range');
+	}
+	toDate.setHours(23, 59, 59, 999);
+
+	if (!org_id && role !== 'Admin') {
+		throw AppError(`You don't authorize to access this api.`);
+	}
+
+	const invoice = await Invoice.findAll({
+		where: {
+			orgId: org_id,
+			createdAt: {
+				[Op.between]: [fromDate, toDate],
+			},
+		},
+		attributes: ['id', 'invoicePrefix', 'invoiceNo', 'invoicePostfix'],
+		order: [['createdAt', 'ASC']],
+	});
+
+	if (!invoice) {
+		return res.status(404).json({ message: 'Invoice not found' });
+	}
+
+	const invoiceData = invoice.map((i) => i.get({ plain: true }));
+
+	const groups = {};
+
+	invoiceData.forEach((inv) => {
+		const prefix = inv.invoicePrefix || '';
+		const postfix = inv.invoicePostfix || '';
+		const key = prefix + '|' + postfix;
+
+		if (!groups[key]) groups[key] = [];
+
+		groups[key].push(inv);
+	});
+
+	const result = [];
+
+	Object.keys(groups).forEach((key) => {
+		const [prefix, postfix] = key.split('|');
+
+		// sort by numeric invoiceNo
+		const sorted = groups[key].sort(
+			(a, b) => Number(a.invoiceNo) - Number(b.invoiceNo)
+		);
+
+		const startNo = sorted[0].invoiceNo;
+		const endNo = sorted[sorted.length - 1].invoiceNo;
+
+		result.push({
+			title: 'Invoices for outward supply',
+			prefix: prefix,
+			start: prefix + startNo + (postfix || ''),
+			end: prefix + endNo + (postfix || ''),
+			totalNumber: sorted.length,
+			cancelled: 0
+		});
+	});
+
+	const creditNoteDocs = await getGSTR1CreditNoteDocsReport(req);
+	
+	return result.concat(creditNoteDocs) || [];
+}
+
+async function getGSTR1CreditNoteDocsReport(req) {
+	const { org_id, role } = req.user;
+	const { from_date, to_date } = req.body;
+
+	const fromDate = parseDate(from_date);
+	const toDate = parseDate(to_date);
+
+	// Ensure valid dates
+	if (isNaN(fromDate) || isNaN(toDate)) {
+		throw new Error('Invalid date range');
+	}
+	toDate.setHours(23, 59, 59, 999);
+
+	if (!org_id && role !== 'Admin') {
+		throw AppError(`You don't authorize to access this api.`);
+	}
+
+	const creditNote = await CreditNoteInvoice.findAll({
+		where: {
+			orgId: org_id,
+			createdAt: {
+				[Op.between]: [fromDate, toDate],
+			},
+		},
+		attributes: ['id', 'invoicePrefix', 'invoiceNo', 'invoicePostfix'],
+		order: [['createdAt', 'ASC']],
+	});
+
+	if (!creditNote) {
+		return res.status(404).json({ message: 'Credit Note not found' });
+	}
+
+	const creditNoteData = creditNote.map((i) => i.get({ plain: true }));
+
+	const groups = {};
+
+	creditNoteData.forEach((inv) => {
+		const prefix = inv.invoicePrefix || '';
+		const postfix = inv.invoicePostfix || '';
+		const key = prefix + '|' + postfix;
+
+		if (!groups[key]) groups[key] = [];
+
+		groups[key].push(inv);
+	});
+
+	const result = [];
+
+	Object.keys(groups).forEach((key) => {
+		const [prefix, postfix] = key.split('|');
+
+		// sort by numeric invoiceNo
+		const sorted = groups[key].sort(
+			(a, b) => Number(a.invoiceNo) - Number(b.invoiceNo)
+		);
+
+		const startNo = sorted[0].invoiceNo;
+		const endNo = sorted[sorted.length - 1].invoiceNo;
+
+		result.push({
+			title: 'Credit Note',
+			prefix: prefix,
+			start: prefix + startNo + (postfix || ''),
+			end: prefix + endNo + (postfix || ''),
+			totalNumber: sorted.length,
+			cancelled: 0
+		});
+	});
+
+	return result || [];
 }
