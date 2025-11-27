@@ -525,13 +525,16 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 			);
 		}
 
+		let uomQty = 1;
 		// 1️⃣ Revert previous stock first
 		for (const item of productsItemsFromOriginalInvoice) {
-			const uomQty = await uomConversion(
-				parseInt(item.qty),
-				parseInt(item.product_id),
-				parseInt(item.selected_uom_id)
-			);
+			if(item.selected_uom_id > 0){
+				uomQty = await uomConversion(
+					parseInt(item.qty),
+					parseInt(item.product_id),
+					parseInt(item.selected_uom_id)
+				);
+			}
 			if (item.stock_type === 'batch') {
 				await ProductBatch.increment(
 					{ qty: parseFloat(uomQty) },
@@ -571,11 +574,13 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 
 		// 3️⃣ Validate new stock before updating
 		for (const item of productItems) {
-			const uomQty = await uomConversion(
-				parseInt(item.qty),
-				parseInt(item.product_id),
-				parseInt(item.selected_uom_id)
-			);
+			if(item.selected_uom_id > 0){
+				uomQty = await uomConversion(
+					parseInt(item.qty),
+					parseInt(item.product_id),
+					parseInt(item.selected_uom_id)
+				);
+			}
 			if (item.stock_type === 'batch') {
 				const batch = await ProductBatch.findByPk(item.batch_id, {
 					transaction: t,
@@ -704,11 +709,13 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 				);
 			}
 
-			const uomQty = await uomConversion(
-				parseInt(item.qty),
-				parseInt(item.product_id),
-				parseInt(item.selected_uom_id)
-			);
+			if(item.selected_uom_id > 0){
+				uomQty = await uomConversion(
+					parseInt(item.qty),
+					parseInt(item.product_id),
+					parseInt(item.selected_uom_id)
+				);
+			}
 			// ➤ Deduct stock
 			if (item.stock_type === 'batch') {
 				await ProductBatch.increment(
