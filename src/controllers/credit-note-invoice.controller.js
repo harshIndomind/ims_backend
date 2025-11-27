@@ -403,11 +403,16 @@ exports.createInvoice = catchAsync(async (req, res) => {
 	}
 });
 
+function parseDate(d) {
+	const [day, month, year] = d.split('/').map(Number);
+	return new Date(year, month - 1, day); // month is 0-based
+}
+
 exports.getInvoices = catchAsync(async (req, res) => {
 	const { org_id, role } = req.user;
 	const { from_date, to_date } = req.query;
-	const fromDate = new Date(from_date);
-	const toDate = new Date(to_date);
+	const fromDate = new Date(parseDate(from_date));
+	const toDate = new Date(parseDate(to_date));
 	const limit = parseInt(req.query.limit) || 10;
 	const offset = parseInt(req.query.offset) || 0;
 	// Validate that both dates are valid
@@ -1279,6 +1284,11 @@ exports.generateInvoiceHtml = catchAsync(async (req, res) => {
 					],
 				},
 				{
+					model: Invoice,
+					as: 'invoice',
+					attributes: ['id', 'invoicePrefix', 'invoiceNo', 'invoicePostfix', 'invoiceDetail'],
+				},
+				{
 					model: BusinessPartner,
 					as: 'partner',
 				},
@@ -1458,6 +1468,9 @@ ${business.state}`;
 		combineInvoiceNumber: `${invoiceData.invoicePrefix || ''}${
 			invoiceData.invoiceNo || ''
 		}${invoiceData.invoicePostfix || ''}`,
+		combineAgainstInvoiceNumber: `${invoiceData.invoice.invoicePrefix || ''}${
+			invoiceData.invoice.invoiceNo || ''
+		}${invoiceData.invoice.invoicePostfix || ''}`,
 		totalCgst,
 		totalSgst,
 		totalIgst,
