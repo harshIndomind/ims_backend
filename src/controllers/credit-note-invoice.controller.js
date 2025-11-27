@@ -119,12 +119,10 @@ exports.createInvoice = catchAsync(async (req, res) => {
 			);
 		}
 
+		let uomQty = 1;
 		for (const item of productItems) {
-			if (
-				['normal', 'batch'].includes(item.stock_type) &&
-				item.item_type === 'product'
-			) {
-				const uomQty = await uomConversion(
+			if (item.selected_uom_id > 0) {
+				uomQty = await uomConversion(
 					parseInt(item.qty),
 					parseInt(item.product_id),
 					parseInt(item.selected_uom_id)
@@ -205,7 +203,6 @@ exports.createInvoice = catchAsync(async (req, res) => {
 				const isInvoiceItemExits = await InvoiceItem.findOne({
 					where: { invoice_id: invoice_id, product_id: item.product_id },
 				});
-				console.log('uomQty ', { uomQty, itemQty: item.qty });
 
 				if (isInvoiceItemExits)
 					if (parseFloat(uomQty) > parseFloat(isInvoiceItemExits.qty)) {
@@ -300,11 +297,7 @@ exports.createInvoice = catchAsync(async (req, res) => {
 				}
 			}
 
-			if (
-				['normal', 'batch'].includes(item.stock_type) &&
-				item.item_type === 'product' &&
-				reverseStock
-			) {
+			if (item.selected_uom_id > 0 && reverseStock) {
 				const uomQty = await uomConversion(
 					parseInt(item.qty),
 					parseInt(item.product_id),
@@ -312,19 +305,18 @@ exports.createInvoice = catchAsync(async (req, res) => {
 				);
 				// ➤ Deduct stock
 				if (item.stock_type === 'batch') {
-					print(uomQty, 'uomQty => ');
-					// await ProductBatch.increment(
-					// 	{ qty: -parseFloat(uomQty) },
-					// 	{ where: { id: item.batch_id }, transaction: t }
-					// );
+					await ProductBatch.increment(
+						{ qty: parseFloat(uomQty) },
+						{ where: { id: item.batch_id }, transaction: t }
+					);
 				} else if (
 					item.stock_type === 'normal' &&
 					item.item_type === 'product'
 				) {
-					// await Product.increment(
-					// 	{ available_qty: -parseFloat(uomQty) },
-					// 	{ where: { id: item.product_id }, transaction: t }
-					// );
+					await Product.increment(
+						{ available_qty: parseFloat(uomQty) },
+						{ where: { id: item.product_id }, transaction: t }
+					);
 				}
 			}
 		}
@@ -749,42 +741,40 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 			);
 		}
 
-		// 1️⃣ Revert previous stock first
-		for (const item of productsItemsFromOriginalInvoice) {
-			if (
-				['normal', 'batch'].includes(item.stock_type) &&
-				item.item_type === 'product'
-			) {
-				const uomQty = await uomConversion(
-					parseInt(item.qty),
-					parseInt(item.product_id),
-					parseInt(item.selected_uom_id)
-				);
-			}
-			// if (item.stock_type === 'batch') {
-			// 	await ProductBatch.increment(
-			// 		{ qty: parseFloat(uomQty) },
-			// 		{ where: { id: parseInt(item.batch_id) }, transaction: t }
-			// 	);
-			// } else if (item.stock_type === 'normal' && item.item_type === 'product') {
-			// 	await Product.increment(
-			// 		{ available_qty: parseFloat(uomQty) },
-			// 		{ where: { id: parseInt(item.product_id) }, transaction: t }
-			// 	);
-			// } else if (item.stock_type === 'serial') {
-			// 	await ProductSerial.update(
-			// 		{ is_sell: 0 },
-			// 		{
-			// 			where: {
-			// 				serial_no: {
-			// 					[Op.in]: item.serials.map((s) => s.serial_no),
-			// 				},
-			// 			},
-			// 			transaction: t,
-			// 		}
-			// 	);
-			// }
-		}
+		// let uomQty = 1;
+		// // 1️⃣ Revert previous stock first
+		// for (const item of productsItemsFromOriginalInvoice) {
+		// 	if (item.selected_uom_id > 0) {
+		// 		uomQty = await uomConversion(
+		// 			parseInt(item.qty),
+		// 			parseInt(item.product_id),
+		// 			parseInt(item.selected_uom_id)
+		// 		);
+		// 	}
+		// 	if (item.stock_type === 'batch') {
+		// 		await ProductBatch.increment(
+		// 			{ qty: parseFloat(uomQty) },
+		// 			{ where: { id: parseInt(item.batch_id) }, transaction: t }
+		// 		);
+		// 	} else if (item.stock_type === 'normal' && item.item_type === 'product') {
+		// 		await Product.increment(
+		// 			{ available_qty: parseFloat(uomQty) },
+		// 			{ where: { id: parseInt(item.product_id) }, transaction: t }
+		// 		);
+		// 	} else if (item.stock_type === 'serial') {
+		// 		await ProductSerial.update(
+		// 			{ is_sell: 0 },
+		// 			{
+		// 				where: {
+		// 					serial_no: {
+		// 						[Op.in]: item.serials.map((s) => s.serial_no),
+		// 					},
+		// 				},
+		// 				transaction: t,
+		// 			}
+		// 		);
+		// 	}
+		// }
 
 		// 2️⃣ Remove old invoice items & serial mappings
 		await CreditNoteInvoiceItemSerial.destroy({
@@ -800,68 +790,13 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 			transaction: t,
 		});
 
+		let uomQty = 1;
 		// 3️⃣ Validate new stock before updating
 		for (const item of productItems) {
-			// if (
-			// 	['normal', 'batch'].includes(item.stock_type) &&
-			// 	item.item_type === 'product'
-			// ) {
-			// 	const uomQty = await uomConversion(
-			// 		parseInt(item.qty),
-			// 		parseInt(item.product_id),
-			// 		parseInt(item.selected_uom_id)
-			// 	);
-			// }
-			// if (item.stock_type === 'batch') {
-			// 	const batch = await ProductBatch.findByPk(item.batch_id, {
-			// 		transaction: t,
-			// 	});
-			// 	if (!batch)
-			// 		throw new AppError(
-			// 			`Batch not found for product ID ${item.product_id}`,
-			// 			417
-			// 		);
-
-			// 	if (parseFloat(uomQty) > parseFloat(batch.qty)) {
-			// 		throw new AppError(
-			// 			`Insufficient stock in batch ${batch.batch_no}. Available: ${batch.qty}, Required: ${uomQty}`,
-			// 			417
-			// 		);
-			// 	}
-			// } else if (item.stock_type === 'serial') {
-			// 	const serials = await ProductSerial.findAll({
-			// 		where: {
-			// 			serial_no: { [Op.in]: item.selectedSerials },
-			// 			is_sell: 0,
-			// 		},
-			// 		transaction: t,
-			// 	});
-
-			// 	if (serials.length !== item.selectedSerials.length) {
-			// 		throw new AppError(
-			// 			`Some serial numbers are invalid or already sold for product ${item.product_name}`,
-			// 			417
-			// 		);
-			// 	}
-			// } else if (item.stock_type === 'normal' && item.item_type === 'product') {
-			// 	const product = await Product.findByPk(item.product_id, {
-			// 		transaction: t,
-			// 	});
-			// 	if (!product)
-			// 		throw new AppError(`Product not found for ID ${item.product_id}`);
-			// 	if (parseFloat(uomQty) > parseFloat(product.available_qty)) {
-			// 		throw new AppError(
-			// 			`Insufficient stock for product ${product.name}. Available: ${product.available_qty}, Required: ${uomQty}`,
-			// 			417
-			// 		);
-			// 	}
-			// }
-
 			if (
-				['normal', 'batch'].includes(item.stock_type) &&
-				item.item_type === 'product'
+				item.selected_uom_id > 0
 			) {
-				const uomQty = await uomConversion(
+				uomQty = await uomConversion(
 					parseInt(item.qty),
 					parseInt(item.product_id),
 					parseInt(item.selected_uom_id)
@@ -1045,8 +980,7 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 			}
 
 			if (
-				['normal', 'batch'].includes(item.stock_type) &&
-				item.item_type === 'product' &&
+				item.selected_uom_id > 0 &&
 				reverseStock
 			) {
 				const uomQty = await uomConversion(
@@ -1213,10 +1147,12 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 		});
 
 		if (isPaymentExists) {
-			const existingInvoice = await Invoice.findOne({ where: { id: creditNote.invoice_id } });
+			const existingInvoice = await Invoice.findOne({
+				where: { id: creditNote.invoice_id },
+			});
 
-			if(!existingInvoice){
-				throw new AppError("Invoice not found")
+			if (!existingInvoice) {
+				throw new AppError('Invoice not found');
 			}
 
 			await Payment.destroy({
