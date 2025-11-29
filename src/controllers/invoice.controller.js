@@ -17,10 +17,13 @@ const {
 	Unit,
 	User,
 	organization,
+	CreditNoteInvoiceItemSerial,
+	CreditNoteInvoiceItem,
+	CreditNoteInvoice,
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
-const { Op } = require('sequelize');
+const { Op, where } = require('sequelize');
 const { generateInvoicePDF } = require('../pdf/pdfGenerator');
 const {
 	generateInvoiceHTMLPDF,
@@ -69,8 +72,9 @@ exports.createInvoice = catchAsync(async (req, res) => {
 		}
 
 		for (const item of productItems) {
-			if(item.selected_uom_id != null && item.selected_uom_id != -1){
-				const uomQty = await uomConversion(
+			let uomQty = item.qty;
+			if (+item.selected_uom_id > 0) {
+				uomQty = await uomConversion(
 					parseInt(item.qty),
 					parseInt(item.product_id),
 					parseInt(item.selected_uom_id)
@@ -169,7 +173,12 @@ exports.createInvoice = catchAsync(async (req, res) => {
 					total: parseFloat(item.total || 0),
 					stock_type: item.stock_type,
 					note: item.note,
-					selected_uom_id: (item.selected_uom_id != null && item.selected_uom_id != -1) ? item.selected_uom_id : null,
+					selected_uom_id:
+						item.selected_uom_id &&
+						item.selected_uom_id != null &&
+						+item.selected_uom_id != -1
+							? item.selected_uom_id
+							: null,
 				},
 				{ transaction: t }
 			);
@@ -198,24 +207,25 @@ exports.createInvoice = catchAsync(async (req, res) => {
 				);
 			}
 
-			if(item.selected_uom_id != null && item.selected_uom_id != -1){
-				const uomQty = await uomConversion(
+			uomQty = item.qty;
+			if (+item.selected_uom_id > 0) {
+				uomQty = await uomConversion(
 					parseInt(item.qty),
 					parseInt(item.product_id),
 					parseInt(item.selected_uom_id)
 				);
-				// ➤ Deduct stock
-				if (item.stock_type === 'batch') {
-					await ProductBatch.increment(
-						{ qty: -parseFloat(uomQty) },
-						{ where: { id: item.batch_id }, transaction: t }
-					);
-				} else if (item.stock_type === 'normal' && item.item_type === 'product') {
-					await Product.increment(
-						{ available_qty: -parseFloat(uomQty) },
-						{ where: { id: item.product_id }, transaction: t }
-					);
-				}
+			}
+			// ➤ Deduct stock
+			if (item.stock_type === 'batch') {
+				await ProductBatch.increment(
+					{ qty: -parseFloat(uomQty) },
+					{ where: { id: item.batch_id }, transaction: t }
+				);
+			} else if (item.stock_type === 'normal' && item.item_type === 'product') {
+				await Product.increment(
+					{ available_qty: -parseFloat(uomQty) },
+					{ where: { id: item.product_id }, transaction: t }
+				);
 			}
 		}
 
@@ -525,27 +535,33 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 			);
 		}
 
-		let uomQty = 1;
 		// 1️⃣ Revert previous stock first
 		for (const item of productsItemsFromOriginalInvoice) {
-			if(item.selected_uom_id > 0){
+			console.log('item ', item);
+
+			let uomQty = item.qty;
+			if (+item.selected_uom_id > 0) {
 				uomQty = await uomConversion(
 					parseInt(item.qty),
 					parseInt(item.product_id),
 					parseInt(item.selected_uom_id)
 				);
 			}
-			if (item.stock_type === 'batch') {
+
+			if (item.product.stock_type === 'batch') {
 				await ProductBatch.increment(
 					{ qty: parseFloat(uomQty) },
 					{ where: { id: parseInt(item.batch_id) }, transaction: t }
 				);
-			} else if (item.stock_type === 'normal' && item.item_type === 'product') {
+			} else if (
+				item.product.stock_type === 'normal' &&
+				item.product.item_type === 'product'
+			) {
 				await Product.increment(
 					{ available_qty: parseFloat(uomQty) },
 					{ where: { id: parseInt(item.product_id) }, transaction: t }
 				);
-			} else if (item.stock_type === 'serial') {
+			} else if (item.product.stock_type === 'serial') {
 				await ProductSerial.update(
 					{ is_sell: 0 },
 					{
@@ -574,7 +590,8 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 
 		// 3️⃣ Validate new stock before updating
 		for (const item of productItems) {
-			if(item.selected_uom_id > 0){
+			uomQty = item.qty;
+			if (item.selected_uom_id > 0) {
 				uomQty = await uomConversion(
 					parseInt(item.qty),
 					parseInt(item.product_id),
@@ -618,6 +635,7 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 				});
 				if (!product)
 					throw new AppError(`Product not found for ID ${item.product_id}`);
+				print({ uomQty, availaleQty: product.available_qty }, 'product => ');
 				if (parseFloat(uomQty) > parseFloat(product.available_qty)) {
 					throw new AppError(
 						`Insufficient stock for product ${product.name}. Available: ${product.available_qty}, Required: ${uomQty}`,
@@ -709,7 +727,8 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 				);
 			}
 
-			if(item.selected_uom_id > 0){
+			uomQty = item.qty;
+			if (+item.selected_uom_id > 0) {
 				uomQty = await uomConversion(
 					parseInt(item.qty),
 					parseInt(item.product_id),
@@ -752,7 +771,7 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 	const { org_id, role } = req.user;
 
 	if (!org_id && role !== 'Admin') {
-		throw AppError(`You don't authorize to access this api.`);
+		throw new AppError(`You don't authorize to access this api.`);
 	}
 
 	const t = await sequelize.transaction();
@@ -769,27 +788,78 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 							model: InvoiceItemSerial,
 							as: 'serials',
 						},
+						{
+							model: Product,
+							as: 'product',
+						},
 					],
 				},
 			],
 		});
+
 		if (!invoice) {
 			return res.status(404).json({ message: 'Invoice not found' });
 		}
 
 		// 1️⃣ Revert stock
 		for (const item of invoice.productItems) {
-			if (item.stock_type === 'batch') {
+			let itemQuantity = parseFloat(item.qty);
+
+			const isCreditNoteExists = await CreditNoteInvoice.findOne({
+				where: { invoice_id: invoice.id },
+				include: [
+					{
+						model: CreditNoteInvoiceItem,
+						as: 'productItems',
+						where: { product_id: item.product_id },
+						required: false,
+						include: [
+							{
+								model: CreditNoteInvoiceItemSerial,
+								as: 'serials',
+							},
+							{
+								model: ProductBatch,
+								as: 'batches',
+							},
+							{
+								model: Product,
+								as: 'product',
+							},
+							{
+								model: ProductUOM,
+								as: 'uoms',
+								include: {
+									model: Unit,
+									as: 'unit',
+									attributes: ['code', 'name'],
+								},
+							},
+						],
+					},
+				],
+				order: [['createdAt', 'DESC']],
+			});
+
+			const creditNoteItem = isCreditNoteExists.get({
+				plain: true,
+			}).productItems;
+
+			if (creditNoteItem && creditNoteItem.length > 0) {
+				itemQuantity -= parseFloat(creditNoteItem[0].qty);
+			}
+
+			if (item.product.stock_type === 'batch' && item.product.item_type === 'product') {
 				await ProductBatch.increment(
-					{ qty: parseFloat(item.qty) },
+					{ qty: parseFloat(itemQuantity) },
 					{ where: { id: parseInt(item.batch_id) }, transaction: t }
 				);
-			} else if (item.stock_type === 'normal') {
+			} else if (item.product.stock_type === 'normal' && item.product.item_type === 'product') {
 				await Product.increment(
-					{ available_qty: parseFloat(item.qty) },
+					{ available_qty: parseFloat(itemQuantity) },
 					{ where: { id: parseInt(item.product_id) }, transaction: t }
 				);
-			} else if (item.stock_type === 'serial') {
+			} else if (item.product.stock_type === 'serial') {
 				await ProductSerial.update(
 					{ is_sell: 0 },
 					{
@@ -802,6 +872,23 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 					}
 				);
 			}
+		}
+
+		const hasCreditNotes = await CreditNoteInvoice.findAll({
+			where: { invoice_id: invoice.id },
+			attributes: ['id'],
+		});
+
+		if (hasCreditNotes) {
+			const creditNoteIds = hasCreditNotes.map((cn) => cn.id);
+			console.log('creditNoteIds ', creditNoteIds);
+
+			await CreditNoteInvoice.destroy({
+				where: {
+					id: { [Op.in]: creditNoteIds },
+				},
+				transaction: t,
+			});
 		}
 
 		// 2️⃣ Delete invoice items & serial mappings
@@ -855,7 +942,7 @@ exports.generateInvoiceNumber = catchAsync(async (req, res) => {
 	let errorMsg = 'Invalid user or organization ID';
 	if (!user || !user.org_id || user.role !== 'Admin') {
 		if (user.role === 'Super Admin') {
-			errorMsg = 'As a super admin user you can\'t create a sale invoice.';
+			errorMsg = "As a super admin user you can't create a sale invoice.";
 		}
 		return res.status(400).json({ message: errorMsg });
 	}

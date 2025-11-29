@@ -21,7 +21,7 @@ exports.getAllProductGroups = catchAsync(async (req, res) => {
   const organization_id = req.user.org_id;
 
   const groups = await ProductGroup.findAll({
-    // where: { organization_id }
+    where: { organization_id }
   });
 
   res.status(200).json({ success: true, data: groups });

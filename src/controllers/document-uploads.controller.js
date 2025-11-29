@@ -238,7 +238,7 @@ exports.getAllUploadedDocs = catchAsync(async (req, res) => {
 		const offset = parseInt(req.query.offset) || 0;
 		const vendorUserId = parseInt(req.query.selectedVendorId) || 0;
 
-		const { role, id } = req.user;
+		const { role, id, org_id } = req.user;
 
 		const businessPartner = await BusinessPartner.findOne({
 			where: { user_id: id },
@@ -247,7 +247,7 @@ exports.getAllUploadedDocs = catchAsync(async (req, res) => {
 		let columns = [];
 		let wheres = {};
 
-		if (role == 'Vendor') {
+		if (['Vendor', 'Vendor-Customer', 'Customer'].includes(role)) {
 			columns = [
 				'id',
 				'partner_id',
@@ -299,6 +299,7 @@ exports.getAllUploadedDocs = catchAsync(async (req, res) => {
 					model: BusinessPartner,
 					as: 'vendor', // must match DocumentsUpload association
 					attributes: ['id', 'name', 'code', 'contact_no'],
+					where: {organization_id: org_id},
 					include: [
 						{
 							model: User,

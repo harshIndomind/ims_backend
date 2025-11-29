@@ -286,6 +286,7 @@ exports.createProduct = async (req, res) => {
 exports.getAllProducts = async (req, res) => {
 	try {
 		const products = await Product.findAll({
+			where: { organization_id: req.user.org_id },
 			include: [
 				{ model: Tax, as: 'tax', attributes: ['id', 'name', 'rate'] },
 				{ model: Unit, as: 'unit', attributes: ['id', 'name', 'code'] },
