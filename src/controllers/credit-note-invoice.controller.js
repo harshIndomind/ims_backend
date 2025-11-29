@@ -106,6 +106,11 @@ exports.createInvoice = catchAsync(async (req, res) => {
 		if (!isInvoiceExist) {
 			return res.status(404).json({ message: 'Invoice not found' });
 		}
+
+		if (isInvoiceExist.paymentStatus === 'CANCELLED') {
+			throw new AppError('Cannot create a credit note cancelled invoice.', 400);
+		}
+
 		// print(req.body, 'req.body => ');
 		// return;
 		const isSerialDuplicate = checkForDuplicateSerials(productItems);
@@ -306,7 +311,15 @@ exports.createInvoice = catchAsync(async (req, res) => {
 						parseInt(item.selected_uom_id)
 					);
 				}
-				print({reverseStock, uomQty, stockType: item.stock_type, itemType: item.item_type}, 'deduct stock => ');
+				print(
+					{
+						reverseStock,
+						uomQty,
+						stockType: item.stock_type,
+						itemType: item.item_type,
+					},
+					'deduct stock => '
+				);
 				// ➤ Deduct stock
 				if (item.stock_type === 'batch') {
 					await ProductBatch.increment(
@@ -733,6 +746,13 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 
 		if (!isInvoiceExist) {
 			return res.status(404).json({ message: 'Invoice not found' });
+		}
+
+		if (isInvoiceExist.paymentStatus === 'CANCELLED') {
+			throw new AppError(
+				'Cannot update a credit note for cancelled invoice.',
+				400
+			);
 		}
 
 		const productsItemsFromOriginalInvoice = invoice.get({
@@ -1413,15 +1433,20 @@ async function calculateSaleInvoice(invoice) {
 		include: {
 			model: organization,
 			as: 'organization',
+			include: {
+				model: GstStateCode,
+				as: '_state',
+			},
 		},
 	});
 	let businessLogo = null;
 	let business = null;
 	if (userData) {
 		business = userData.organization;
-		business.address = `${business.org_address},<br>
-${business.city} - ${business.pincode},<br>
-${business.state}`;
+		business.address = `${business.org_address || ''},<br>
+${business.city || ''} - ${business.pincode || ''}, ${
+			business._state.state_name || ''
+		}<br>`;
 		if (userData.logo) {
 			businessLogo = await generateSignedUrl(userData.logo);
 		}

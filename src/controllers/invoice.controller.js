@@ -499,7 +499,10 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 		if (!invoice) {
 			return res.status(404).json({ message: 'Invoice not found' });
 		}
-		console.log('productsItemsFromOriginalInvoice ', invoice);
+
+		if (invoice.paymentStatus === 'CANCELLED') {
+			throw new AppError('Cannot update a cancelled invoice.', 400);
+		}
 
 		const {
 			orgId,
@@ -801,6 +804,10 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 			return res.status(404).json({ message: 'Invoice not found' });
 		}
 
+		if (invoice.paymentStatus === 'CANCELLED') {
+			throw new AppError('Cannot update a cancelled invoice.', 400);
+		}
+
 		// 1️⃣ Revert stock
 		for (const item of invoice.productItems) {
 			let itemQuantity = parseFloat(item.qty);
@@ -849,12 +856,18 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 				itemQuantity -= parseFloat(creditNoteItem[0].qty);
 			}
 
-			if (item.product.stock_type === 'batch' && item.product.item_type === 'product') {
+			if (
+				item.product.stock_type === 'batch' &&
+				item.product.item_type === 'product'
+			) {
 				await ProductBatch.increment(
 					{ qty: parseFloat(itemQuantity) },
 					{ where: { id: parseInt(item.batch_id) }, transaction: t }
 				);
-			} else if (item.product.stock_type === 'normal' && item.product.item_type === 'product') {
+			} else if (
+				item.product.stock_type === 'normal' &&
+				item.product.item_type === 'product'
+			) {
 				await Product.increment(
 					{ available_qty: parseFloat(itemQuantity) },
 					{ where: { id: parseInt(item.product_id) }, transaction: t }
@@ -1099,15 +1112,18 @@ async function calculateSaleInvoice(invoice) {
 		include: {
 			model: organization,
 			as: 'organization',
+			include: {
+				model: GstStateCode,
+				as: '_state',
+			},
 		},
 	});
 	let businessLogo = null;
 	let business = null;
 	if (userData) {
 		business = userData.organization;
-		business.address = `${business.org_address},<br>
-${business.city} - ${business.pincode},<br>
-${business.state}`;
+		business.address = `${business.org_address || ''},<br>
+${business.city || ''} - ${business.pincode || ''}, ${business._state.state_name || ''}<br>`;
 		if (userData.logo) {
 			businessLogo = await generateSignedUrl(userData.logo);
 		}
@@ -1814,3 +1830,108 @@ async function uomConversion(qty, product_id, selected_unit_id) {
 	// product.available_qty -= deductedQtyInBase;
 	// await product.save();
 }
+
+exports.cancelInvoice = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { org_id, role } = req.user;
+
+	if (role !== 'Admin' && !org_id) {
+		throw new AppError(`You are not authorized to access this API.`, 403);
+	}
+
+	const t = await sequelize.transaction();
+
+	try {
+		const invoice = await Invoice.findOne({
+			where: { id, orgId: org_id },
+			include: [
+				{
+					model: InvoiceItem,
+					as: 'productItems',
+					include: [
+						{ model: InvoiceItemSerial, as: 'serials' },
+						{ model: Product, as: 'product' },
+					],
+				},
+			],
+			transaction: t,
+			lock: t.LOCK.UPDATE,
+		});
+
+		if (!invoice) {
+			await t.rollback();
+			return res.status(404).json({ message: 'Invoice not found' });
+		}
+
+		// Load all credit notes once (avoid N+1)
+		const allCreditNotes = await CreditNoteInvoice.findAll({
+			where: { invoice_id: invoice.id },
+			include: [
+				{
+					model: CreditNoteInvoiceItem,
+					as: 'productItems',
+				},
+			],
+			transaction: t,
+		});
+
+		// Map credit notes by product
+		const creditNoteMap = {};
+		for (const cn of allCreditNotes) {
+			for (const item of cn.productItems) {
+				creditNoteMap[item.product_id] =
+					(creditNoteMap[item.product_id] || 0) + Number(item.qty || 0);
+			}
+		}
+
+		// Revert stock
+		for (const item of invoice.productItems) {
+			let itemQuantity = Number(item.qty) || 0;
+
+			const cnQty = creditNoteMap[item.product_id] || 0;
+			itemQuantity = Math.max(0, itemQuantity - cnQty);
+
+			if (item.product.stock_type === 'batch') {
+				await ProductBatch.increment(
+					{ qty: itemQuantity },
+					{ where: { id: item.batch_id }, transaction: t }
+				);
+			} else if (item.product.stock_type === 'normal') {
+				await Product.increment(
+					{ available_qty: itemQuantity },
+					{ where: { id: item.product_id }, transaction: t }
+				);
+			} else if (item.product.stock_type === 'serial') {
+				await ProductSerial.update(
+					{ is_sell: 0 },
+					{
+						where: {
+							id: { [Op.in]: item.serials.map((s) => s.id) },
+						},
+						transaction: t,
+					}
+				);
+			}
+		}
+
+		// Cancel all credit notes
+		await CreditNoteInvoice.update(
+			{ paymentStatus: 'CANCELLED' },
+			{
+				where: { invoice_id: invoice.id },
+				transaction: t,
+			}
+		);
+
+		// Cancel invoice
+		await invoice.update({ paymentStatus: 'CANCELLED' }, { transaction: t });
+
+		await t.commit();
+
+		return res.status(200).json({ message: 'Invoice cancelled successfully' });
+	} catch (err) {
+		if (!t.finished) await t.rollback();
+		console.error(err);
+		return res.status(500).json({ message: 'Internal server error' });
+	}
+});

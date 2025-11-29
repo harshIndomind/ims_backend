@@ -18,6 +18,7 @@ router.post('/payment', upload.array('documents[]', 5), invoiceController.create
 router.put('/payment/:id', upload.array('documents[]', 5), invoiceController.updatePaymentReceipt);
 router.get('/customer/:id', invoiceController.getInvoicesByCustomerId);
 
+router.patch('/cancel/:id', invoiceController.cancelInvoice);
 router.delete('/payments/:id', invoiceController.deletePaymentReceipt);
 router.get('/payments/:id', invoiceController.getPaymentReceipt);
 router.get('/:id', invoiceController.getInvoiceById);
