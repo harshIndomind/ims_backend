@@ -33,13 +33,19 @@
 
         .logo {
             width: 200px;
+            min-width: 125px;
             height: auto;
             border-radius: 4px;
             /*background-color: white;*/
             padding: 4px;
         }
 
+        .header-left {
+            min-width: 33.3%;
+        }
+
         .header-center {
+            min-width: 33.3%;
             text-align: center;
             flex: 1;
         }
@@ -59,6 +65,7 @@
         }
 
         .header-right {
+            min-width: 33.3%;
             text-align: right;
             font-size: 12px;
             line-height: 1.4;
@@ -291,7 +298,7 @@
 
             .header {
                 /* background: linear-gradient(90deg, #2980b9 0%, #3498db 100%) !important; */
-                background: #f1f1f1  !important;
+                background: #f1f1f1 !important;
                 color: #333 !important;
                 -webkit-print-color-adjust: exact !important;
             }
@@ -310,11 +317,31 @@
                 page-break-after: always;
             }
         }
+
+        .invoice-section {
+            position: relative; /* parent for absolute child */
+        }
+
+        .watermark {
+            position: absolute;
+            top: 40%;
+            left: 50%;
+            transform: translate(-50%, -50%) rotate(-30deg);
+            font-size: 120px;
+            color: rgba(255, 0, 0, 0.12);
+            font-weight: 900;
+            pointer-events: none;
+            user-select: none;
+            z-index: 0;   /* stays behind content */
+        }
     </style>
 </head>
 
 <body>
     <div class="invoice-section">
+        <% if (invoice.paymentStatus === 'CANCELLED') { %>
+            <div class="watermark">CANCELLED</div>
+        <% } %>
         <div class="header">
             <div class="header-left">
                 <% if(invoice.businessLogo){ %>
@@ -332,22 +359,16 @@
                 <h4>
                     <%= invoice.business.org_name ?? '' %>
                 </h4>
-                <!-- <p>
-                    Ofis Square Tower<br>
-                    Block A, Sector 3, Noida, Uttar Pradesh 201301<br>
-                    GSTIN: 07ABCDE1234F1Z5<br>
-                    support@indomind.ai
-                </p> -->
                 <p>
                     <% if(invoice.business.address) {%>
                         <%- invoice.business.address %><br>
-                    <% } %>
-                    <% if(invoice.business.org_gst_number) {%>
-                        <strong>GSTIN:</strong> <%- invoice.business.org_gst_number %><br>
-                    <% } %>
-                    <% if(invoice.business.org_email) {%>
-                        <strong>Email:</strong> <%- invoice.business.org_email %><br>
-                    <% } %>
+                            <% } %>
+                                <% if(invoice.business.org_gst_number) {%>
+                                    <strong>GSTIN:</strong> <%- invoice.business.org_gst_number %><br>
+                                        <% } %>
+                                            <% if(invoice.business.org_email) {%>
+                                                <strong>Email:</strong> <%- invoice.business.org_email %><br>
+                                                    <% } %>
                 </p>
                 <h5><strong>
                         <%= invoice.copyTitle %>
@@ -660,7 +681,9 @@
                                                                     `(${invoice.customField2.value}%)` : '' %>
                                                         </strong></span>
                                                     <span>
-                                                        <% if (invoice.customField2.operationType=='-' && parseFloat(invoice.customField2.calculatedValue).toFixed(2) > 0) { %>-<% } %>
+                                                        <% if (invoice.customField2.operationType=='-' &&
+                                                            parseFloat(invoice.customField2.calculatedValue).toFixed(2)>
+                                                            0) { %>-<% } %>
                                                                 <%= parseFloat(invoice.customField2.calculatedValue).toFixed(2)
                                                                     %>
                                                     </span>
@@ -688,7 +711,8 @@
                                                                 <div>Certified that the particulars given above are
                                                                     true and correct.</div>
                                                                 <div style="margin-top:4px; font-weight:bold;">For
-                                                                    <%= invoice.business.org_name ?? '' %></div>
+                                                                    <%= invoice.business.org_name ?? '' %>
+                                                                </div>
                                                             </div>
                                                         </div>
 
