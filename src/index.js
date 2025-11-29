@@ -13,7 +13,7 @@ app.use('/uploads', express.static(path.join(__dirname, '/uploads')));
 const http = require('http');
 const { init } = require('./utils/socket');
 const limiter = rateLimit({
-	windowMs: 15 * 60 * 1000,
+	windowMs: 1 * 60 * 1000,
 	limit: 100,
 	standardHeaders: 'draft-8',
 	legacyHeaders: false,

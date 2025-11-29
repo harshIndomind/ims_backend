@@ -119,8 +119,8 @@ exports.createInvoice = catchAsync(async (req, res) => {
 			);
 		}
 
-		let uomQty = 1;
 		for (const item of productItems) {
+			let uomQty = item.qty;
 			if (item.selected_uom_id > 0) {
 				uomQty = await uomConversion(
 					parseInt(item.qty),
@@ -297,12 +297,16 @@ exports.createInvoice = catchAsync(async (req, res) => {
 				}
 			}
 
-			if (item.selected_uom_id > 0 && reverseStock) {
-				const uomQty = await uomConversion(
-					parseInt(item.qty),
-					parseInt(item.product_id),
-					parseInt(item.selected_uom_id)
-				);
+			if (reverseStock) {
+				uomQty = item.qty;
+				if (+item.selected_uom_id > 0) {
+					uomQty = await uomConversion(
+						parseInt(item.qty),
+						parseInt(item.product_id),
+						parseInt(item.selected_uom_id)
+					);
+				}
+				print({reverseStock, uomQty, stockType: item.stock_type, itemType: item.item_type}, 'deduct stock => ');
 				// ➤ Deduct stock
 				if (item.stock_type === 'batch') {
 					await ProductBatch.increment(
@@ -798,9 +802,8 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 		let uomQty = 1;
 		// 3️⃣ Validate new stock before updating
 		for (const item of productItems) {
-			if (
-				item.selected_uom_id > 0
-			) {
+			uomQty = item.qty;
+			if (item.selected_uom_id > 0) {
 				uomQty = await uomConversion(
 					parseInt(item.qty),
 					parseInt(item.product_id),
@@ -983,16 +986,19 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 					);
 				}
 			}
+			print(reverseStock, 'reverseStock => ');
+			print(item.selected_uom_id, 'item.selected_uom_id => ');
+			if (reverseStock) {
+				uomQty = item.qty;
+				if (+item.selected_uom_id > 0) {
+					uomQty = await uomConversion(
+						parseInt(item.qty),
+						parseInt(item.product_id),
+						parseInt(item.selected_uom_id)
+					);
+				}
+				print(uomQty, 'uomQty => ');
 
-			if (
-				item.selected_uom_id > 0 &&
-				reverseStock
-			) {
-				const uomQty = await uomConversion(
-					parseInt(item.qty),
-					parseInt(item.product_id),
-					parseInt(item.selected_uom_id)
-				);
 				// ➤ Deduct stock
 				if (item.stock_type === 'batch') {
 					await ProductBatch.increment(
@@ -1165,7 +1171,15 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 			const invoiceTotalPaid = +existingInvoice.totalPaid - amountPaid;
 			const remainingAmount = +existingInvoice.remainingAmount + amountPaid;
 
-			existingInvoice.update({paymentStatus: 'PENDING', status: 'pending', totalPaid: invoiceTotalPaid, remainingAmount: remainingAmount}, {transaction: t})
+			existingInvoice.update(
+				{
+					paymentStatus: 'PENDING',
+					status: 'pending',
+					totalPaid: invoiceTotalPaid,
+					remainingAmount: remainingAmount,
+				},
+				{ transaction: t }
+			);
 
 			await Payment.destroy({
 				where: {
@@ -1286,7 +1300,13 @@ exports.generateInvoiceHtml = catchAsync(async (req, res) => {
 				{
 					model: Invoice,
 					as: 'invoice',
-					attributes: ['id', 'invoicePrefix', 'invoiceNo', 'invoicePostfix', 'invoiceDetail'],
+					attributes: [
+						'id',
+						'invoicePrefix',
+						'invoiceNo',
+						'invoicePostfix',
+						'invoiceDetail',
+					],
 				},
 				{
 					model: BusinessPartner,
