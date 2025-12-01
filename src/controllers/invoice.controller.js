@@ -177,7 +177,7 @@ exports.createInvoice = catchAsync(async (req, res) => {
 						item.selected_uom_id &&
 						item.selected_uom_id != null &&
 						+item.selected_uom_id != -1
-							? item.selected_uom_id
+							? +item.selected_uom_id
 							: null,
 				},
 				{ transaction: t }
@@ -773,10 +773,12 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 	const { id } = req.params;
 	const { org_id, role } = req.user;
 
+	// auth: user must have org_id OR be Admin
 	if (!org_id && role !== 'Admin') {
-		throw new AppError(`You don't authorize to access this api.`);
+		throw new AppError(`You don't authorize to access this api.`, 403);
 	}
 
+	// start transaction
 	const t = await sequelize.transaction();
 
 	try {
@@ -798,20 +800,24 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 					],
 				},
 			],
+			transaction: t,
 		});
 
 		if (!invoice) {
+			await t.rollback();
 			return res.status(404).json({ message: 'Invoice not found' });
 		}
 
 		if (invoice.paymentStatus === 'CANCELLED') {
+			await t.rollback();
 			throw new AppError('Cannot update a cancelled invoice.', 400);
 		}
 
-		// 1️⃣ Revert stock
-		for (const item of invoice.productItems) {
-			let itemQuantity = parseFloat(item.qty);
+		// 1️⃣ Revert stock for every invoice item
+		for (const item of invoice.productItems || []) {
+			let itemQuantity = parseFloat(item.qty || 0);
 
+			// find the latest credit note item (if any) for this invoice + product
 			const isCreditNoteExists = await CreditNoteInvoice.findOne({
 				where: { invoice_id: invoice.id },
 				include: [
@@ -821,18 +827,9 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 						where: { product_id: item.product_id },
 						required: false,
 						include: [
-							{
-								model: CreditNoteInvoiceItemSerial,
-								as: 'serials',
-							},
-							{
-								model: ProductBatch,
-								as: 'batches',
-							},
-							{
-								model: Product,
-								as: 'product',
-							},
+							{ model: CreditNoteInvoiceItemSerial, as: 'serials' },
+							{ model: ProductBatch, as: 'batches' },
+							{ model: Product, as: 'product' },
 							{
 								model: ProductUOM,
 								as: 'uoms',
@@ -846,25 +843,36 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 					},
 				],
 				order: [['createdAt', 'DESC']],
+				transaction: t,
 			});
 
-			const creditNoteItem = isCreditNoteExists.get({
-				plain: true,
-			}).productItems;
-
-			if (creditNoteItem && creditNoteItem.length > 0) {
-				itemQuantity -= parseFloat(creditNoteItem[0].qty);
+			// safe extraction — check for nulls
+			let creditNoteItems = [];
+			if (isCreditNoteExists) {
+				const plain = isCreditNoteExists.get ? isCreditNoteExists.get({ plain: true }) : null;
+				creditNoteItems = (plain && plain.productItems) ? plain.productItems : [];
 			}
 
+			if (creditNoteItems.length > 0) {
+				itemQuantity -= parseFloat(creditNoteItems[0].qty || 0);
+			}
+
+			// nothing to revert
+			if (!itemQuantity || itemQuantity <= 0) continue;
+
+			// handle stock types (use transaction)
 			if (
+				item.product &&
 				item.product.stock_type === 'batch' &&
 				item.product.item_type === 'product'
 			) {
+				// increment ProductBatch.qty
 				await ProductBatch.increment(
 					{ qty: parseFloat(itemQuantity) },
 					{ where: { id: parseInt(item.batch_id) }, transaction: t }
 				);
 			} else if (
+				item.product &&
 				item.product.stock_type === 'normal' &&
 				item.product.item_type === 'product'
 			) {
@@ -872,65 +880,112 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 					{ available_qty: parseFloat(itemQuantity) },
 					{ where: { id: parseInt(item.product_id) }, transaction: t }
 				);
-			} else if (item.product.stock_type === 'serial') {
-				await ProductSerial.update(
-					{ is_sell: 0 },
-					{
-						where: {
-							serial_no: {
-								[Op.in]: item.serials.map((s) => s.serial_no),
+			} else if (item.product && item.product.stock_type === 'serial') {
+				// get serial numbers safely (may be empty)
+				const serialNos = (item.serials || []).map((s) => s.serial_no).filter(Boolean);
+				if (serialNos.length > 0) {
+					await ProductSerial.update(
+						{ is_sell: 0 },
+						{
+							where: {
+								serial_no: {
+									[Op.in]: serialNos,
+								},
 							},
-						},
-						transaction: t,
-					}
-				);
+							transaction: t,
+						}
+					);
+				}
 			}
 		}
 
-		const hasCreditNotes = await CreditNoteInvoice.findAll({
+		// 1.5 — remove related credit-note rows (serials -> items -> credit note)
+		const existingCreditNotes = await CreditNoteInvoice.findAll({
 			where: { invoice_id: invoice.id },
 			attributes: ['id'],
+			transaction: t,
 		});
 
-		if (hasCreditNotes) {
-			const creditNoteIds = hasCreditNotes.map((cn) => cn.id);
-			console.log('creditNoteIds ', creditNoteIds);
+		if (existingCreditNotes && existingCreditNotes.length > 0) {
+			const creditNoteIds = existingCreditNotes.map((cn) => cn.id);
 
-			await CreditNoteInvoice.destroy({
+			// destroy credit note item serials
+			await CreditNoteInvoiceItemSerial.destroy({
 				where: {
-					id: { [Op.in]: creditNoteIds },
+					credit_note_invoice_item_id: {
+						[Op.in]: sequelize.literal(`(SELECT id FROM CreditNoteInvoiceItems WHERE credit_note_invoice_id IN (${creditNoteIds.join(',')}))`),
+					},
 				},
+				transaction: t,
+			}).catch(() => {
+				// If your DB doesn't allow the subquery form above for your dialect,
+				// you can instead fetch item IDs first and then destroy by those IDs.
+			});
+
+			// safer approach (dialect-agnostic): fetch item ids, then delete serials & items
+			const creditNoteItems = await CreditNoteInvoiceItem.findAll({
+				where: { credit_note_invoice_id: { [Op.in]: creditNoteIds } },
+				attributes: ['id'],
+				transaction: t,
+			});
+
+			const creditNoteItemIds = creditNoteItems.map((it) => it.id);
+
+			if (creditNoteItemIds.length > 0) {
+				await CreditNoteInvoiceItemSerial.destroy({
+					where: { credit_note_invoice_item_id: { [Op.in]: creditNoteItemIds } },
+					transaction: t,
+				});
+				await CreditNoteInvoiceItem.destroy({
+					where: { id: { [Op.in]: creditNoteItemIds } },
+					transaction: t,
+				});
+			}
+
+			// finally destroy credit note invoices
+			await CreditNoteInvoice.destroy({
+				where: { id: { [Op.in]: creditNoteIds } },
 				transaction: t,
 			});
 		}
 
-		// 2️⃣ Delete invoice items & serial mappings
-		await InvoiceItemSerial.destroy({
-			where: {
-				invoice_item_id: { [Op.in]: invoice.productItems.map((i) => i.id) },
-			},
-			transaction: t,
-		});
-		await InvoiceItem.destroy({
-			where: { invoice_id: invoice.id },
-			transaction: t,
-		});
+		// 2️⃣ Delete invoice items & invoice item serial mappings
+		const invoiceItemIds = (invoice.productItems || []).map((i) => i.id).filter(Boolean);
 
-		// 3️⃣ Delete invoice
-		await invoice.destroy({ transaction: t });
+		if (invoiceItemIds.length > 0) {
+			await InvoiceItemSerial.destroy({
+				where: { invoice_item_id: { [Op.in]: invoiceItemIds } },
+				transaction: t,
+			});
+
+			await InvoiceItem.destroy({
+				where: { id: { [Op.in]: invoiceItemIds } },
+				transaction: t,
+			});
+		}
+
+		// 3️⃣ Delete invoice (use transaction)
+		await Invoice.destroy({
+			where: { id: invoice.id },
+			transaction: t,
+		});
 
 		await t.commit();
-		res.status(200).json({ message: 'Invoice deleted successfully' });
+		return res.status(200).json({ message: 'Invoice deleted successfully' });
 	} catch (error) {
-		if (!t.finished) {
-			await t.rollback();
+		// rollback if transaction still active
+		if (t && !t.finished) {
+			try {
+				await t.rollback();
+			} catch (rbErr) {
+				console.error('rollback error', rbErr);
+			}
 		}
 		console.error(error);
-		res
-			.status(500)
-			.json({ message: error.message || 'Error deleting invoice' });
+		return res.status(500).json({ message: error.message || 'Error deleting invoice' });
 	}
 });
+
 
 function checkForDuplicateSerials(productItems) {
 	const serialSet = new Set();
@@ -1863,6 +1918,11 @@ exports.cancelInvoice = catchAsync(async (req, res) => {
 			return res.status(404).json({ message: 'Invoice not found' });
 		}
 
+		if(invoice.paymentStatus === 'CANCELLED') {
+			await t.rollback();
+			return res.status(400).json({ message: 'Invoice is already cancelled' });
+		}
+
 		// Load all credit notes once (avoid N+1)
 		const allCreditNotes = await CreditNoteInvoice.findAll({
 			where: { invoice_id: invoice.id },
@@ -1929,6 +1989,117 @@ exports.cancelInvoice = catchAsync(async (req, res) => {
 		await t.commit();
 
 		return res.status(200).json({ message: 'Invoice cancelled successfully' });
+	} catch (err) {
+		if (!t.finished) await t.rollback();
+		console.error(err);
+		return res.status(500).json({ message: 'Internal server error' });
+	}
+});
+
+exports.restoreInvoice = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { org_id, role } = req.user;
+
+	if (role !== 'Admin' && !org_id) {
+		throw new AppError(`You are not authorized to access this API.`, 403);
+	}
+
+	const t = await sequelize.transaction();
+
+	try {
+		const invoice = await Invoice.findOne({
+			where: { id, orgId: org_id },
+			include: [
+				{
+					model: InvoiceItem,
+					as: 'productItems',
+					include: [
+						{ model: InvoiceItemSerial, as: 'serials' },
+						{ model: Product, as: 'product' },
+					],
+				},
+			],
+			transaction: t,
+			lock: t.LOCK.UPDATE,
+		});
+
+		if (!invoice) {
+			await t.rollback();
+			return res.status(404).json({ message: 'Invoice not found' });
+		}
+
+		if(invoice.paymentStatus !== 'CANCELLED') {
+			await t.rollback();
+			return res.status(400).json({ message: 'You can\'t restore a not cancelled invoice.' });
+		}
+
+		// Load all credit notes once (avoid N+1)
+		const allCreditNotes = await CreditNoteInvoice.findAll({
+			where: { invoice_id: invoice.id },
+			include: [
+				{
+					model: CreditNoteInvoiceItem,
+					as: 'productItems',
+				},
+			],
+			transaction: t,
+		});
+
+		// Map credit notes by product
+		const creditNoteMap = {};
+		for (const cn of allCreditNotes) {
+			for (const item of cn.productItems) {
+				creditNoteMap[item.product_id] =
+					(creditNoteMap[item.product_id] || 0) + Number(item.qty || 0);
+			}
+		}
+
+		// Revert stock
+		for (const item of invoice.productItems) {
+			let itemQuantity = Number(item.qty) || 0;
+
+			const cnQty = creditNoteMap[item.product_id] || 0;
+			itemQuantity = Math.max(0, itemQuantity - cnQty);
+
+			if (item.product.stock_type === 'batch') {
+				await ProductBatch.increment(
+					{ qty: -itemQuantity },
+					{ where: { id: item.batch_id }, transaction: t }
+				);
+			} else if (item.product.stock_type === 'normal') {
+				await Product.increment(
+					{ available_qty: -itemQuantity },
+					{ where: { id: item.product_id }, transaction: t }
+				);
+			} else if (item.product.stock_type === 'serial') {
+				await ProductSerial.update(
+					{ is_sell: 1 },
+					{
+						where: {
+							id: { [Op.in]: item.serials.map((s) => s.id) },
+						},
+						transaction: t,
+					}
+				);
+			}
+		}
+
+		const PAYMENT_STATUS = allCreditNotes.length > 0 ? 'CREDIT_NOTE' : 'PENDING';
+		if(allCreditNotes.length > 0) {
+			await CreditNoteInvoice.update(
+				{ paymentStatus: 'PENDING' },
+				{
+					where: { invoice_id: invoice.id },
+					transaction: t,
+				}
+			);
+		}
+
+		await invoice.update({ paymentStatus: PAYMENT_STATUS }, { transaction: t });
+
+		await t.commit();
+
+		return res.status(200).json({ message: 'Invoice restored successfully' });
 	} catch (err) {
 		if (!t.finished) await t.rollback();
 		console.error(err);
