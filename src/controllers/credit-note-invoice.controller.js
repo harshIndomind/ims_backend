@@ -112,6 +112,18 @@ exports.createInvoice = catchAsync(async (req, res) => {
 			throw new AppError('Cannot create a credit note cancelled invoice.', 400);
 		}
 
+		const isCreditNoteExists = await CreditNoteInvoice.findOne({
+			where: { invoice_id, orgId },
+		});
+
+		if (isCreditNoteExists) {
+			throw new AppError(
+				`A credit note of invoice no. ${isInvoiceExist.invoicePrefix || ''}${
+					isInvoiceExist.invoiceNo || ''
+				}${isInvoiceExist.invoicePostfix || ''} is already issued.`,
+				400
+			);
+		}
 		// print(req.body, 'req.body => ');
 		// return;
 		const isSerialDuplicate = checkForDuplicateSerials(productItems);
@@ -269,7 +281,8 @@ exports.createInvoice = catchAsync(async (req, res) => {
 					note: item.note,
 					selected_uom_id:
 						item.selected_uom_id !== undefined &&
-						item.selected_uom_id !== null && item.selected_uom_id != '' &&
+						item.selected_uom_id !== null &&
+						item.selected_uom_id != '' &&
 						+item.selected_uom_id !== -1
 							? parseInt(item.selected_uom_id)
 							: null,
@@ -975,7 +988,8 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 					note: item.note,
 					selected_uom_id:
 						item.selected_uom_id !== undefined &&
-						item.selected_uom_id !== null && item.selected_uom_id != '' &&
+						item.selected_uom_id !== null &&
+						item.selected_uom_id != '' &&
 						+item.selected_uom_id !== -1
 							? parseInt(item.selected_uom_id)
 							: null,
