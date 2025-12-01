@@ -32,7 +32,11 @@ module.exports = (sequelize, DataTypes) => {
 				as: 'serials',
 				onDelete: 'CASCADE',
 			});
-			CreditNoteInvoiceItem.belongsTo(models.Unit, {
+			// CreditNoteInvoiceItem.belongsTo(models.Unit, {
+			// 	foreignKey: 'selected_uom_id',
+			// 	as: 'selectedUom',
+			// });
+			CreditNoteInvoiceItem.belongsTo(models.ProductUOM, {
 				foreignKey: 'selected_uom_id',
 				as: 'selectedUom',
 			});

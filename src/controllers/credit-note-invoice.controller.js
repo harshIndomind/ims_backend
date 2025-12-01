@@ -36,6 +36,7 @@ const { format } = require('date-fns');
 const moment = require('moment');
 const { print } = require('../utils/common');
 const { generateSignedUrl } = require('../utils/s3Bucket');
+const logger = require('../utils/logger');
 exports.createInvoice = catchAsync(async (req, res) => {
 	const t = await sequelize.transaction();
 	try {
@@ -268,9 +269,9 @@ exports.createInvoice = catchAsync(async (req, res) => {
 					note: item.note,
 					selected_uom_id:
 						item.selected_uom_id !== undefined &&
-						item.selected_uom_id !== null &&
+						item.selected_uom_id !== null && item.selected_uom_id != '' &&
 						+item.selected_uom_id !== -1
-							? item.selected_uom_id
+							? parseInt(item.selected_uom_id)
 							: null,
 				},
 				{ transaction: t }
@@ -974,9 +975,9 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 					note: item.note,
 					selected_uom_id:
 						item.selected_uom_id !== undefined &&
-						item.selected_uom_id !== null &&
+						item.selected_uom_id !== null && item.selected_uom_id != '' &&
 						+item.selected_uom_id !== -1
-							? item.selected_uom_id
+							? parseInt(item.selected_uom_id)
 							: null,
 				},
 				{ transaction: t }
