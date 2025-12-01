@@ -12,7 +12,7 @@ const {
 	GstStateCode,
 	Payment,
 	PaymentInvoice,
-	CreditNoteInvoice
+	CreditNoteInvoice,
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
@@ -35,20 +35,49 @@ function isInterstate(placeOfSupply, supplierState) {
 }
 
 // Simple classifier for which GSTR-1 section the invoice belongs to
-function classifyInvoice(inv, supplierState = 'UNKNOWN') {
-	const buyerGstin = (inv.buyerGstin || '').toString().trim();
-	const invoiceValue = Number(inv.invoiceValue || inv.taxableValue || 0);
-	const interstate = isInterstate(inv.placeOfSupply || '', supplierState);
+// function classifyInvoice(inv, supplierState = 'UNKNOWN') {
+// 	const buyerGstin = (inv.buyerGstin || '').toString().trim();
+// 	const invoiceValue = Number(inv.invoiceValue || inv.taxableValue || 0);
+// 	const interstate = isInterstate(inv.placeOfSupply || '', supplierState);
 
-	if (buyerGstin && buyerGstin.length >= 15) {
+// 	if (buyerGstin && buyerGstin.length >= 15) {
+// 		return 'b2b';
+// 	}
+
+// 	if (!buyerGstin && invoiceValue > 250000) {
+// 		return 'b2cl';
+// 	}
+
+// 	// default unregistered consumer
+// 	return 'b2cs';
+// }
+
+function classifyInvoice(inv, supplierState = 'UNKNOWN') {
+	const buyerGstin = (inv.buyerGstin || '').trim();
+	const invoiceValue = Number(inv.invoiceValue || inv.taxableValue || 0);
+	const pos = (inv.placeOfSupply || '').trim();
+	const invoiceDate = new Date(inv.invoiceDate); // must exist
+	const interstate = isInterstate(pos, supplierState);
+
+	// 1. B2B
+	if (buyerGstin && buyerGstin.length === 15) {
 		return 'b2b';
 	}
 
-	if (!buyerGstin && invoiceValue > 250000) {
-		return 'b2cl';
+	// 2. Determine limit based on date
+	const AUG_2024 = new Date('2024-08-01');
+	const limit = invoiceDate >= AUG_2024 ? 100000 : 250000;
+
+	// 3. Inter-state unregistered customer
+	if (!buyerGstin && interstate) {
+		if (invoiceValue > limit) {
+			return 'b2cl'; // Interstate + value above threshold
+		} else {
+			return 'b2cs'; // Interstate + within threshold
+		}
 	}
 
-	// default unregistered consumer
+	// 4. Intra-state unregistered customer (always B2CS)
 	return 'b2cs';
 }
 
@@ -125,10 +154,10 @@ function pushInvoiceB2CLRow(sheet, inv, rowNum) {
 	row.commit();
 }
 
-function pushInvoiceB2CSRow(sheet, inv, rowNum) {
+function pushInvoiceB2CSRow(sheet, inv, rowNum, cummulativeTaxableValue) {
 	const row = sheet.getRow(rowNum);
 	row.getCell(1).value = 'OE';
-	row.getCell(2).value = inv.placeOfSupply;
+	row.getCell(2).value = `${inv.stateCode}-${inv.placeOfSupply}`;
 	row.getCell(3).value = '';
 	row.getCell(4).value = inv.rate;
 	row.getCell(5).value = inv.taxableValue;
@@ -210,6 +239,7 @@ exports.generateGSTR1 = catchAsync(async (req, res) => {
 			b2cs: [],
 		};
 
+		let cummulativeTaxableValue = 0;
 		invoices.forEach((inv) => {
 			const cat = classifyInvoice(inv, supplierState);
 			if (cat === 'b2b') {
@@ -220,9 +250,32 @@ exports.generateGSTR1 = catchAsync(async (req, res) => {
 				pushInvoiceB2CLRow(b2cl, inv, startB2clRow++);
 			} else {
 				allCategory['b2cs'].push(inv);
-				pushInvoiceB2CSRow(b2cs, inv, startB2csRow++);
+				cummulativeTaxableValue = inv.taxableValue + cummulativeTaxableValue;
+				pushInvoiceB2CSRow(b2cs, inv, startB2csRow++, cummulativeTaxableValue);
 			}
 		});
+
+
+		// if (allCategory['b2cs'].length > 0) {
+		// 	allCategory['b2cs'] = allCategory['b2cs'].reduce(
+		// 		(acc, curr) => {
+		// 			acc.taxableValue += curr.taxableValue;
+		// 			acc.cgst += curr.cgst;
+		// 			acc.sgst += curr.sgst;
+		// 			acc.igst += curr.igst;
+		// 			acc.invoiceValue += curr.invoiceValue;
+		// 			return acc;
+		// 		},
+		// 		{
+		// 			...allCategory['b2cs'][0],
+		// 			taxableValue: 0,
+		// 			cgst: 0,
+		// 			sgst: 0,
+		// 			igst: 0,
+		// 			invoiceValue: 0,
+		// 		}
+		// 	);
+		// }
 
 		if (allCategory['b2b'].body.length > 0) {
 			const b2bRow = b2b.getRow(3);
@@ -357,13 +410,19 @@ exports.generateGSTR1 = catchAsync(async (req, res) => {
 			if (getGSTR1Docs) {
 				// const totals = invoicesDataForHSNReport['hsn(b2c)'].totals;
 				const header = docs.getRow(3);
-				const totalNumber = getGSTR1Docs.reduce((acc, item) => acc + item.totalNumber, 0);
-				const cancelledNumber = getGSTR1Docs.reduce((acc, item) => acc + item.cancelled, 0);
-				console.log("totalNumbers ",  {totalNumber, cancelledNumber});
-				
+				const totalNumber = getGSTR1Docs.reduce(
+					(acc, item) => acc + item.totalNumber,
+					0
+				);
+				const cancelledNumber = getGSTR1Docs.reduce(
+					(acc, item) => acc + item.cancelled,
+					0
+				);
+				console.log('totalNumbers ', { totalNumber, cancelledNumber });
+
 				header.getCell(4).value = String(totalNumber); // Total HSN No.
 				header.getCell(5).value = String(cancelledNumber); // Total Value
-			
+
 				header.commit();
 				getGSTR1Docs.forEach((item) => {
 					const row = docs.getRow(startDocsRow++);
@@ -376,7 +435,6 @@ exports.generateGSTR1 = catchAsync(async (req, res) => {
 				});
 			}
 		}
-
 
 		// Auto-size first sheet columns a bit more and set date formats
 		[b2b, b2cl, b2cs].forEach((ws) => {
@@ -416,7 +474,11 @@ exports.generateGSTR1 = catchAsync(async (req, res) => {
 		res.json({
 			message: 'GSTR-1 report generated.',
 			data: {
-				rows: { ...allCategory, ...invoicesDataForHSNReport, docs: getGSTR1Docs },
+				rows: {
+					...allCategory,
+					...invoicesDataForHSNReport,
+					docs: getGSTR1Docs,
+				},
 				path: fileDownloadPath,
 			},
 		});
@@ -917,7 +979,7 @@ async function getGSTR1DocsReport(req) {
 			start: prefix + startNo + (postfix || ''),
 			end: prefix + endNo + (postfix || ''),
 			totalNumber: sorted.length,
-			cancelled: 0
+			cancelled: 0,
 		});
 	});
 
@@ -991,7 +1053,7 @@ async function getGSTR1CreditNoteDocsReport(req) {
 			start: prefix + startNo + (postfix || ''),
 			end: prefix + endNo + (postfix || ''),
 			totalNumber: sorted.length,
-			cancelled: 0
+			cancelled: 0,
 		});
 	});
 
