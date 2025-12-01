@@ -36,6 +36,7 @@ const { format } = require('date-fns');
 const moment = require('moment');
 const { print } = require('../utils/common');
 const { generateSignedUrl } = require('../utils/s3Bucket');
+const logger = require('../utils/logger');
 exports.createInvoice = catchAsync(async (req, res) => {
 	const t = await sequelize.transaction();
 	try {
@@ -176,6 +177,7 @@ exports.createInvoice = catchAsync(async (req, res) => {
 					selected_uom_id:
 						item.selected_uom_id &&
 						item.selected_uom_id != null &&
+						item.selected_uom_id != '' &&
 						+item.selected_uom_id != -1
 							? +item.selected_uom_id
 							: null,
@@ -702,7 +704,13 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 					total: parseFloat(item.total || 0),
 					stock_type: item.stock_type,
 					note: item.note,
-					selected_uom_id: item.selected_uom_id,
+					selected_uom_id:
+						item.selected_uom_id &&
+						item.selected_uom_id != null &&
+						item.selected_uom_id != '' &&
+						+item.selected_uom_id != -1
+							? +item.selected_uom_id
+							: null,
 				},
 				{ transaction: t }
 			);
@@ -849,8 +857,10 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 			// safe extraction — check for nulls
 			let creditNoteItems = [];
 			if (isCreditNoteExists) {
-				const plain = isCreditNoteExists.get ? isCreditNoteExists.get({ plain: true }) : null;
-				creditNoteItems = (plain && plain.productItems) ? plain.productItems : [];
+				const plain = isCreditNoteExists.get
+					? isCreditNoteExists.get({ plain: true })
+					: null;
+				creditNoteItems = plain && plain.productItems ? plain.productItems : [];
 			}
 
 			if (creditNoteItems.length > 0) {
@@ -882,7 +892,9 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 				);
 			} else if (item.product && item.product.stock_type === 'serial') {
 				// get serial numbers safely (may be empty)
-				const serialNos = (item.serials || []).map((s) => s.serial_no).filter(Boolean);
+				const serialNos = (item.serials || [])
+					.map((s) => s.serial_no)
+					.filter(Boolean);
 				if (serialNos.length > 0) {
 					await ProductSerial.update(
 						{ is_sell: 0 },
@@ -913,7 +925,11 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 			await CreditNoteInvoiceItemSerial.destroy({
 				where: {
 					credit_note_invoice_item_id: {
-						[Op.in]: sequelize.literal(`(SELECT id FROM CreditNoteInvoiceItems WHERE credit_note_invoice_id IN (${creditNoteIds.join(',')}))`),
+						[Op.in]: sequelize.literal(
+							`(SELECT id FROM CreditNoteInvoiceItems WHERE credit_note_invoice_id IN (${creditNoteIds.join(
+								','
+							)}))`
+						),
 					},
 				},
 				transaction: t,
@@ -933,7 +949,9 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 
 			if (creditNoteItemIds.length > 0) {
 				await CreditNoteInvoiceItemSerial.destroy({
-					where: { credit_note_invoice_item_id: { [Op.in]: creditNoteItemIds } },
+					where: {
+						credit_note_invoice_item_id: { [Op.in]: creditNoteItemIds },
+					},
 					transaction: t,
 				});
 				await CreditNoteInvoiceItem.destroy({
@@ -950,7 +968,9 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 		}
 
 		// 2️⃣ Delete invoice items & invoice item serial mappings
-		const invoiceItemIds = (invoice.productItems || []).map((i) => i.id).filter(Boolean);
+		const invoiceItemIds = (invoice.productItems || [])
+			.map((i) => i.id)
+			.filter(Boolean);
 
 		if (invoiceItemIds.length > 0) {
 			await InvoiceItemSerial.destroy({
@@ -982,10 +1002,11 @@ exports.deleteInvoice = catchAsync(async (req, res) => {
 			}
 		}
 		console.error(error);
-		return res.status(500).json({ message: error.message || 'Error deleting invoice' });
+		return res
+			.status(500)
+			.json({ message: error.message || 'Error deleting invoice' });
 	}
 });
-
 
 function checkForDuplicateSerials(productItems) {
 	const serialSet = new Set();
@@ -1178,7 +1199,9 @@ async function calculateSaleInvoice(invoice) {
 	if (userData) {
 		business = userData.organization;
 		business.address = `${business.org_address || ''},<br>
-${business.city || ''} - ${business.pincode || ''}, ${business._state.state_name || ''}<br>`;
+${business.city || ''} - ${business.pincode || ''}, ${
+			business._state.state_name || ''
+		}<br>`;
 		if (userData.logo) {
 			businessLogo = await generateSignedUrl(userData.logo);
 		}
@@ -1918,7 +1941,7 @@ exports.cancelInvoice = catchAsync(async (req, res) => {
 			return res.status(404).json({ message: 'Invoice not found' });
 		}
 
-		if(invoice.paymentStatus === 'CANCELLED') {
+		if (invoice.paymentStatus === 'CANCELLED') {
 			await t.rollback();
 			return res.status(400).json({ message: 'Invoice is already cancelled' });
 		}
@@ -1946,17 +1969,47 @@ exports.cancelInvoice = catchAsync(async (req, res) => {
 
 		// Revert stock
 		for (const item of invoice.productItems) {
-			let itemQuantity = Number(item.qty) || 0;
+			let uomQty = Number(item.qty) || 0;
+
+			if (item.selected_uom_id > 0) {
+				uomQty = await uomConversion(
+					parseInt(item.qty),
+					parseInt(item.product_id),
+					parseInt(item.selected_uom_id)
+				);
+			}
 
 			const cnQty = creditNoteMap[item.product_id] || 0;
-			itemQuantity = Math.max(0, itemQuantity - cnQty);
+			itemQuantity = Math.max(0, uomQty - cnQty);
+			print(
+				{
+					product_name: item.product.name,
+					itemQuantity,
+					serials: item.serials.map((s) => s.serial_no),
+					stockType: item.product.stock_type,
+					itemType: item.product.item_type,
+				},
+				'Cancelling invoice reverting Stock itemQuantity => '
+			);
+
+			logger.info({
+				message: 'Cancelling invoice reverting Stock itemQuantity =>',
+				product_name: item.product.name,
+				itemQuantity,
+				serials: item.serials.map((s) => s.serial_no),
+				stockType: item.product.stock_type,
+				itemType: item.product.item_type,
+			});
 
 			if (item.product.stock_type === 'batch') {
 				await ProductBatch.increment(
 					{ qty: itemQuantity },
 					{ where: { id: item.batch_id }, transaction: t }
 				);
-			} else if (item.product.stock_type === 'normal') {
+			} else if (
+				item.product.stock_type === 'normal' &&
+				item.product.item_type === 'product'
+			) {
 				await Product.increment(
 					{ available_qty: itemQuantity },
 					{ where: { id: item.product_id }, transaction: t }
@@ -1966,14 +2019,14 @@ exports.cancelInvoice = catchAsync(async (req, res) => {
 					{ is_sell: 0 },
 					{
 						where: {
-							id: { [Op.in]: item.serials.map((s) => s.id) },
+							serial_no: { [Op.in]: item.serials.map((s) => s.serial_no) },
 						},
 						transaction: t,
 					}
 				);
 			}
 		}
-
+		// return;
 		// Cancel all credit notes
 		await CreditNoteInvoice.update(
 			{ paymentStatus: 'CANCELLED' },
@@ -2028,9 +2081,11 @@ exports.restoreInvoice = catchAsync(async (req, res) => {
 			return res.status(404).json({ message: 'Invoice not found' });
 		}
 
-		if(invoice.paymentStatus !== 'CANCELLED') {
+		if (invoice.paymentStatus !== 'CANCELLED') {
 			await t.rollback();
-			return res.status(400).json({ message: 'You can\'t restore a not cancelled invoice.' });
+			return res
+				.status(400)
+				.json({ message: "You can't restore a not cancelled invoice." });
 		}
 
 		// Load all credit notes once (avoid N+1)
@@ -2056,17 +2111,48 @@ exports.restoreInvoice = catchAsync(async (req, res) => {
 
 		// Revert stock
 		for (const item of invoice.productItems) {
-			let itemQuantity = Number(item.qty) || 0;
+			let uomQty = Number(item.qty) || 0;
+
+			if (item.selected_uom_id > 0) {
+				uomQty = await uomConversion(
+					parseInt(item.qty),
+					parseInt(item.product_id),
+					parseInt(item.selected_uom_id)
+				);
+			}
 
 			const cnQty = creditNoteMap[item.product_id] || 0;
-			itemQuantity = Math.max(0, itemQuantity - cnQty);
+			itemQuantity = Math.max(0, uomQty - cnQty);
+
+			print(
+				{
+					product_name: item.product.name,
+					itemQuantity,
+					serials: item.serials.map((s) => s.serial_no),
+					stockType: item.product.stock_type,
+					itemType: item.product.item_type,
+				},
+				'Restoring invoice reverting Stock itemQuantity => '
+			);
+
+			logger.info({
+				message: 'Restoring invoice reverting Stock itemQuantity =>',
+				product_name: item.product.name,
+				itemQuantity,
+				serials: item.serials.map((s) => s.serial_no),
+				stockType: item.product.stock_type,
+				itemType: item.product.item_type,
+			});
 
 			if (item.product.stock_type === 'batch') {
 				await ProductBatch.increment(
 					{ qty: -itemQuantity },
 					{ where: { id: item.batch_id }, transaction: t }
 				);
-			} else if (item.product.stock_type === 'normal') {
+			} else if (
+				item.product.stock_type === 'normal' &&
+				item.product.item_type === 'product'
+			) {
 				await Product.increment(
 					{ available_qty: -itemQuantity },
 					{ where: { id: item.product_id }, transaction: t }
@@ -2076,7 +2162,7 @@ exports.restoreInvoice = catchAsync(async (req, res) => {
 					{ is_sell: 1 },
 					{
 						where: {
-							id: { [Op.in]: item.serials.map((s) => s.id) },
+							serial_no: { [Op.in]: item.serials.map((s) => s.serial_no) },
 						},
 						transaction: t,
 					}
@@ -2084,8 +2170,9 @@ exports.restoreInvoice = catchAsync(async (req, res) => {
 			}
 		}
 
-		const PAYMENT_STATUS = allCreditNotes.length > 0 ? 'CREDIT_NOTE' : 'PENDING';
-		if(allCreditNotes.length > 0) {
+		const PAYMENT_STATUS =
+			allCreditNotes.length > 0 ? 'CREDIT_NOTE' : 'PENDING';
+		if (allCreditNotes.length > 0) {
 			await CreditNoteInvoice.update(
 				{ paymentStatus: 'PENDING' },
 				{

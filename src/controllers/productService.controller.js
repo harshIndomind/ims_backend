@@ -135,6 +135,7 @@ exports.createProduct = async (req, res) => {
 		// --- BATCH CREATION ---
 		if (data.stock_type === "batch" && Array.isArray(data.batchDetails)) {
 			for (const b of data.batchDetails) {
+				delete b.id; // remove id if present
 				await ProductBatch.create(
 					{
 						product_id: product.id,
@@ -688,6 +689,7 @@ exports.updateProduct = async (req, res) => {
 
 		let normalPricing = {};
 		if (data.stock_type === 'normal') {
+			availableQuantity = (data.stock_type === "normal" && data.item_type === "product" && data.available_qty && data.available_qty !== '') ? (data.available_qty || 0) : 1;
 			normalPricing = {
 				available_qty:
 					data.available_qty && data.available_qty !== ''
