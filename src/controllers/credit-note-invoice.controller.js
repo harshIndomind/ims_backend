@@ -176,22 +176,26 @@ exports.createInvoice = catchAsync(async (req, res) => {
 					);
 				}
 			} else if (item.stock_type === 'serial') {
-				// ✅ Check serials exist and are unsold
-				const serials = await ProductSerial.findAll({
+				const existingSerials = await InvoiceItemSerial.findAll({
 					where: {
 						serial_no: { [Op.in]: item.selectedSerials },
-						is_sell: 1,
+					},
+					include: {
+						model: InvoiceItem,
+						as: 'item',
+						where: { invoice_id: invoice_id },
+						required: true,
 					},
 				});
 
-				const existingSerials = await InvoiceItemSerial.findAll({
-					where: {
-						invoice_item_id: invoice_id,
-						serial_no: { [Op.in]: item.selectedSerials },
-					},
-				});
-				// print({existingSerialLength: existingSerials.length,existingSerials, selected: item.selectedSerials});return;
-				if (serials.length !== item.selectedSerials.length) {
+				let existingSerialData = [];
+				if (existingSerials) {
+					existingSerialData = existingSerials.map((s) =>
+						s.get({ plain: true })
+					);
+				}
+
+				if (existingSerialData.length !== item.selectedSerials.length) {
 					throw new AppError(
 						`Original serial numbers are ${existingSerials
 							.map((s) => s.serial_no)
@@ -200,7 +204,6 @@ exports.createInvoice = catchAsync(async (req, res) => {
 							)}. But you are trying to create credit note with serial numbers ${item.selectedSerials.join(
 							', '
 						)} for product ${item.product_name}.`,
-						// `Some serial numbers are invalid or already sold for product ID ${item.product_name}`,
 						417
 					);
 				}
@@ -280,11 +283,8 @@ exports.createInvoice = catchAsync(async (req, res) => {
 					stock_type: item.stock_type,
 					note: item.note,
 					selected_uom_id:
-						item.selected_uom_id !== undefined &&
-						item.selected_uom_id !== null &&
-						item.selected_uom_id != '' &&
-						+item.selected_uom_id !== -1
-							? parseInt(item.selected_uom_id)
+						Number(item.selected_uom_id) > 0
+							? Number(item.selected_uom_id)
 							: null,
 				},
 				{ transaction: t }
@@ -874,22 +874,26 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 					);
 				}
 			} else if (item.stock_type === 'serial') {
-				// ✅ Check serials exist and are unsold
-				const serials = await ProductSerial.findAll({
+				const existingSerials = await InvoiceItemSerial.findAll({
 					where: {
 						serial_no: { [Op.in]: item.selectedSerials },
-						is_sell: 1,
+					},
+					include: {
+						model: InvoiceItem,
+						as: 'item',
+						where: { invoice_id: invoice_id },
+						required: true,
 					},
 				});
 
-				const existingSerials = await InvoiceItemSerial.findAll({
-					where: {
-						invoice_item_id: invoice_id,
-						serial_no: { [Op.in]: item.selectedSerials },
-					},
-				});
-				// print({existingSerialLength: existingSerials.length,existingSerials, selected: item.selectedSerials});return;
-				if (existingSerials.length !== item.selectedSerials.length) {
+				let existingSerialData = [];
+				if (existingSerials) {
+					existingSerialData = existingSerials.map((s) =>
+						s.get({ plain: true })
+					);
+				}
+
+				if (existingSerialData.length !== item.selectedSerials.length) {
 					throw new AppError(
 						`Original serial numbers are ${existingSerials
 							.map((s) => s.serial_no)
@@ -898,7 +902,6 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 							)}. But you are trying to create credit note with serial numbers ${item.selectedSerials.join(
 							', '
 						)} for product ${item.product_name}.`,
-						// `Some serial numbers are invalid or already sold for product ID ${item.product_name}`,
 						417
 					);
 				}
@@ -930,7 +933,7 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 					}
 			}
 		}
-
+		
 		// 4️⃣ Update invoice master
 		await invoice.update(
 			{
@@ -956,7 +959,6 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 			},
 			{ transaction: t }
 		);
-		console.log('productItems ', productItems);
 
 		// 5️⃣ Recreate invoice items and adjust stock
 		for (const item of productItems) {
@@ -987,11 +989,8 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 					stock_type: item.stock_type,
 					note: item.note,
 					selected_uom_id:
-						item.selected_uom_id !== undefined &&
-						item.selected_uom_id !== null &&
-						item.selected_uom_id != '' &&
-						+item.selected_uom_id !== -1
-							? parseInt(item.selected_uom_id)
+						Number(item.selected_uom_id) > 0
+							? Number(item.selected_uom_id)
 							: null,
 				},
 				{ transaction: t }

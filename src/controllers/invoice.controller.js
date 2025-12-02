@@ -175,11 +175,8 @@ exports.createInvoice = catchAsync(async (req, res) => {
 					stock_type: item.stock_type,
 					note: item.note,
 					selected_uom_id:
-						item.selected_uom_id &&
-						item.selected_uom_id != null &&
-						item.selected_uom_id != '' &&
-						+item.selected_uom_id != -1
-							? +item.selected_uom_id
+						Number(item.selected_uom_id) > 0
+							? Number(item.selected_uom_id)
 							: null,
 				},
 				{ transaction: t }
@@ -705,11 +702,8 @@ exports.updateInvoice = catchAsync(async (req, res) => {
 					stock_type: item.stock_type,
 					note: item.note,
 					selected_uom_id:
-						item.selected_uom_id &&
-						item.selected_uom_id != null &&
-						item.selected_uom_id != '' &&
-						+item.selected_uom_id != -1
-							? +item.selected_uom_id
+						Number(item.selected_uom_id) > 0
+							? Number(item.selected_uom_id)
 							: null,
 				},
 				{ transaction: t }
