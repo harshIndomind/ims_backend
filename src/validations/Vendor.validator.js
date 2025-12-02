@@ -297,13 +297,39 @@ exports.validationUpdateVendor = [
 		}),
 
 	// billingAddress
-	body('billingAddress.address1').optional({ checkFalsy: true }),
-	body('billingAddress.address2').optional({ checkFalsy: true }),
-	body('billingAddress.landmark').optional({ checkFalsy: true }),
-	body('billingAddress.country').optional({ checkFalsy: true }),
-	body('billingAddress.country_id').optional({ checkFalsy: true }),
-	body('billingAddress.state_id').optional({ checkFalsy: true }),
-	body('billingAddress.state').optional({ checkFalsy: true }),
+	// body('billingAddress.address1').optional({ checkFalsy: true }),
+	// body('billingAddress.address2').optional({ checkFalsy: true }),
+	// body('billingAddress.landmark').optional({ checkFalsy: true }),
+	// body('billingAddress.country').optional({ checkFalsy: true }),
+	// body('billingAddress.country_id').optional({ checkFalsy: true }),
+	// body('billingAddress.state_id').optional({ checkFalsy: true }),
+	// body('billingAddress.state').optional({ checkFalsy: true }),
+	body('billingAddress.address1')
+		.notEmpty()
+		.withMessage('Address1 is required'),
+
+	body('billingAddress.address2').optional(),
+	body('billingAddress.landmark').optional(),
+	body('billingAddress.country').optional(),
+
+	body('billingAddress.country_id')
+		.notEmpty()
+		.withMessage('Country ID is required'),
+
+	body('billingAddress.state_id')
+		.notEmpty()
+		.withMessage('State ID is required'),
+
+	body('billingAddress.state').optional(),
+
+	body('billingAddress.pincode')
+		.notEmpty()
+		.withMessage('Pincode is required')
+		.trim()
+		.matches(/^\d{6}$/)
+		.withMessage('Pincode must be exactly 6 digits'),
+
+	body('billingAddress.city').notEmpty().withMessage('City is required'),
 
 	body('billingAddress.pincode')
 		.optional({ checkFalsy: true })
