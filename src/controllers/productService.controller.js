@@ -8,6 +8,7 @@ const {
 	ProductUOM,
 	sequelize,
 	organization,
+	InvoiceItem,
 } = require('../models');
 const AppError = require('../utils/AppError');
 const { print } = require('../utils/common');
@@ -20,8 +21,7 @@ const {
 const uomMap = require('../utils/uomConversionMap');
 const path = require('node:path');
 
-
-const { Sequelize } = require("sequelize");
+const { Sequelize } = require('sequelize');
 
 exports.createProduct = async (req, res) => {
 	const t = await sequelize.transaction();
@@ -34,12 +34,12 @@ exports.createProduct = async (req, res) => {
 		const orgData = await organization.findOne({ where: { id: org_id } });
 		if (!orgData) {
 			await t.rollback();
-			return res.status(404).json({ message: "Organization not found" });
+			return res.status(404).json({ message: 'Organization not found' });
 		}
 
 		// --- SAFE JSON PARSING ---
 		const safeParse = (value) => {
-			if (typeof value === "string") {
+			if (typeof value === 'string') {
 				try {
 					return JSON.parse(value);
 				} catch {
@@ -54,10 +54,10 @@ exports.createProduct = async (req, res) => {
 		data.uom = safeParse(data.uom);
 
 		// --- CLEANING UNNEEDED FIELDS ---
-		if (data.stock_type !== "batch") delete data.batchDetails;
-		if (data.stock_type !== "serial") delete data.serial_no;
+		if (data.stock_type !== 'batch') delete data.batchDetails;
+		if (data.stock_type !== 'serial') delete data.serial_no;
 
-		if (data.stock_type === "batch") {
+		if (data.stock_type === 'batch') {
 			delete data.available_qty;
 			delete data.sell_price;
 			delete data.sell_price_incl_tax;
@@ -66,8 +66,11 @@ exports.createProduct = async (req, res) => {
 
 		// --- NORMAL PRICING ---
 		let normalPricing = {};
-		if (data.stock_type === "normal") {
-			availableQuantity = (data.stock_type === "normal" && data.item_type === "product") ? (data.available_qty || 0) : 1;
+		if (data.stock_type === 'normal') {
+			availableQuantity =
+				data.stock_type === 'normal' && data.item_type === 'product'
+					? data.available_qty || 0
+					: 1;
 			normalPricing = {
 				available_qty: availableQuantity,
 				sell_price: data.sell_price || null,
@@ -80,19 +83,19 @@ exports.createProduct = async (req, res) => {
 		// --- PRODUCT AUTO NUMBER GENERATION ---
 		const latestProduct = await Product.findOne({
 			where: { organization_id: org_id },
-			order: [["createdAt", "DESC"]],
+			order: [['createdAt', 'DESC']],
 		});
 
 		let newProductNumber = 1;
 		if (latestProduct) {
-			const num = latestProduct.uniqueProductId.split("/")[2];
+			const num = latestProduct.uniqueProductId.split('/')[2];
 			newProductNumber = Number(num) + 1;
 		}
 
-		const paddedString = String(newProductNumber).padStart(6, "0");
-		const uniqueProductId = `${data.item_type
-			.toUpperCase()
-			.substring(0, 3)}/${orgData.org_code}/${paddedString}`;
+		const paddedString = String(newProductNumber).padStart(6, '0');
+		const uniqueProductId = `${data.item_type.toUpperCase().substring(0, 3)}/${
+			orgData.org_code
+		}/${paddedString}`;
 
 		// --- PRODUCT UNIQUENESS CHECK ---
 		const isExists = await Product.findOne({
@@ -100,7 +103,7 @@ exports.createProduct = async (req, res) => {
 		});
 		if (isExists) {
 			await t.rollback();
-			return res.status(400).json({ message: "Duplicate unique product id" });
+			return res.status(400).json({ message: 'Duplicate unique product id' });
 		}
 
 		// --- CREATE PRODUCT ---
@@ -133,7 +136,7 @@ exports.createProduct = async (req, res) => {
 		);
 
 		// --- BATCH CREATION ---
-		if (data.stock_type === "batch" && Array.isArray(data.batchDetails)) {
+		if (data.stock_type === 'batch' && Array.isArray(data.batchDetails)) {
 			for (const b of data.batchDetails) {
 				delete b.id; // remove id if present
 				await ProductBatch.create(
@@ -152,9 +155,9 @@ exports.createProduct = async (req, res) => {
 		}
 
 		// --- SERIAL CREATION ---
-		if (data.stock_type === "serial" && data.productSerials) {
+		if (data.stock_type === 'serial' && data.productSerials) {
 			const serials = data.productSerials.serial_no
-				.split(",")
+				.split(',')
 				.map((s) => s.trim())
 				.filter(Boolean);
 
@@ -176,7 +179,7 @@ exports.createProduct = async (req, res) => {
 
 		// --- PRODUCT GROUPS ---
 		if (data.product_group_id) {
-			await product.setProduct_groups(data.product_group_id.split(","), {
+			await product.setProduct_groups(data.product_group_id.split(','), {
 				transaction: t,
 			});
 		}
@@ -184,13 +187,13 @@ exports.createProduct = async (req, res) => {
 		// --- UOM CREATION ---
 		if (Array.isArray(data.uom) && data.uom.length > 0) {
 			const validUOMs = data.uom.filter(
-				(u) => u.unit_id && u.qty && u.unit_id !== "" && u.qty !== ""
+				(u) => u.unit_id && u.qty && u.unit_id !== '' && u.qty !== ''
 			);
 
 			if (validUOMs.length > 6) {
 				await t.rollback();
 				return res.status(400).json({
-					message: "You can only add up to 6 UOM conversions",
+					message: 'You can only add up to 6 UOM conversions',
 				});
 			}
 
@@ -213,7 +216,7 @@ exports.createProduct = async (req, res) => {
 		await t.commit();
 		return res
 			.status(201)
-			.json({ message: "Product created successfully", product });
+			.json({ message: 'Product created successfully', product });
 	} catch (err) {
 		await t.rollback();
 		console.error(err);
@@ -231,7 +234,7 @@ exports.createProduct = async (req, res) => {
 		// --- VALIDATION ERROR ---
 		if (err instanceof Sequelize.ValidationError) {
 			return res.status(400).json({
-				message: "Validation failed",
+				message: 'Validation failed',
 				errors: err.errors.map((e) => ({
 					message: e.message,
 					field: e.path,
@@ -240,20 +243,19 @@ exports.createProduct = async (req, res) => {
 		}
 
 		// --- MYSQL DUPLICATE ENTRY ---
-		if (err?.parent?.code === "ER_DUP_ENTRY") {
+		if (err?.parent?.code === 'ER_DUP_ENTRY') {
 			return res.status(400).json({
-				message: "Duplicate entry",
+				message: 'Duplicate entry',
 				sqlMessage: err.parent.sqlMessage,
 			});
 		}
 
 		return res.status(500).json({
-			message: "Internal Server Error",
+			message: 'Internal Server Error',
 			error: err.message,
 		});
 	}
 };
-
 
 // Create Product
 // exports.createProduct = async (req, res) => {
@@ -594,7 +596,7 @@ exports.getProductById = async (req, res) => {
 				{
 					model: ProductSerial,
 					as: 'serials',
-					where: { is_sell: 0 },
+					// where: { is_sell: 0 },
 					required: false,
 				},
 			],
@@ -634,6 +636,28 @@ exports.updateProduct = async (req, res) => {
 	try {
 		const productId = req.params.id;
 		const data = req.body;
+
+		const isProductExists = await Product.findByPk(
+			productId,
+			{
+				include: [{ model: InvoiceItem, as: 'invoiceItems' }],
+			},
+			{ transaction: t }
+		);
+
+		if (!isProductExists) {
+			return res.status(404).json({ message: 'Product not found' });
+		}
+
+		if (
+			isProductExists.invoiceItems &&
+			isProductExists.invoiceItems.length > 0
+		) {
+			return res.status(400).json({
+				message:
+					'Product cannot be updated as it is associated with existing invoices.',
+			});
+		}
 
 		// Parse JSON if coming from multipart/form-data
 		if (typeof data.batchDetails === 'string') {
@@ -689,7 +713,13 @@ exports.updateProduct = async (req, res) => {
 
 		let normalPricing = {};
 		if (data.stock_type === 'normal') {
-			availableQuantity = (data.stock_type === "normal" && data.item_type === "product" && data.available_qty && data.available_qty !== '') ? (data.available_qty || 0) : 1;
+			availableQuantity =
+				data.stock_type === 'normal' &&
+				data.item_type === 'product' &&
+				data.available_qty &&
+				data.available_qty !== ''
+					? data.available_qty || 0
+					: 1;
 			normalPricing = {
 				available_qty:
 					data.available_qty && data.available_qty !== ''
@@ -871,10 +901,28 @@ exports.updateProduct = async (req, res) => {
 
 // Delete Product (soft delete)
 exports.deleteProduct = async (req, res) => {
+	const t = await sequelize.transaction();
 	try {
-		const product = await Product.findByPk(req.params.id);
+		const product = await Product.findByPk(
+			req.params.id,
+			{
+				include: [{ model: InvoiceItem, as: 'invoiceItems' }],
+			},
+			{ transaction: t }
+		);
+
 		if (!product) {
 			return res.status(404).json({ message: 'Product not found' });
+		}
+
+		if (
+			product.invoiceItems &&
+			product.invoiceItems.length > 0
+		) {
+			return res.status(400).json({
+				message:
+					'You cannot delete this product because it is already used in one or more invoices.',
+			});
 		}
 
 		if (product.product_images) {
@@ -895,15 +943,16 @@ exports.deleteProduct = async (req, res) => {
 			}
 		}
 
-		await product.destroy({ where: { id: req.params.id } });
-		await ProductUOM.destroy({ where: { product_id: req.params.id } });
-		await ProductSerial.destroy({ where: { product_id: req.params.id } });
-		await ProductBatch.destroy({ where: { product_id: req.params.id } });
-
+		await product.destroy({ where: { id: req.params.id } }, { transaction: t });
+		await ProductUOM.destroy({ where: { product_id: req.params.id } }, { transaction: t });
+		await ProductSerial.destroy({ where: { product_id: req.params.id } }, { transaction: t });
+		await ProductBatch.destroy({ where: { product_id: req.params.id } }, { transaction: t });
+		await t.commit();
 		res.json({
 			message: 'Product deleted successfully',
 		});
 	} catch (err) {
+		await t.rollback();
 		console.error('Delete Product Error:', err);
 		res
 			.status(500)
