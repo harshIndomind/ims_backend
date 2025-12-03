@@ -39,6 +39,10 @@ exports.createPartner = catchAsync(async (req, res) => {
 			openingBalance,
 		} = req.body;
 
+		if(Number(orgId) == 0 || Number(roleId) == 0){
+			throw new AppError('Organization id & Vendor/Company role is required')
+		}
+
 		if (vendorCompany.account_code !== '' && vendorCompany.code !== '') {
 			const businessData = await BusinessPartner.findOne({
 				where: {

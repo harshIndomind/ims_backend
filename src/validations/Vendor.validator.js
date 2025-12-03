@@ -10,9 +10,16 @@ exports.validationCreateVendor = [
 		.toInt(),
 
 	body('orgId')
-		.optional()
+		.notEmpty()
+		.withMessage('Organization ID is required')
 		.isInt()
 		.withMessage('Organization ID must be a number')
+		.custom((val) => {
+			if(val == 0){
+				throw new Error('Organization ID is required')
+			}
+			return true;
+		})
 		.toInt(),
 
 	body('name').notEmpty().withMessage('Name is required'),
