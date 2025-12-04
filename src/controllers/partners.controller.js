@@ -15,7 +15,7 @@ const {
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
-const { fn, col, Op, JSON } = require('sequelize');
+const { fn, col, Op } = require('sequelize');
 const bcrypt = require('bcrypt');
 const uomMap = require('../utils/uomConversionMap');
 const { print } = require('../utils/common');
@@ -23,6 +23,21 @@ const ExcelJS = require('exceljs');
 const { format } = require('date-fns');
 const moment = require('moment');
 const path = require('node:path');
+const logger = require('../utils/logger');
+const axios = require('axios');
+const {
+	SWAYAMM_API_BASE_URL,
+	SWAYAMM_LOGIN_ENDPOINT,
+	SWAYAMM_USERNAME,
+	SWAYAMM_PASSWORD,
+	SWAYAMM_GET_ACCOUNT_NAME_ENDPOINT,
+	SWAYAMM_CREATE_UPDATE_ACCOUNT_ENDPOINT,
+	SWAYAMM_GET_ACCOUNT_BY_CODE_NAME_ENDPOINT,
+} = require('../config/serverConfig');
+
+let swayammToken = null;
+let swayammTokenExpiry = null;
+
 exports.createPartner = catchAsync(async (req, res) => {
 	const t = await sequelize.transaction();
 	try {
@@ -39,8 +54,32 @@ exports.createPartner = catchAsync(async (req, res) => {
 			openingBalance,
 		} = req.body;
 
-		if(Number(orgId) == 0 || Number(roleId) == 0){
-			throw new AppError('Organization id & Vendor/Company role is required')
+		if (Number(orgId) == 0 || Number(roleId) == 0) {
+			throw new AppError('Organization id & Vendor/Company role is required');
+		}
+
+		const isSwayammAccountExist = await checkAccountOnSwayamm(
+			vendorCompany?.name
+		);
+
+		let hasSwayammAccount = false;
+		let swayammAccountCode = null;
+		if (isSwayammAccountExist?.aCode) {
+			hasSwayammAccount = true;
+			console.log(
+				'isSwayammAccountExist?.aCode ',
+				isSwayammAccountExist?.aCode
+			);
+
+			swayammAccountCode = isSwayammAccountExist?.aCode;
+		} else {
+			swayammAccountCode = await getAccountCodeFromSwayamm(vendorCompany?.name);
+			console.log('New Account Code Generated ', swayammAccountCode);
+			if (!swayammAccountCode) {
+				throw new AppError(
+					'Something went wrong while fetching vendor/customer account code.'
+				);
+			}
 		}
 
 		if (vendorCompany.account_code !== '' && vendorCompany.code !== '') {
@@ -89,7 +128,9 @@ exports.createPartner = catchAsync(async (req, res) => {
 			name: vendorCompany.name,
 			code: vendorCompany.code,
 			account_code:
-				vendorCompany.account_code !== '' ? vendorCompany.account_code : null,
+				vendorCompany.account_code !== ''
+					? vendorCompany.account_code
+					: swayammAccountCode,
 			email: vendorCompany.email,
 			contact_no: vendorCompany.contactNo,
 			gstin: vendorCompany.gstin,
@@ -140,6 +181,21 @@ exports.createPartner = catchAsync(async (req, res) => {
 			],
 			transaction: t,
 		});
+
+		if (!hasSwayammAccount) {
+			const dataObj = {
+				respPerson: name || '',
+				account_code: swayammAccountCode
+					? swayammAccountCode
+					: vendorCompany.account_code,
+				company_name: vendorCompany?.name,
+				tan: '',
+				pan: vendorCompany?.pan,
+				gstin: vendorCompany?.gstin,
+			};
+
+			await createVendorCustomerAccountOnSwayamm(dataObj);
+		}
 
 		await t.commit();
 		res
@@ -276,6 +332,30 @@ exports.updatePartner = catchAsync(async (req, res) => {
 			orgId,
 		} = req.body;
 
+		const isSwayammAccountExist = await checkAccountOnSwayamm(
+			vendorCompany?.name+'ss'
+		);
+		
+		let hasSwayammAccount = false;
+		let swayammAccountCode = null;
+		if (isSwayammAccountExist?.aCode) {
+			hasSwayammAccount = true;
+			console.log(
+				'isSwayammAccountExist?.aCode ',
+				isSwayammAccountExist?.aCode
+			);
+
+			swayammAccountCode = isSwayammAccountExist?.aCode;
+		} else {
+			swayammAccountCode = await getAccountCodeFromSwayamm(vendorCompany?.name);
+			console.log('New Account Code Generated ', swayammAccountCode);
+			if (!swayammAccountCode) {
+				throw new AppError(
+					'Something went wrong while fetching vendor/customer account code.'
+				);
+			}
+		}
+
 		const partner = await BusinessPartner.findByPk(id, { transaction: t });
 		if (!partner) throw new AppError('Partner not found', 404);
 
@@ -321,7 +401,9 @@ exports.updatePartner = catchAsync(async (req, res) => {
 				name: vendorCompany?.name || partner.name,
 				code: vendorCompany?.code || partner.code,
 				account_code:
-					vendorCompany.account_code !== '' ? vendorCompany.account_code : null,
+					vendorCompany.account_code !== ''
+						? vendorCompany.account_code
+						: swayammAccountCode,
 				email: vendorCompany?.email || partner.email,
 				contact_no: vendorCompany?.contactNo || partner.contact_no,
 				gstin: vendorCompany?.gstin,
@@ -394,6 +476,22 @@ exports.updatePartner = catchAsync(async (req, res) => {
 						);
 				}
 			}
+		}
+		console.log("hasSwayammAccount ", hasSwayammAccount);
+		
+		if (!hasSwayammAccount) {
+			const dataObj = {
+				respPerson: name || '',
+				account_code: swayammAccountCode
+					? swayammAccountCode
+					: vendorCompany.account_code,
+				company_name: vendorCompany?.name,
+				tan: '',
+				pan: vendorCompany?.pan,
+				gstin: vendorCompany?.gstin,
+			};
+
+			await createVendorCustomerAccountOnSwayamm(dataObj);
 		}
 
 		await t.commit();
@@ -851,4 +949,194 @@ function colorRow(row, bgColor) {
 			fgColor: { argb: bgColor },
 		};
 	}
+}
+
+async function getValidToken() {
+	// 1. No token exists → login
+	if (!swayammToken) {
+		return await loginOnSwayamm();
+	}
+
+	// 2. Token expired → login again
+	if (swayammTokenExpiry && Date.now() >= swayammTokenExpiry) {
+		return await loginOnSwayamm();
+	}
+	console.log('swayammToken ', swayammToken);
+
+	// 3. Otherwise return cached token
+	return swayammToken;
+}
+
+async function loginOnSwayamm() {
+	const LOGIN_API = `${SWAYAMM_API_BASE_URL}${SWAYAMM_LOGIN_ENDPOINT}`;
+
+	try {
+		const { data } = await axios.post(LOGIN_API, {
+			username: SWAYAMM_USERNAME,
+			password: SWAYAMM_PASSWORD,
+		});
+
+		swayammToken = data.accessToken;
+		swayammTokenExpiry = Date.now() + data.expires * 1000;
+
+		return swayammToken;
+	} catch (err) {
+		logger.error('Login failed:', { err });
+		throw new AppError('Unable to login to Swayamm.');
+	}
+}
+
+async function checkAccountOnSwayamm(companyName = null) {
+	const token = await getValidToken();
+
+	if (!token) {
+		throw new AppError('Something went wrong while logging into Swayamm.');
+	}
+	console.log('Swayamm Token ', token);
+
+	try {
+		const GET_ACCOUNT_BY_CODE_AND_NAME_API = `${SWAYAMM_API_BASE_URL}${SWAYAMM_GET_ACCOUNT_BY_CODE_NAME_ENDPOINT}`;
+		console.log(
+			'GET_ACCOUNT_BY_CODE_AND_NAME_API:',
+			GET_ACCOUNT_BY_CODE_AND_NAME_API
+		);
+
+		const { data } = await axios.get(GET_ACCOUNT_BY_CODE_AND_NAME_API, {
+			params: {
+				// code: '',
+				name: companyName,
+			},
+			headers: {
+				Authorization: `Bearer ${token.trim()}`,
+			},
+		});
+		console.log('Account Exists ', data);
+
+		return data || null;
+	} catch (error) {
+		logger.error('Failed to fetch existing account details from Swayamm: ', { error });
+		return null;
+	}
+}
+
+async function getAccountCodeFromSwayamm(companyName = null, ledgerCode = 'L') {
+	const token = await getValidToken();
+
+	if (!token) {
+		throw new AppError('Something went wrong while logging into Swayamm.');
+	}
+	console.log('Swayamm Token ', token);
+
+	try {
+		const GET_ACCOUNT_NAME_API = `${SWAYAMM_API_BASE_URL}${SWAYAMM_GET_ACCOUNT_NAME_ENDPOINT}`;
+		console.log('GET_ACCOUNT_NAME_API:', GET_ACCOUNT_NAME_API);
+
+		const { data } = await axios.get(GET_ACCOUNT_NAME_API, {
+			params: {
+				lCode: ledgerCode,
+				aDesc: companyName,
+			},
+			headers: {
+				Authorization: `Bearer ${token.trim()}`,
+			},
+		});
+		console.log('data ', data);
+
+		return data || null;
+	} catch (error) {
+		logger.error('Error fetching account name: ', { error });
+		throw new AppError('Failed to fetch account name from Swayamm.');
+	}
+}
+
+async function createVendorCustomerAccountOnSwayamm(userObj) {
+	const token = await getValidToken();
+
+	if (!token) {
+		throw new AppError(
+			'Something went wrong while creating an account on Swayamm.'
+		);
+	}
+
+	try {
+		const CREATE_UPDATE_ACCOUNT_API = `${SWAYAMM_API_BASE_URL}${SWAYAMM_CREATE_UPDATE_ACCOUNT_ENDPOINT}`;
+
+		const accountDetails = prepareVendorCustomerData(userObj);
+		console.log("accountDetails ", accountDetails);
+		
+		console.log("CREATE_UPDATE_ACCOUNT_API ", CREATE_UPDATE_ACCOUNT_API);
+		
+		const { data } = await axios.post(
+			CREATE_UPDATE_ACCOUNT_API,
+			accountDetails,
+			{
+				headers: {
+					Authorization: `Bearer ${token.trim()}`,
+					'Content-Type': 'application/json',
+				},
+			}
+		);
+		console.log("createVendorCustomerAccountOnSwayamm ", createVendorCustomerAccountOnSwayamm);
+		
+		return data || null;
+	} catch (error) {
+		console.log('RAW error response:', error);
+
+		console.log('error ', Object.keys(error.response.data));
+		console.log('error ', error.response.data);
+
+		logger.error('Error creating account: ', { error });
+		throw new AppError('Failed to create account on Swayamm.');
+	}
+}
+
+function prepareVendorCustomerData(data = null) {
+	const date = new Date();
+	const todayDate = `${date.getFullYear()}-${String(
+		date.getMonth() + 1
+	).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+	const preparedData = {
+		id: 0,
+		aCode: data.account_code,
+		aName: data.company_name,
+		aLedger: 'L',
+		aLedgerDesc: 'NE',
+		univCode: data.account_code,
+		doOpening: todayDate,
+		respPerson: '',
+		openingBaldr: 0,
+		openingBalcr: 0,
+		printAdvice: true,
+		acFinal: true,
+		lastTrDate: null,
+		debitPnLCode: 'NE',
+		debitPnLDesc: 'NO ENTRY',
+		debitBShCode: 'NE',
+		debitBShDesc: 'NO ENTRY',
+		creditPnLCode: 'NE',
+		creditPnLDesc: 'NO ENTRY',
+		creditBShCode: 'NE',
+		creditBShDesc: 'NO ENTRY',
+		casFlowInflowCode: 'NE',
+		casFlowInflowDesc: 'NO ENTRY',
+		casFlowOutflowCode: 'NE',
+		casFlowOutflowDesc: 'NO ENTRY',
+		debitCostCenterCode: 'NE',
+		debitCostCenterDesc: 'NO ENTRY',
+		creditCostCenterCode: 'NE',
+		creditCostCenterDesc: 'NO ENTRY',
+		misDbCode: 'NE',
+		misDbDesc: 'NO ENTRY',
+		misCrCode: 'NE',
+		misCrDesc: 'NO ENTRY',
+		openingBal: 0,
+		tan: data.tan || '',
+		pan: data.pan || '',
+		gst: data.gstin || '',
+		isEditable: true,
+		isReviewed: false,
+	};
+
+	return preparedData;
 }
