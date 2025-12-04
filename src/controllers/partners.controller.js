@@ -333,22 +333,16 @@ exports.updatePartner = catchAsync(async (req, res) => {
 		} = req.body;
 
 		const isSwayammAccountExist = await checkAccountOnSwayamm(
-			vendorCompany?.name+'ss'
+			vendorCompany?.name
 		);
 		
 		let hasSwayammAccount = false;
 		let swayammAccountCode = null;
 		if (isSwayammAccountExist?.aCode) {
 			hasSwayammAccount = true;
-			console.log(
-				'isSwayammAccountExist?.aCode ',
-				isSwayammAccountExist?.aCode
-			);
-
 			swayammAccountCode = isSwayammAccountExist?.aCode;
 		} else {
 			swayammAccountCode = await getAccountCodeFromSwayamm(vendorCompany?.name);
-			console.log('New Account Code Generated ', swayammAccountCode);
 			if (!swayammAccountCode) {
 				throw new AppError(
 					'Something went wrong while fetching vendor/customer account code.'
