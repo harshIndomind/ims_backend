@@ -99,7 +99,7 @@ exports.createOrganization = catchAsync(async (req, res) => {
 		res.status(201).json(Organization);
 	} catch (err) {
 		t.rollback();
-		res.status(500).json({ error: err.message });
+		res.status(err.statusCode || 500).json({ message: err.message || 'Something went wrong while creating the organization'});
 	}
 });
 
@@ -215,9 +215,9 @@ exports.updateOrganization = catchAsync(async (req, res) => {
 		}
 
 		res.json({ message: 'Organization updated successfully' });
-	} catch (err) {
-		res.status(500).json({ error: err.message });
+	} catch (err) {		
 		t.rollback();
+		res.status(err.statusCode || 500).json({ message: err.message || 'Something went wrong while updating the organization'});
 	}
 });
 
@@ -251,7 +251,7 @@ exports.getAllOrganizations = catchAsync(async (req, res) => {
 			data: organizations,
 		});
 	} catch (err) {
-		res.status(500).json({ error: err.message });
+		res.status(err.statusCode || 500).json({ message: err.message || 'Something went wrong while fetching all the organization'});
 	}
 });
 
@@ -309,11 +309,7 @@ exports.deleteOrganization = catchAsync(async (req, res) => {
 			throw err;
 		}
 	} catch (error) {
-		console.error(error);
-		return res.status(500).json({
-			message: 'Failed to delete organization',
-			error: error.message,
-		});
+		res.status(err.statusCode || 500).json({ message: err.message || 'Something went wrong while deleting a organization'});
 	}
 });
 
