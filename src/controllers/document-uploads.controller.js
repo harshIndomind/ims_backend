@@ -1679,7 +1679,7 @@ exports.exportProcessedPurchaseInvoicesV1 = catchAsync(async (req, res) => {
 		);
 	}
 
-	const { from_date, to_date } = req.query;
+	const { from_date, to_date, vendor_id } = req.query;
 	const fromDate = new Date(from_date);
 	const toDate = new Date(to_date);
 
@@ -1696,6 +1696,7 @@ exports.exportProcessedPurchaseInvoicesV1 = catchAsync(async (req, res) => {
 	// Build where clause
 	let whereClause = {};
 	let organizationName = 'All';
+	let businessPartnerName = null;
 	if (role === 'Admin') {
 		const getOrganization = await organization.findByPk(org_id, {
 			attributes: ['id', 'org_name', 'org_code'],
@@ -1704,6 +1705,25 @@ exports.exportProcessedPurchaseInvoicesV1 = catchAsync(async (req, res) => {
 		if (!getOrganization) throw new AppError('Organization not found!');
 		organizationName = getOrganization.org_name;
 		whereClause.organization_code = getOrganization.org_code;
+
+		const getVendor = await BusinessPartner.findByPk(vendor_id, {
+			attributes: [
+				`id`,
+				`organization_id`,
+				`user_id`,
+				`type`,
+				`name`,
+				`code`,
+				`account_code`,
+			],
+		});
+
+		if (getVendor) {
+			businessPartnerName = getVendor.name;
+			console.log("businessPartnerName ", businessPartnerName);
+			
+			whereClause.vendor_code = getVendor.code;
+		}
 	}
 
 	whereClause.createdAt = { [Op.between]: [fromDate, toDate] };
@@ -1749,7 +1769,7 @@ exports.exportProcessedPurchaseInvoicesV1 = catchAsync(async (req, res) => {
 		toDate
 	).format('DD-MM-YYYY')})`;
 	const line1 = `Purchase Register ${line2}`;
-	const line3 = `Organization: ${organizationName || ''}`; // optional, can change
+	const line3 = `Organization: ${organizationName || ''} ${(businessPartnerName) ? ` Vendor/Customer:  ${businessPartnerName}` : ''}`; // optional, can change
 
 	// Insert 3 rows at top
 	sheet.insertRow(1, [line1]);
