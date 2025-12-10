@@ -9,6 +9,8 @@ const {
 	BusinessPartner,
 	InvoiceCsvImport,
 	InvoiceCsvImportItem,
+	MasterAccount,
+	Narration,
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const {
@@ -20,7 +22,7 @@ const {
 const path = require('path');
 const AppError = require('../utils/AppError');
 const { sendToUser } = require('../utils/socket');
-const { Op } = require('sequelize');
+const { Op, fn, col } = require('sequelize');
 // const moment = require('moment-timezone');
 const axios = require('axios');
 const ExcelJS = require('exceljs');
@@ -299,7 +301,7 @@ exports.getAllUploadedDocs = catchAsync(async (req, res) => {
 					model: BusinessPartner,
 					as: 'vendor', // must match DocumentsUpload association
 					attributes: ['id', 'name', 'code', 'contact_no'],
-					where: {organization_id: org_id},
+					where: { organization_id: org_id },
 					include: [
 						{
 							model: User,
@@ -679,7 +681,7 @@ async function importDocumentCSV(generated_filename, status) {
 			uploaded_file_name: jsonData.OrginalDocumentName,
 			organization_code: jsonData.OrganizationCode,
 			vendor_code: jsonData.VCCode ?? null,
-			company_name: jsonData.CustomerName ?? null,
+			company_name: jsonData.VendorName ?? null,
 			invoice_no: jsonData.InvoiceNumber ?? null,
 			invoice_date: jsonData.InvoiceDate
 				? new Date(jsonData.InvoiceDate)
@@ -776,12 +778,53 @@ async function importDocumentCSV(generated_filename, status) {
 
 exports.getImportedInvoices = catchAsync(async (req, res) => {
 	try {
+		const { org_id, roleId, role } = req.user;
+
+		if (['Vendor', 'Customer', 'Vendor-Customer'].includes(role)) {
+			throw new AppError(
+				"Sorry! You don't have permission to access this resource"
+			);
+		}
+
+		const vendor_id = parseInt(req.query.vendor_id) || null;
 		const limit = parseInt(req.query.limit) || 10;
 		const offset = parseInt(req.query.offset) || 0;
 		const { from_date, to_date } = req.query;
 		const fromDate = new Date(from_date);
 		const toDate = new Date(to_date);
+		console.log('org_id ', org_id);
 
+		let whereClause = {};
+		if (role === 'Admin') {
+			const getOrganization = await organization.findByPk(org_id, {
+				attributes: ['id', 'org_name', 'org_code'],
+			});
+
+			if (!getOrganization) {
+				throw new AppError('Organization not found!');
+			}
+
+			const org_code = getOrganization.org_code;
+			whereClause.organization_code = org_code;
+		}
+
+		if(role === 'Admin'){
+			const getVendor = await BusinessPartner.findByPk(vendor_id, {
+				attributes: [`id`, `organization_id`, `user_id`, `type`, `name`, `code`, `account_code`],
+			});
+
+			if(getVendor){
+				console.log("getVendor ", getVendor);
+				
+				whereClause.vendor_code = getVendor.code;
+			}
+		}
+
+		whereClause.createdAt = {
+			[Op.between]: [fromDate, toDate],
+		};
+
+		console.log('whereClause ', whereClause);
 		// Validate that both dates are valid
 		if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
 			throw new Error('Invalid date range');
@@ -791,11 +834,7 @@ exports.getImportedInvoices = catchAsync(async (req, res) => {
 		toDate.setHours(23, 59, 59, 999);
 
 		const importedPurchasedInvoices = await InvoiceCsvImport.findAndCountAll({
-			where: {
-				createdAt: {
-					[Op.between]: [fromDate, toDate],
-				},
-			},
+			where: whereClause,
 			include: {
 				model: InvoiceCsvImportItem,
 				as: 'csv_items',
@@ -839,6 +878,14 @@ exports.getSingleImportedInvoices = catchAsync(async (req, res) => {
 
 exports.exportProcessedPurchaseInvoices = catchAsync(async (req, res) => {
 	const { org_id, role } = req.user;
+	const { selectedColumns, selectedItemColumns } = req.body;
+
+	if (['Vendor', 'Customer', 'Vendor-Customer'].includes(role)) {
+		throw new AppError(
+			"Sorry! You don't have permission to access this resource"
+		);
+	}
+
 	const { from_date, to_date } = req.query;
 	const fromDate = new Date(from_date);
 	const toDate = new Date(to_date);
@@ -854,12 +901,26 @@ exports.exportProcessedPurchaseInvoices = catchAsync(async (req, res) => {
 		throw new AppError(`You don't authorize to access this api.`);
 	}
 
+	let whereClause = {};
+	if (role === 'Admin') {
+		const getOrganization = await organization.findByPk(org_id, {
+			attributes: ['id', 'org_name', 'org_code'],
+		});
+
+		if (!getOrganization) {
+			throw new AppError('Organization not found!');
+		}
+
+		const org_code = getOrganization.org_code;
+		whereClause.organization_code = org_code;
+	}
+
+	whereClause.createdAt = {
+		[Op.between]: [fromDate, toDate],
+	};
+
 	const invoices = await InvoiceCsvImport.findAll({
-		where: {
-			createdAt: {
-				[Op.between]: [fromDate, toDate],
-			},
-		},
+		where: whereClause,
 		include: {
 			model: InvoiceCsvImportItem,
 			as: 'csv_items',
@@ -1066,7 +1127,7 @@ exports.exportProcessedPurchaseInvoices = catchAsync(async (req, res) => {
 	res.end();
 });
 
-exports.generateVouchers = catchAsync(async (req, res) => {
+exports.generateVouchersV1 = catchAsync(async (req, res) => {
 	const { ids } = req.body;
 
 	// Validate
@@ -1074,12 +1135,9 @@ exports.generateVouchers = catchAsync(async (req, res) => {
 		return res.status(400).json({ message: 'Ids are required for porting.' });
 	}
 
-	const templatePath = path.join(
-		__dirname,
-		`../templates/${PORTING_FILE}`
-	);
-	console.log("templatePath ", templatePath);
-	
+	const templatePath = path.join(__dirname, `../templates/${PORTING_FILE}`);
+	console.log('templatePath ', templatePath);
+
 	setTimeout(async () => {
 		try {
 			await InvoiceCsvImport.update(
@@ -1103,4 +1161,655 @@ exports.generateVouchers = catchAsync(async (req, res) => {
 			return res.status(500).json({ message: 'Internal server error' });
 		}
 	}, 2000);
+});
+
+function normalize(str) {
+	return str
+		.trim() // remove leading/trailing spaces
+		.replace(/\s+/g, ' ') // collapse multiple spaces
+		.replace(/[^a-zA-Z0-9 ]/g, '') // remove special characters
+		.toLowerCase();
+}
+
+exports.generateVouchers = catchAsync(async (req, res) => {
+	const { ids } = req.body;
+	const { org_id, role } = req.user;
+
+	if (['Vendor', 'Customer', 'Vendor-Customer'].includes(role)) {
+		throw new AppError(
+			"Sorry! You don't have permission to access this resource"
+		);
+	}
+
+	if (!Array.isArray(ids) || ids.length === 0) {
+		return res.status(400).json({ message: 'Ids are required for porting.' });
+	}
+
+	let whereClause = {};
+	if (role === 'Admin') {
+		const getOrganization = await organization.findByPk(org_id, {
+			attributes: ['id', 'org_name', 'org_code'],
+		});
+
+		if (!getOrganization) {
+			throw new AppError('Organization not found!');
+		}
+
+		const org_code = getOrganization.org_code;
+		whereClause.organization_code = org_code;
+	}
+
+	whereClause.id = { [Op.in]: ids };
+	whereClause.porting_status = 0;
+
+	const purchaseInvoices = await InvoiceCsvImport.findAll({
+		where: whereClause,
+		include: {
+			model: InvoiceCsvImportItem,
+			as: 'csv_items',
+		},
+		order: [['createdAt', 'DESC']],
+	});
+
+	const invoices = purchaseInvoices.map((inv) => inv.get({ plain: true }));
+	// console.log('purchaseInvoices ', invoices);
+
+	const masterAccounts = await MasterAccount.findAll({
+		where: {
+			A_NAME: {
+				[Op.in]: [
+					'GST INPUT',
+					'CGST INPUT',
+					'SGST INPUT',
+					'TDS Payable',
+					'OFFICE RENT AND EXP.',
+				],
+			},
+		},
+		attributes: ['A_CODE', 'UNIV_CODE', 'A_NAME', 'A_LEDGER'],
+	});
+
+	const masterAccountMap = masterAccounts.map((mc) => mc.get({ plain: true }));
+	// console.log('masterAccounts ', masterAccounts);
+
+	const generatedVouchers = [];
+	for (let [i, invoice] of invoices.entries()) {
+		console.log(i, invoice);
+
+		const totals = invoice.csv_items.reduce(
+			(acc, item) => {
+				acc.amountBeforeTax += parseFloat(item.price_unit) || 0;
+				acc.totalIgstAmount += parseFloat(item.item_igst_value) || 0;
+				acc.totalCgstAmount += parseFloat(item.item_cgst_value) || 0;
+				acc.totalSgstAmount += parseFloat(item.item_sgst_value) || 0;
+				return acc;
+			},
+			{
+				amountBeforeTax: 0,
+				totalIgstAmount: 0,
+				totalCgstAmount: 0,
+				totalSgstAmount: 0,
+			}
+		);
+
+		const totalTaxAmount =
+			totals.amountBeforeTax +
+			(totals.totalIgstAmount +
+				totals.totalCgstAmount +
+				totals.totalSgstAmount);
+
+		const companyDetails = await BusinessPartner.findOne({
+			where: { name: normalize(invoice.company_name) },
+		});
+		console.log('companyDetails ', companyDetails);
+
+		if (!companyDetails) {
+			continue;
+		}
+
+		const narrationText = await getVoucherNarration('STO1009');
+
+		if (!narrationText) {
+			continue;
+		}
+
+		// DEDUCTED_COMPANY_NAME_INVOICE_MONTH_YEAR, FROM_COMPANY_NAME, INVOICE_NO, INVOICE_DATE
+		narration = narrationText
+			.replace(
+				'DEDUCTED_COMPANY_NAME_INVOICE_MONTH_YEAR',
+				`OFFICE PARKING RENT ADVANCE FOR THE MONTH OF ${getMonthYear(
+					invoice.invoice_date
+				).toUpperCase()}`
+			)
+			.replace('FROM_COMPANY_NAME', normalize(invoice.company_name))
+			.replace('INVOICE_NO', invoice.invoice_no)
+			.replace('INVOICE_DATE', getDate(invoice.invoice_date));
+
+		for (let account of masterAccounts) {
+			if (account.A_NAME === 'OFFICE RENT AND EXP.') {
+				generatedVouchers.push({
+					sr_no: i + 1,
+					voucher_type_code: 'P',
+					voucher_date: getDate(new Date(), true),
+					account_code: account.A_CODE,
+					universal_code: account.UNIV_CODE,
+					payment_option: 'NA',
+					transaction_type_code: 40,
+					narration_code: 'STO1009',
+					narration_text: narration,
+					profit_loss_code: 'NE',
+					balance_sheet_code: 'NE',
+					cash_flow_code: 'NE',
+					ledger_code: account.A_LEDGER,
+					book: 'P',
+					debit_amount: totals.amountBeforeTax,
+					credit_amount: 0,
+					debit_total_amount: totalTaxAmount,
+					credit_total_amount: totalTaxAmount,
+					varr1_ref: 'INVOICE',
+					varr2_number: invoice.invoice_no || '',
+					varr3: 'NA',
+					varr4_date: getDate(new Date(), true),
+					varr5: 'NA',
+					cc_code: '0',
+					mis_code: 'NE',
+					doc_url: 'URL',
+				});
+			}
+			if (account.A_NAME === 'GST INPUT' && totals.totalIgstAmount > 0) {
+				generatedVouchers.push({
+					sr_no: i + 1,
+					voucher_type_code: 'P',
+					voucher_date: getDate(new Date(), true),
+					account_code: account.A_CODE,
+					universal_code: account.UNIV_CODE,
+					payment_option: 'NA',
+					transaction_type_code: 40,
+					narration_code: 'STO1009',
+					narration_text: narration,
+					profit_loss_code: 'NE',
+					balance_sheet_code: 'NE',
+					cash_flow_code: 'NE',
+					ledger_code: account.A_LEDGER,
+					book: 'P',
+					debit_amount: totals.totalIgstAmount,
+					credit_amount: 0,
+					debit_total_amount: totalTaxAmount,
+					credit_total_amount: totalTaxAmount,
+					varr1_ref: 'INVOICE',
+					varr2_number: invoice.invoice_no || '',
+					varr3: 'NA',
+					varr4_date: getDate(new Date(), true),
+					varr5: 'NA',
+					cc_code: '0',
+					mis_code: 'NE',
+					doc_url: 'URL',
+				});
+			}
+			if (account.A_NAME === 'CGST INPUT' && totals.totalCgstAmount > 0) {
+				generatedVouchers.push({
+					sr_no: i + 1,
+					voucher_type_code: 'P',
+					voucher_date: getDate(new Date(), true),
+					account_code: account.A_CODE,
+					universal_code: account.UNIV_CODE,
+					payment_option: 'NA',
+					transaction_type_code: 40,
+					narration_code: 'STO1009',
+					narration_text: narration,
+					profit_loss_code: 'NE',
+					balance_sheet_code: 'NE',
+					cash_flow_code: 'NE',
+					ledger_code: account.A_LEDGER,
+					book: 'P',
+					debit_amount: totals.totalCgstAmount,
+					credit_amount: 0,
+					debit_total_amount: totalTaxAmount,
+					credit_total_amount: totalTaxAmount,
+					varr1_ref: 'INVOICE',
+					varr2_number: invoice.invoice_no || '',
+					varr3: 'NA',
+					varr4_date: getDate(new Date(), true),
+					varr5: 'NA',
+					cc_code: '0',
+					mis_code: 'NE',
+					doc_url: 'URL',
+				});
+			}
+			if (account.A_NAME === 'SGST INPUT' && totals.totalSgstAmount > 0) {
+				generatedVouchers.push({
+					sr_no: i + 1,
+					voucher_type_code: 'P',
+					voucher_date: getDate(new Date(), true),
+					account_code: account.A_CODE,
+					universal_code: account.UNIV_CODE,
+					payment_option: 'NA',
+					transaction_type_code: 40,
+					narration_code: 'STO1009',
+					narration_text: narration,
+					profit_loss_code: 'NE',
+					balance_sheet_code: 'NE',
+					cash_flow_code: 'NE',
+					ledger_code: account.A_LEDGER,
+					book: 'P',
+					debit_amount: totals.totalSgstAmount,
+					credit_amount: 0,
+					debit_total_amount: totalTaxAmount,
+					credit_total_amount: totalTaxAmount,
+					varr1_ref: 'INVOICE',
+					varr2_number: invoice.invoice_no || '',
+					varr3: 'NA',
+					varr4_date: getDate(new Date(), true),
+					varr5: 'NA',
+					cc_code: '0',
+					mis_code: 'NE',
+					doc_url: 'URL',
+				});
+			}
+
+			if (
+				account.A_NAME === 'TDS Payable' &&
+				companyDetails.isApplicableForTds &&
+				Number(companyDetails.tds_percentage) > 0
+			) {
+				generatedVouchers.push({
+					sr_no: i + 1,
+					voucher_type_code: 'P',
+					voucher_date: getDate(new Date(), true),
+					account_code: account.A_CODE,
+					universal_code: account.UNIV_CODE,
+					payment_option: 'NA',
+					transaction_type_code: 40,
+					narration_code: 'STO1009',
+					narration_text: narration,
+					profit_loss_code: 'NE',
+					balance_sheet_code: 'NE',
+					cash_flow_code: 'NE',
+					ledger_code: account.A_LEDGER,
+					book: 'P',
+					debit_amount: 0,
+					credit_amount:
+						(totals.amountBeforeTax * companyDetails.tds_percentage) / 100,
+					debit_total_amount: totalTaxAmount,
+					credit_total_amount: totalTaxAmount,
+					varr1_ref: 'INVOICE',
+					varr2_number: invoice.invoice_no || '',
+					varr3: 'NA',
+					varr4_date: getDate(new Date(), true),
+					varr5: 'NA',
+					cc_code: '0',
+					mis_code: 'NE',
+					doc_url: 'URL',
+				});
+			}
+		}
+		generatedVouchers.push({
+			sr_no: i + 1,
+			voucher_type_code: 'P',
+			voucher_date: getDate(new Date(), true),
+			account_code: companyDetails.account_code,
+			universal_code: companyDetails.account_code,
+			payment_option: 'NA',
+			transaction_type_code: 40,
+			narration_code: 'STO1009',
+			narration_text: narration,
+			profit_loss_code: 'NE',
+			balance_sheet_code: 'NE',
+			cash_flow_code: 'NE',
+			ledger_code: 'K',
+			book: 'P',
+			debit_amount: 0,
+			credit_amount: totalTaxAmount,
+			debit_total_amount: totalTaxAmount,
+			credit_total_amount: totalTaxAmount,
+			varr1_ref: 'INVOICE',
+			varr2_number: invoice.invoice_no || '',
+			varr3: 'NA',
+			varr4_date: getDate(new Date(), true),
+			varr5: 'NA',
+			cc_code: '0',
+			mis_code: 'NE',
+			doc_url: 'URL',
+		});
+	}
+	console.log('Generated Vouchers => ', generatedVouchers);
+
+	return;
+	const templatePath = path.join(__dirname, `../templates/${PORTING_FILE}`);
+	console.log('templatePath ', templatePath);
+
+	setTimeout(async () => {
+		try {
+			await InvoiceCsvImport.update(
+				{ porting_status: 1 },
+				{ where: { id: { [Op.in]: ids } } }
+			);
+
+			return res.download(
+				templatePath,
+				'Voucher-Porting-Template.xlsx',
+				(err) => {
+					if (err) {
+						console.error(err);
+						return res.status(500).json({ message: 'Failed to download file' });
+					}
+				}
+			);
+			// return res.json({ message: 'Purchase invoices ported successfully' });
+		} catch (err) {
+			console.error(err);
+			return res.status(500).json({ message: 'Internal server error' });
+		}
+	}, 2000);
+});
+
+function voucherObject(data) {
+	return {
+		SR_NO: '',
+		VOUCHER_TYPE_CODE: '',
+		VOUCHER_DATE: '',
+		ACCOUNT_CODE: '',
+		UNIVERSAL_CODE: '',
+		PAYMENT_OPTION: '',
+		TRANSACTION_TYPE_CODE: '',
+		NARRATION_CODE: '',
+		NARRATION_TEXT: '',
+		PROFIT_LOSS_CODE: '',
+		BALANCE_SHEET_CODE: '',
+		CASH_FLOW_CODE: '',
+		LEDGER_CODE: '',
+		BOOK: '',
+		DEBIT_AMOUNT: '',
+		CREDIT_AMOUNT: '',
+		DEBIT_TOTAL_AMOUNT: '',
+		CREDIT_TOTAL_AMOUNT: '',
+		VARR1_REF: '',
+		VARR2_NUMBER: '',
+		VARR3: '',
+		VARR4_DATE: '',
+		VARR5: '',
+		CC_CODE: '',
+		MIS_CODE: '',
+		DOC_URL: '',
+	};
+}
+
+async function getVoucherNarration(narration_code = null) {
+	if (!narration_code) {
+		return null;
+		throw new AppError(`Narrtion code is required.`);
+	}
+
+	const narration = await Narration.findOne({
+		where: {
+			NARR_CODE: narration_code,
+		},
+	});
+
+	if (!narration) {
+		return null;
+		throw new AppError(`Narrtion not found for code: ${narration_code}`);
+	}
+
+	// [VALUES] SHOULD BE DYNAMIC
+	// AMOUNT PROVIDED FOR [OFFICE PARKING RENT ADVANCE FOR THE MONTH OF NOVEMBER 2025] FROM [OFIS SPACES PRIVATE LIMITED] AGST. BILL/GR/CHALLAN NO. [OSN2/25-26/01177 DATED 01-11-2025]
+	const narrationText = `${narration.VARR1} ${narration.VARR2} DEDUCTED_COMPANY_NAME_INVOICE_MONTH_YEAR ${narration.VARR4} FROM_COMPANY_NAME ${narration.VARR6} INVOICE_NO ${narration.VARR8} INVOICE_DATE`;
+	return narrationText;
+}
+
+function getDate(date = null, includeTime = false) {
+	const newDate = date ? new Date(date) : new Date();
+
+	if (isNaN(newDate)) return null; // handle invalid date
+
+	const yyyy = newDate.getFullYear();
+	const mm = String(newDate.getMonth() + 1).padStart(2, '0');
+	const dd = String(newDate.getDate()).padStart(2, '0');
+
+	const modifiedDate = `${yyyy}-${mm}-${dd}`;
+
+	if (!includeTime) return modifiedDate;
+
+	const hh = String(newDate.getHours()).padStart(2, '0');
+	const min = String(newDate.getMinutes()).padStart(2, '0');
+	const ss = String(newDate.getSeconds()).padStart(2, '0');
+
+	return `${modifiedDate} ${hh}:${min}:${ss}`;
+}
+
+function getMonthYear(date = null) {
+	const newDate = new Date(date);
+	const monthNames = [
+		'January',
+		'February',
+		'March',
+		'April',
+		'May',
+		'June',
+		'July',
+		'August',
+		'September',
+		'October',
+		'November',
+		'December',
+	];
+
+	return `${monthNames[newDate.getMonth()]} ${newDate.getFullYear()}`;
+}
+
+const INVOICE_FIELDS = {
+	sr_no: 'SR NO',
+	voucher_type: 'Voucher Type',
+	uploaded_filename: 'Uploaded Filename',
+	organization_code: 'Organization Code',
+	vendor_code: 'Vendor Code',
+	company_name: 'Company Name',
+	invoice_no: 'Invoice No',
+	invoice_date: 'Invoice Date',
+	ack_no: 'Ack No',
+	ack_date: 'Ack Date',
+	due_date: 'Due Date',
+	cgst: 'CGST',
+	sgst: 'SGST',
+	total_amount: 'Total Amount',
+	seller_contact_no: 'Seller Contact No',
+	seller_email_address: 'Seller Email',
+	seller_cin: 'Seller CIN',
+	seller_gstin: 'Seller GSTIN',
+	seller_pan: 'Seller PAN',
+	account_holder_name: 'Account Holder Name',
+	seller_bank_name: 'Seller Bank Name',
+	seller_account_no: 'Seller Account No',
+	seller_ifsc_code: 'Seller IFSC Code',
+	seller_address: 'Seller Address',
+	seller_state: 'Seller State',
+	seller_district: 'Seller District',
+	seller_pin_code: 'Seller PIN Code',
+	place_of_supply: 'Place of Supply',
+	bill_to_ship_To: 'Bill To / Ship To',
+	buyer_email_address: 'Buyer Email',
+	buyer_gstin: 'Buyer GSTIN',
+	buyer_contact_no: 'Buyer Contact No',
+	billing_buyer_address: 'Billing Buyer Address',
+	buyer_state: 'Buyer State',
+	buyer_district: 'Buyer District',
+	buyer_pin_code: 'Buyer Pin Code',
+	created_at: 'Created At',
+	status: 'Status',
+	porting_status: 'Porting Status',
+};
+
+const ITEM_FIELDS = {
+	item_code: 'Item Code',
+	item_name: 'Item Name',
+	description_of_item: 'Description',
+	hsn_sac: 'HSN/SAC',
+	quantity: 'Quantity',
+	price_unit: 'Unit Price',
+	sub_total: 'Sub Total',
+	item_discount_amount: 'Discount Amount',
+	item_discount_percentage: 'Discount %',
+	item_net_price: 'Net Price',
+	item_cgst_percentage: 'CGST %',
+	item_cgst_value: 'CGST Value',
+	item_sgst_percentage: 'SGST %',
+	item_sgst_value: 'SGST Value',
+	item_igst_percentage: 'IGST %',
+	item_igst_value: 'IGST Value',
+	item_tax_percentage: 'Tax %',
+	item_net_total: 'Item Net Total',
+};
+
+exports.exportProcessedPurchaseInvoicesV1 = catchAsync(async (req, res) => {
+	const { org_id, role } = req.user;
+	const { selectedColumns, selectedItemColumns } = req.body;
+
+	// Permission check
+	if (['Vendor', 'Customer', 'Vendor-Customer'].includes(role)) {
+		throw new AppError(
+			"Sorry! You don't have permission to access this resource"
+		);
+	}
+
+	const { from_date, to_date } = req.query;
+	const fromDate = new Date(from_date);
+	const toDate = new Date(to_date);
+
+	if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+		throw new Error('Invalid date range');
+	}
+
+	toDate.setHours(23, 59, 59, 999);
+
+	if (!org_id && role !== 'Admin') {
+		throw new AppError(`You don't authorize to access this api.`);
+	}
+
+	// Build where clause
+	let whereClause = {};
+
+	if (role === 'Admin') {
+		const getOrganization = await organization.findByPk(org_id, {
+			attributes: ['id', 'org_name', 'org_code'],
+		});
+
+		if (!getOrganization) throw new AppError('Organization not found!');
+
+		whereClause.organization_code = getOrganization.org_code;
+	}
+
+	whereClause.createdAt = { [Op.between]: [fromDate, toDate] };
+
+	// Fetch invoices
+	const invoices = await InvoiceCsvImport.findAll({
+		where: whereClause,
+		include: {
+			model: InvoiceCsvImportItem,
+			as: 'csv_items',
+		},
+		order: [['createdAt', 'DESC']],
+	});
+
+	const response = invoices.map((inv) => inv.get({ plain: true }));
+	console.log("response ", response);
+	
+	// Build dynamic headers
+	const headers = [
+		...selectedColumns.map((c) => INVOICE_FIELDS[c]),
+		...selectedItemColumns.map((c) => ITEM_FIELDS[c]),
+	];
+
+	const workbook = new ExcelJS.Workbook();
+	const sheet = workbook.addWorksheet('Processed Invoices');
+
+	// Add header row
+	sheet.addRow(headers);
+	const headerRow = sheet.getRow(1);
+	headerRow.font = { bold: true };
+	headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+
+	//-----------------------------------------------
+	// Insert data rows
+	//-----------------------------------------------
+	response.forEach((inv, index) => {
+		const firstItem = inv.csv_items[0] || {};
+
+		const rowData = [];
+
+		// Invoice columns
+		selectedColumns.forEach((col) => {
+			if (col === 'sr_no') {
+				rowData.push(index + 1);
+			} else if (
+				['invoice_date', 'ack_date', 'due_date', 'created_at'].includes(col)
+			) {
+				const d = inv[col];
+				rowData.push(d ? moment(d).format('DD-MM-YYYY') : '');
+			} else {
+				console.log("col ", {column: col, colValue: inv[col]});
+				
+				rowData.push(inv[col] ?? '');
+			}
+		});
+
+		// First item columns
+		selectedItemColumns.forEach((col) => {
+			rowData.push(firstItem[col] ?? '');
+		});
+
+		sheet.addRow(rowData);
+
+		// Additional items
+		for (let i = 1; i < inv.csv_items.length; i++) {
+			const item = inv.csv_items[i];
+
+			const emptyInvoiceCols = new Array(selectedColumns.length).fill('');
+
+			const itemRow = [
+				...emptyInvoiceCols,
+				...selectedItemColumns.map((col) => item[col] ?? ''),
+			];
+
+			sheet.addRow(itemRow);
+		}
+	});
+
+	//-----------------------------------------------
+	// Auto column width
+	//-----------------------------------------------
+	sheet.columns.forEach((column) => {
+		let maxLength = 10;
+		column.eachCell({ includeEmpty: true }, (cell) => {
+			let val = cell.value;
+			if (val === null || val === undefined) val = '';
+			val = val.toString();
+			if (val.length > maxLength) maxLength = val.length;
+		});
+		column.width = maxLength + 2;
+	});
+
+	//-----------------------------------------------
+	// File Export
+	//-----------------------------------------------
+	const now = new Date();
+	const formatted = `${now.getFullYear()}-${(now.getMonth() + 1)
+		.toString()
+		.padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')}_${now
+		.getHours()
+		.toString()
+		.padStart(2, '0')}-${now.getMinutes().toString().padStart(2, '0')}-${now
+		.getSeconds()
+		.toString()
+		.padStart(2, '0')}`;
+
+	const fileName = `${formatted}_processed_purchased_invoices.xlsx`;
+
+	res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+	res.setHeader(
+		'Content-Type',
+		'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+	);
+
+	await workbook.xlsx.write(res);
+	res.end();
 });

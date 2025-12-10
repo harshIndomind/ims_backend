@@ -12,6 +12,7 @@ const {
 	organization,
 	RegistrationType,
 	Invoice,
+	MasterAccount,
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/AppError');
@@ -138,6 +139,9 @@ exports.createPartner = catchAsync(async (req, res) => {
 			registration_type: vendorCompany.registrationType,
 			registration_type_id: vendorCompany.registrationType,
 			addresses: [{ type: 'billing', ...billingAddress }],
+			isApplicableForTds: vendorCompany.isApplicableForTds,
+			tds_percentage: parseFloat(vendorCompany.tds_percentage || 0),
+			openSwayammOthersAccount: vendorCompany.openSwayammOthersAccount,
 		};
 
 		// Only add bankDetails if at least one field is not empty
@@ -185,6 +189,7 @@ exports.createPartner = catchAsync(async (req, res) => {
 		if (!hasSwayammAccount) {
 			const dataObj = {
 				respPerson: name || '',
+				aLedger: 'K',
 				account_code: swayammAccountCode
 					? swayammAccountCode
 					: vendorCompany.account_code,
@@ -195,6 +200,23 @@ exports.createPartner = catchAsync(async (req, res) => {
 			};
 
 			await createVendorCustomerAccountOnSwayamm(dataObj);
+
+			const masterAccountDetails = prepareVendorCustomerTableData(dataObj);
+			await MasterAccount.create(masterAccountDetails, { t: transaction });
+
+			const otherDataObj = {
+				respPerson: name || '',
+				company_name: vendorCompany?.name,
+				tan: '',
+				pan: vendorCompany?.pan,
+				gstin: vendorCompany?.gstin,
+			};
+
+			// const otherAccounts = await createVendorCustomerOtherAccountsOnSwayamm(
+			// 	otherDataObj
+			// );
+
+			// logger.info('Other Accounts Created On Swayamm: ', { otherAccounts });
 		}
 
 		await t.commit();
@@ -298,6 +320,9 @@ exports.getPartnerById = catchAsync(async (req, res) => {
 			pan: partner.pan,
 			registrationType: partner.registration_type,
 			account_code: partner.account_code,
+			isApplicableForTds: partner.isApplicableForTds,
+			tds_percentage: partner.tds_percentage,
+			openSwayammOthersAccount: partner.openSwayammOthersAccount,
 		},
 		billingAddress: partner.addresses?.find((a) => a.type === 'billing') || {},
 		openingBalance: {
@@ -389,6 +414,8 @@ exports.updatePartner = catchAsync(async (req, res) => {
 			await user.update(updateData, { transaction: t });
 		}
 
+		console.log('vendorCompany.tds_percentage ', vendorCompany.tds_percentage);
+
 		// Update main partner details
 		await partner.update(
 			{
@@ -407,6 +434,9 @@ exports.updatePartner = catchAsync(async (req, res) => {
 				registration_type_id:
 					vendorCompany?.registrationType || partner.registration_type,
 				organization_id: orgId || partner.organization_id,
+				isApplicableForTds: vendorCompany.isApplicableForTds,
+				tds_percentage: parseFloat(vendorCompany.tds_percentage || 0),
+				openSwayammOthersAccount: vendorCompany.openSwayammOthersAccount,
 			},
 			{ transaction: t }
 		);
@@ -471,21 +501,44 @@ exports.updatePartner = catchAsync(async (req, res) => {
 				}
 			}
 		}
-		console.log("hasSwayammAccount ", hasSwayammAccount);
-		
-		if (!hasSwayammAccount) {
-			const dataObj = {
-				respPerson: name || '',
-				account_code: swayammAccountCode
-					? swayammAccountCode
-					: vendorCompany.account_code,
-				company_name: vendorCompany?.name,
-				tan: '',
-				pan: vendorCompany?.pan,
-				gstin: vendorCompany?.gstin,
-			};
+		console.log('hasSwayammAccount ', hasSwayammAccount);
 
+		const dataObj = {
+			respPerson: name || '',
+			aLedger: 'K',
+			account_code: swayammAccountCode
+				? swayammAccountCode
+				: vendorCompany.account_code,
+			company_name: vendorCompany?.name,
+			tan: '',
+			pan: vendorCompany?.pan,
+			gstin: vendorCompany?.gstin,
+		};
+		if (!hasSwayammAccount) {
 			await createVendorCustomerAccountOnSwayamm(dataObj);
+
+			// const otherAccounts = await createVendorCustomerOtherAccountsOnSwayamm(
+			// 	otherDataObj
+			// );
+
+			// logger.info('Other Accounts Created On Swayamm: ', { otherAccounts });
+		}
+
+		const masterAccountDetails = prepareVendorCustomerTableData(dataObj);
+
+		const isMasterAccountExists = await MasterAccount.findOne({
+			where: { A_CODE: swayammAccountCode },
+		});
+		console.log('isMasterAccountExists ', isMasterAccountExists);
+
+		if (!isMasterAccountExists) {
+			await MasterAccount.create(masterAccountDetails, { transaction: t });
+		} else {
+			await MasterAccount.update(
+				masterAccountDetails,
+				{ where: { A_CODE: swayammAccountCode } },
+				{ transaction: t }
+			);
 		}
 
 		await t.commit();
@@ -1008,12 +1061,14 @@ async function checkAccountOnSwayamm(companyName = null) {
 
 		return data || null;
 	} catch (error) {
-		logger.error('Failed to fetch existing account details from Swayamm: ', { error });
+		logger.error('Failed to fetch existing account details from Swayamm: ', {
+			error,
+		});
 		return null;
 	}
 }
 
-async function getAccountCodeFromSwayamm(companyName = null, ledgerCode = 'L') {
+async function getAccountCodeFromSwayamm(companyName = null, ledgerCode = 'K') {
 	const token = await getValidToken();
 
 	if (!token) {
@@ -1056,10 +1111,10 @@ async function createVendorCustomerAccountOnSwayamm(userObj) {
 		const CREATE_UPDATE_ACCOUNT_API = `${SWAYAMM_API_BASE_URL}${SWAYAMM_CREATE_UPDATE_ACCOUNT_ENDPOINT}`;
 
 		const accountDetails = prepareVendorCustomerData(userObj);
-		console.log("accountDetails ", accountDetails);
-		
-		console.log("CREATE_UPDATE_ACCOUNT_API ", CREATE_UPDATE_ACCOUNT_API);
-		
+		console.log('accountDetails ', accountDetails);
+
+		console.log('CREATE_UPDATE_ACCOUNT_API ', CREATE_UPDATE_ACCOUNT_API);
+
 		const { data } = await axios.post(
 			CREATE_UPDATE_ACCOUNT_API,
 			accountDetails,
@@ -1070,8 +1125,11 @@ async function createVendorCustomerAccountOnSwayamm(userObj) {
 				},
 			}
 		);
-		console.log("createVendorCustomerAccountOnSwayamm ", createVendorCustomerAccountOnSwayamm);
-		
+		console.log(
+			'createVendorCustomerAccountOnSwayamm ',
+			createVendorCustomerAccountOnSwayamm
+		);
+
 		return data || null;
 	} catch (error) {
 		console.log('RAW error response:', error);
@@ -1094,7 +1152,7 @@ function prepareVendorCustomerData(data = null) {
 		id: 0,
 		aCode: data.account_code,
 		aName: data.company_name,
-		aLedger: 'L',
+		aLedger: data.aLedger,
 		aLedgerDesc: 'NE',
 		univCode: data.account_code,
 		doOpening: todayDate,
@@ -1133,4 +1191,124 @@ function prepareVendorCustomerData(data = null) {
 	};
 
 	return preparedData;
+}
+
+function prepareVendorCustomerTableData(data = null) {
+	const date = new Date();
+	const todayDate = `${date.getFullYear()}-${String(
+		date.getMonth() + 1
+	).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+	const preparedData = {
+		A_CODE: data.account_code,
+		A_NAME: data.company_name,
+		A_LEDGER: 'L',
+		A_LEDGER_DESC: 'NE',
+		UNIV_CODE: data.account_code,
+		DO_OPENING: todayDate,
+		RESP_PERSON: '',
+		OPENING_BALDR: 0,
+		OPENING_BALCR: 0,
+		PRINT_ADVICE: true,
+		AC_FINAL: true,
+		LAST_TR_DATE: null,
+		MISC_DB_CODE: 'NE',
+		MISC_DB_DESC: 'NO ENTRY',
+		MISC_CR_CODE: 'NE',
+		MISC_CR_DESC: 'NO ENTRY',
+		OPENING_BAL: 0,
+		TAN: data.tan || '',
+		PAN: data.pan || '',
+		GST: data.gstin || '',
+	};
+
+	return preparedData;
+}
+
+async function createVendorCustomerOtherAccountsOnSwayamm(data = {}) {
+	if (!data || !data.company_name) {
+		throw new AppError('Missing company_name in data');
+	}
+
+	const ledgerTypes = {
+		G: 'GST LEDGER',
+		GS: 'SGST LEDGER',
+		GC: 'CGST LEDGER',
+		T: 'TDS LEDGER',
+	};
+
+	const createdAccounts = [];
+
+	// Loop through each ledger type
+	for (const [key, ledgerName] of Object.entries(ledgerTypes)) {
+		// Combined name: company_name + ledgerName
+		const combinedName = `${data.company_name} ${ledgerName}`;
+
+		// Check whether this ledger account exists
+		let existingAccount = null;
+		try {
+			existingAccount = await checkAccountOnSwayamm(combinedName);
+		} catch (err) {
+			throw new AppError(
+				`Failed to check Swayamm account for ${combinedName}: ${err.message}`
+			);
+		}
+
+		const hasSwayammAccount = !!existingAccount?.aCode;
+		let accountCode = existingAccount?.aCode || null;
+
+		if (hasSwayammAccount) {
+			console.log(`Account exists for ${combinedName} → Code: ${accountCode}`);
+		} else {
+			// Generate account code for this ledger type
+			try {
+				accountCode = await getAccountCodeFromSwayamm(combinedName, key);
+			} catch (err) {
+				throw new AppError(
+					`Failed to fetch account code for ${combinedName}: ${err.message}`
+				);
+			}
+
+			if (!accountCode) {
+				throw new AppError(
+					`Failed to generate account code for ${combinedName}`
+				);
+			}
+
+			console.log(
+				`New Account Code Generated for ${combinedName}:`,
+				accountCode
+			);
+		}
+
+		// Create account object
+		const dataObj = {
+			respPerson: data.respPerson || '',
+			account_code: accountCode,
+			company_name: combinedName, // IMPORTANT: Send combined name
+			account_type: key,
+			tan: '',
+			pan: data.pan,
+			gstin: data.gstin,
+		};
+
+		// Create the account if not already existing
+		if (!hasSwayammAccount) {
+			try {
+				const created = await createVendorCustomerAccountOnSwayamm(dataObj);
+				createdAccounts.push(created);
+			} catch (err) {
+				throw new AppError(
+					`Failed to create account for ${combinedName}: ${err.message}`
+				);
+			}
+		} else {
+			createdAccounts.push({
+				message: `${combinedName} already exists`,
+				accountCode,
+			});
+		}
+	}
+
+	return createdAccounts;
 }

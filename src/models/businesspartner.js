@@ -87,6 +87,18 @@ module.exports = (sequelize, DataTypes) => {
 				onUpdate: 'CASCADE',
 				onDelete: 'RESTRICT',
 			},
+			openSwayammOthersAccount: {
+				type: DataTypes.BOOLEAN,
+				defaultValue: false,
+			},
+			isApplicableForTds: {
+				type: DataTypes.BOOLEAN,
+				defaultValue: false,
+			},
+			tds_percentage: {
+				type: DataTypes.DECIMAL(10, 2),
+				defaultValue: 0,
+			},
 			created_by: DataTypes.INTEGER,
 		},
 		{

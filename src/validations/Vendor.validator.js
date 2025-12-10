@@ -15,8 +15,8 @@ exports.validationCreateVendor = [
 		.isInt()
 		.withMessage('Organization ID must be a number')
 		.custom((val) => {
-			if(val == 0){
-				throw new Error('Organization ID is required')
+			if (val == 0) {
+				throw new Error('Organization ID is required');
 			}
 			return true;
 		})
@@ -59,6 +59,27 @@ exports.validationCreateVendor = [
 		.matches(/^[A-Z0-9]+$/)
 		.withMessage('Account code must be uppercase letters or numbers only.')
 		.trim(),
+
+	body('vendorCompany.isApplicableForTds').optional({ checkFalsy: true }),
+	body('vendorCompany.openSwayammOthersAccount').optional({ checkFalsy: true }),
+
+	body('vendorCompany.tds_percentage')
+		.custom((val, { req }) => {
+			const isApplicableForTds = req.body.vendorCompany?.isApplicableForTds;
+
+			// If TDS is applicable, the field becomes required
+			if (isApplicableForTds) {
+				if (!val || val.toString().trim() === '') {
+					throw new Error('TDS percentage is required.');
+				}
+			}
+
+			return true;
+		})
+		.if((value, { req }) => req.body.vendorCompany?.isApplicableForTds === true)
+		.isNumeric()
+		.withMessage('TDS Percentage must be a number')
+		.toFloat(),
 
 	body('vendorCompany.email')
 		.optional()
@@ -302,6 +323,27 @@ exports.validationUpdateVendor = [
 			}
 			return true;
 		}),
+
+	body('vendorCompany.isApplicableForTds').optional({ checkFalsy: true }),
+	body('vendorCompany.openSwayammOthersAccount').optional({ checkFalsy: true }),
+
+	body('vendorCompany.tds_percentage')
+		.custom((val, { req }) => {
+			const isApplicableForTds = req.body.vendorCompany?.isApplicableForTds;
+
+			// If TDS is applicable, the field becomes required
+			if (isApplicableForTds) {
+				if (!val || val.toString().trim() === '') {
+					throw new Error('TDS percentage is required.');
+				}
+			}
+
+			return true;
+		})
+		.if((value, { req }) => req.body.vendorCompany?.isApplicableForTds === true)
+		.isNumeric()
+		.withMessage('TDS Percentage must be a number')
+		.toFloat(),
 
 	// billingAddress
 	// body('billingAddress.address1').optional({ checkFalsy: true }),

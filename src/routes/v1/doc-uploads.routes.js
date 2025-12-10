@@ -65,13 +65,13 @@ router.get(
 	DocumentsUploadsController.sendDeleteRequestToAdmin
 );
 
-router.get(
+router.post(
 	'/imported-purchase-invoices',
 	checkRole(['Super Admin', 'Admin']),
 	DocumentsUploadsController.getImportedInvoices
 );
 
-router.get('/imported-purchase-invoices/export', DocumentsUploadsController.exportProcessedPurchaseInvoices);
+router.post('/imported-purchase-invoices/export', DocumentsUploadsController.exportProcessedPurchaseInvoicesV1);
 router.post('/imported-purchase-invoices/bulk-action', DocumentsUploadsController.generateVouchers);
 
 router.get(
