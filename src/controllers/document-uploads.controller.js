@@ -808,14 +808,22 @@ exports.getImportedInvoices = catchAsync(async (req, res) => {
 			whereClause.organization_code = org_code;
 		}
 
-		if(role === 'Admin'){
+		if (role === 'Admin') {
 			const getVendor = await BusinessPartner.findByPk(vendor_id, {
-				attributes: [`id`, `organization_id`, `user_id`, `type`, `name`, `code`, `account_code`],
+				attributes: [
+					`id`,
+					`organization_id`,
+					`user_id`,
+					`type`,
+					`name`,
+					`code`,
+					`account_code`,
+				],
 			});
 
-			if(getVendor){
-				console.log("getVendor ", getVendor);
-				
+			if (getVendor) {
+				console.log('getVendor ', getVendor);
+
 				whereClause.vendor_code = getVendor.code;
 			}
 		}
@@ -1687,14 +1695,14 @@ exports.exportProcessedPurchaseInvoicesV1 = catchAsync(async (req, res) => {
 
 	// Build where clause
 	let whereClause = {};
-
+	let organizationName = 'All';
 	if (role === 'Admin') {
 		const getOrganization = await organization.findByPk(org_id, {
 			attributes: ['id', 'org_name', 'org_code'],
 		});
 
 		if (!getOrganization) throw new AppError('Organization not found!');
-
+		organizationName = getOrganization.org_name;
 		whereClause.organization_code = getOrganization.org_code;
 	}
 
@@ -1711,22 +1719,82 @@ exports.exportProcessedPurchaseInvoicesV1 = catchAsync(async (req, res) => {
 	});
 
 	const response = invoices.map((inv) => inv.get({ plain: true }));
-	console.log("response ", response);
-	
+	console.log('response ', response);
+
+	// Auto-include all invoice columns if none selected
+	const finalInvoiceColumns =
+		selectedColumns && selectedColumns.length > 0
+			? selectedColumns
+			: Object.keys(INVOICE_FIELDS);
+
+	// Auto-include all item columns if none selected
+	const finalItemColumns =
+		selectedItemColumns && selectedItemColumns.length > 0
+			? selectedItemColumns
+			: Object.keys(ITEM_FIELDS);
+
 	// Build dynamic headers
 	const headers = [
-		...selectedColumns.map((c) => INVOICE_FIELDS[c]),
-		...selectedItemColumns.map((c) => ITEM_FIELDS[c]),
+		...finalInvoiceColumns.map((c) => INVOICE_FIELDS[c]),
+		...finalItemColumns.map((c) => ITEM_FIELDS[c]),
 	];
-
 	const workbook = new ExcelJS.Workbook();
-	const sheet = workbook.addWorksheet('Processed Invoices');
+	const sheet = workbook.addWorksheet('Purchased Invoices');
+
+	// Calculate how many columns we need to merge
+	// const totalColumns = selectedColumns.length + selectedItemColumns.length;
+
+	// Generate title text lines
+	const line2 = `(From ${moment(fromDate).format('DD-MM-YYYY')} To ${moment(
+		toDate
+	).format('DD-MM-YYYY')})`;
+	const line1 = `Purchase Register ${line2}`;
+	const line3 = `Organization: ${organizationName || ''}`; // optional, can change
+
+	// Insert 3 rows at top
+	sheet.insertRow(1, [line1]);
+	// sheet.insertRow(2, [line2]);
+	sheet.insertRow(3, [line3]);
 
 	// Add header row
-	sheet.addRow(headers);
-	const headerRow = sheet.getRow(1);
+	const insertedRow = sheet.addRow(headers);
+	insertedRow.eachCell((cell) => {
+		cell.fill = {
+			type: 'pattern',
+			pattern: 'solid',
+			fgColor: { argb: 'D9D9D9' }, // Light gray
+		};
+		cell.alignment = { horizontal: 'left', vertical: 'middle' };
+	});
+	const totalColumns = sheet.actualColumnCount;
+	// Merge each title row across all columns
+	sheet.mergeCells(1, 1, 2, totalColumns);
+	sheet.mergeCells(3, 1, 3, totalColumns);
+
+	// Style all three title rows
+	[sheet.getRow(1), sheet.getRow(2), sheet.getRow(3)].forEach((row) => {
+		row.font = { bold: true, size: 14 };
+		row.alignment = { horizontal: 'center', vertical: 'middle' };
+	});
+	const headerRow = sheet.getRow(4);
 	headerRow.font = { bold: true };
-	headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+	headerRow.alignment = { horizontal: 'left', vertical: 'middle' };
+
+	sheet.views = [
+		{
+			state: 'frozen',
+			ySplit: 4, // freeze top 4 rows
+		},
+	];
+
+	// ------------------ BEFORE LOOP -------------------
+	const totals = {};
+	finalInvoiceColumns.forEach((col) => {
+		totals[col] = 0; // Initialize totals
+	});
+	finalItemColumns.forEach((col) => {
+		totals[col] = 0; // Initialize totals
+	});
 
 	//-----------------------------------------------
 	// Insert data rows
@@ -1737,7 +1805,7 @@ exports.exportProcessedPurchaseInvoicesV1 = catchAsync(async (req, res) => {
 		const rowData = [];
 
 		// Invoice columns
-		selectedColumns.forEach((col) => {
+		finalInvoiceColumns.forEach((col) => {
 			if (col === 'sr_no') {
 				rowData.push(index + 1);
 			} else if (
@@ -1746,47 +1814,159 @@ exports.exportProcessedPurchaseInvoicesV1 = catchAsync(async (req, res) => {
 				const d = inv[col];
 				rowData.push(d ? moment(d).format('DD-MM-YYYY') : '');
 			} else {
-				console.log("col ", {column: col, colValue: inv[col]});
-				
-				rowData.push(inv[col] ?? '');
+				let val = inv[col] ?? '';
+				if (['cgst', 'sgst', 'total_amount'].includes(col)) {
+					val = parseFloat(val || 0);
+				}
+				rowData.push(val);
+
+				// Only accumulate if it's a number
+				if (!isNaN(val) && ['cgst', 'sgst', 'total_amount'].includes(col)) {
+					totals[col] += parseFloat(val);
+				}
 			}
 		});
 
 		// First item columns
-		selectedItemColumns.forEach((col) => {
-			rowData.push(firstItem[col] ?? '');
+		finalItemColumns.forEach((col) => {
+			let val = firstItem[col];
+			if (
+				[
+					'quantity',
+					'price_unit',
+					'sub_total',
+					'item_discount_amount',
+					'item_net_price',
+					'item_cgst_value',
+					'item_sgst_value',
+					'item_igst_value',
+					'item_net_total',
+				].includes(col)
+			) {
+				val = parseFloat(val || 0);
+			}
+
+			rowData.push(val ?? '');
+			if (
+				!isNaN(parseFloat(val)) &&
+				[
+					'quantity',
+					'price_unit',
+					'sub_total',
+					'item_discount_amount',
+					'item_net_price',
+					'item_cgst_value',
+					'item_sgst_value',
+					'item_igst_value',
+					'item_net_total',
+				].includes(col)
+			) {
+				totals[col] += parseFloat(val);
+			}
 		});
 
-		sheet.addRow(rowData);
-
+		const insertedRow = sheet.addRow(rowData);
+		insertedRow.eachCell((cell) => {
+			cell.alignment = { horizontal: 'left', vertical: 'middle' };
+		});
 		// Additional items
 		for (let i = 1; i < inv.csv_items.length; i++) {
 			const item = inv.csv_items[i];
 
-			const emptyInvoiceCols = new Array(selectedColumns.length).fill('');
+			const emptyInvoiceCols = new Array(finalInvoiceColumns.length).fill('');
 
 			const itemRow = [
 				...emptyInvoiceCols,
-				...selectedItemColumns.map((col) => item[col] ?? ''),
+				...finalItemColumns.map((col) => item[col] ?? ''),
 			];
 
-			sheet.addRow(itemRow);
+			const insertedRow = sheet.addRow(itemRow);
+			insertedRow.eachCell((cell) => {
+				cell.alignment = { horizontal: 'left', vertical: 'middle' };
+			});
+			finalItemColumns.forEach((col) => {
+				if (
+					!isNaN(parseFloat(item[col])) &&
+					[
+						'quantity',
+						'price_unit',
+						'sub_total',
+						'item_discount_amount',
+						'item_net_price',
+						'item_cgst_value',
+						'item_sgst_value',
+						'item_igst_value',
+						'item_net_total',
+					].includes(col)
+				) {
+					totals[col] += parseFloat(item[col]);
+				}
+			});
 		}
 	});
+
+	const lastRowIndex = sheet.rowCount + 1;
+	const totalRow = [];
+	console.log('totals ', totals);
+
+	finalInvoiceColumns.forEach((col) => {
+		if (typeof totals[col] === 'number' && totals[col] > 0) {
+			totalRow.push(totals[col].toFixed(2));
+		} else {
+			totalRow.push(''); // empty cell
+		}
+	});
+
+	finalItemColumns.forEach((col) => {
+		if (typeof totals[col] === 'number' && totals[col] > 0) {
+			totalRow.push(totals[col].toFixed(2));
+		} else {
+			totalRow.push(''); // empty cell
+		}
+	});
+
+	// For item columns → keep empty
+	finalItemColumns.forEach(() => totalRow.push(''));
+
+	const footerInsertedRow = sheet.addRow(totalRow);
+	footerInsertedRow.eachCell((cell) => {
+		cell.alignment = { horizontal: 'left', vertical: 'middle' };
+	});
+	const totalExcelRow = sheet.getRow(sheet.rowCount);
+	for (let col = 1; col <= totalColumns; col++) {
+		const cell = totalExcelRow.getCell(col);
+
+		cell.fill = {
+			type: 'pattern',
+			pattern: 'solid',
+			fgColor: { argb: 'D9D9D9' }, // Light gray
+		};
+		cell.font = { bold: true };
+		cell.alignment = { horizontal: 'center', vertical: 'middle' };
+	}
 
 	//-----------------------------------------------
 	// Auto column width
 	//-----------------------------------------------
-	sheet.columns.forEach((column) => {
+
+	for (let col = 1; col <= totalColumns; col++) {
+		const column = sheet.getColumn(col);
+
 		let maxLength = 10;
-		column.eachCell({ includeEmpty: true }, (cell) => {
-			let val = cell.value;
-			if (val === null || val === undefined) val = '';
-			val = val.toString();
-			if (val.length > maxLength) maxLength = val.length;
+
+		column.eachCell({ includeEmpty: false }, (cell, rowNumber) => {
+			let v = cell.value ? cell.value.toString() : '';
+			if (v.length > 60) v = v.substring(0, 60);
+			maxLength = Math.max(maxLength, v.length);
 		});
-		column.width = maxLength + 2;
-	});
+
+		// Detect if numeric column
+		const isNumeric = column.values.some((v) => typeof v === 'number');
+
+		column.width = isNumeric
+			? Math.min(maxLength + 2, 14)
+			: Math.min(maxLength + 2, 28);
+	}
 
 	//-----------------------------------------------
 	// File Export
