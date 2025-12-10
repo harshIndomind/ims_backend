@@ -22,6 +22,7 @@ module.exports = (sequelize, DataTypes) => {
 					key: 'id',
 				},
 			},
+			account_holder_name: DataTypes.STRING(150),
 			bank_name: DataTypes.STRING(150),
 			ifsc_code: DataTypes.STRING(20),
 			account_no: DataTypes.STRING(50),
