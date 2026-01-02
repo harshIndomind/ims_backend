@@ -1,0 +1,65 @@
+const catchAsync = require('../utils/catchAsync');
+const { StatusCodes } = require('http-status-codes');
+const masterSubHeadService = require('../services/masterSubHead.service');
+
+exports.createMasterSubHead = catchAsync(async (req, res) => {
+	const data = await masterSubHeadService.createMasterSubHead(req.body);
+
+	res.status(StatusCodes.CREATED).json({
+		message: 'Master Sub Head created successfully',
+		data,
+	});
+});
+
+exports.updateMasterSubHead = catchAsync(async (req, res) => {
+	const { id } = req.params;
+
+	const data = await masterSubHeadService.updateMasterSubHead(id, req.body);
+
+	res.status(StatusCodes.OK).json({
+		message: 'Master Sub Head updated successfully',
+		data,
+	});
+});
+
+exports.getAllMasterSubHead = catchAsync(async (req, res) => {
+	const { limit, offset } = req.query;
+
+	const options = {};
+	if (limit) {
+		options.limit = Number(limit);
+		options.offset = Number(offset);
+	}
+	const data = await masterSubHeadService.getAllMasterSubHead(options);
+
+	res.status(StatusCodes.OK).json({ data });
+});
+
+exports.getMasterSubHeadById = catchAsync(async (req, res) => {
+	const { id } = req.params;
+
+	const data = await masterSubHeadService.getMasterSubHeadById(id);
+
+	res.status(StatusCodes.OK).json({
+		message: 'Master Sub Head fetched successfully',
+		data,
+	});
+});
+
+exports.deleteMasterSubHead = catchAsync(async (req, res) => {
+	const { id } = req.params;
+
+	await masterSubHeadService.deleteMasterSubHead(id);
+
+	res.status(StatusCodes.OK).json({
+		message: 'Master Sub Head deleted successfully',
+	});
+});
+
+exports.latestSubCode = catchAsync(async (req, res) => {
+	const subCode = await masterSubHeadService.latestSubCode();
+
+	res.status(StatusCodes.OK).json({
+		subCode,
+	});
+});

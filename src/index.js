@@ -110,6 +110,14 @@ async function prepareAndStartServer() {
 	app.use(`${apiPrefix}/v1/registration-types`, require('./routes/v1/registration-types.routes'));
 	app.use(`${apiPrefix}/v1/credit-note`, require('./routes/v1/credit-note-invoice.routes'));
 
+	// Budget Planner
+	app.use(`${apiPrefix}/v1/master/major-head`, require('./routes/v1/masterMajorHead.routes'));
+	app.use(`${apiPrefix}/v1/master/sub-head`, require('./routes/v1/masterSubHead.routes'));
+	app.use(`${apiPrefix}/v1/master/period`, require('./routes/v1/masterPeriod.routes'));
+	app.use(`${apiPrefix}/v1/master/major-head-amount`, require('./routes/v1/masterMajorHeadAmount.routes'));
+	app.use(`${apiPrefix}/v1/master/sub-head-amount`, require('./routes/v1/masterSubHeadAmount.routes'));
+	app.use(`${apiPrefix}/v1/master/budget`, require('./routes/v1/budget.routes'));
+
 	app.get('/', (req, res) => {
 		res.status(200).json({ status: true, message: '✅ Its working.' });
 	});
@@ -124,7 +132,7 @@ async function prepareAndStartServer() {
 	const io = init(server);
 
 	if (APP_ENV === 'development') {
-		db.sequelize.sync({ force: false }).then(() => {
+		db.sequelize.authenticate().then(() => {
 			server.listen(PORT, () => {
 				console.log(`Dev server running on ${BASE_URL}`);
 			});

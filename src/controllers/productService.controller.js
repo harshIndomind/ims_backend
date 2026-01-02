@@ -978,3 +978,41 @@ function getAutoRelatedUOMs(baseCode) {
 
 	return related;
 }
+
+exports.getAllProductsByOrganization = async (req, res) => {
+	try {
+		const {organization_id} = req.params;
+		const products = await Product.findAll({
+			where: { organization_id },
+			include: [
+				{ model: Tax, as: 'tax', attributes: ['id', 'name', 'rate'] },
+				{ model: Unit, as: 'unit', attributes: ['id', 'name', 'code'] },
+				{
+					model: ProductGroup,
+					as: 'product_groups',
+					attributes: ['id', 'name'],
+				},
+				{ model: ProductBatch, as: 'batches' },
+				{
+					model: ProductSerial,
+					as: 'serials',
+					where: { is_sell: 0 },
+					required: false,
+				},
+				{
+					model: ProductUOM,
+					as: 'uoms',
+					include: {
+						model: Unit,
+						as: 'unit',
+						attributes: ['code', 'name'],
+					},
+				},
+			],
+			order: [['id', 'DESC']],
+		});
+		res.json(products);
+	} catch (err) {
+		res.status(500).json({ message: err.message });
+	}
+};

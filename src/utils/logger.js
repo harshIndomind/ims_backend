@@ -1,9 +1,16 @@
 const { createLogger, format, transports } = require('winston');
 const DailyRotateFile = require('winston-daily-rotate-file');
+const path = require('path');
+const fs = require('fs');
 
-// Create logger
+const logDir = path.join(__dirname, '../../logs');
+
+if (!fs.existsSync(logDir)) {
+	fs.mkdirSync(logDir);
+}
+
 const logger = createLogger({
-	level: 'info',
+	level: process.env.LOG_LEVEL || 'info',
 	format: format.combine(
 		format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
 		format.errors({ stack: true }),
@@ -11,29 +18,35 @@ const logger = createLogger({
 	),
 	transports: [
 		new DailyRotateFile({
-			filename: 'logs/error-%DATE%.log',
+			filename: path.join(logDir, 'error-%DATE%.log'),
 			datePattern: 'YYYY-MM-DD',
 			level: 'error',
 			maxSize: '10m',
-			maxFiles: '14d' // keep logs for 14 days
+			maxFiles: '14d',
 		}),
 		new DailyRotateFile({
-			filename: 'logs/combined-%DATE%.log',
+			filename: path.join(logDir, 'combined-%DATE%.log'),
 			datePattern: 'YYYY-MM-DD',
 			maxSize: '20m',
-			maxFiles: '14d'
-		})
-	]
+			maxFiles: '14d',
+		}),
+	],
 });
 
-// Add console logs only in dev
 if (process.env.APP_ENV !== 'production') {
-	logger.add(new transports.Console({
-		format: format.combine(
-			format.colorize(),
-			format.simple()
-		)
-	}));
+	logger.add(
+		new transports.Console({
+			format: format.combine(
+				format.colorize(),
+				format.timestamp({ format: 'HH:mm:ss' }),
+				format.printf(({ level, message, timestamp, ...meta }) => {
+					return `${timestamp} [${level}]: ${message} ${
+						Object.keys(meta).length ? JSON.stringify(meta) : ''
+					}`;
+				})
+			),
+		})
+	);
 }
 
 module.exports = logger;
