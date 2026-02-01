@@ -32,7 +32,7 @@
 module.exports = {
   async up(queryInterface, Sequelize) {
     // 1️⃣ Drop the FK first because its backing index depends on product_id
-    await queryInterface.removeConstraint('ProductSerials', 'ProductSerials_ibfk_1');
+    // await queryInterface.removeConstraint('ProductSerials', 'ProductSerials_ibfk_1');
 
     // 2️⃣ Drop the UNIQUE index on product_id
     await queryInterface.removeIndex('ProductSerials', 'product_id');

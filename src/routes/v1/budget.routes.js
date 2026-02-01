@@ -7,6 +7,7 @@ router.use(verifyToken); // all routes protected
 
 router.post('/', budgetController.createBudget);
 router.get('/', budgetController.getAllBudgets);
+router.post('/approve', budgetController.approveBudget);
 
 router.get(
 	'/amount/period/:period_id/majorhead/:major_head_id',

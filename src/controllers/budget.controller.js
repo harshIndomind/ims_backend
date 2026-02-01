@@ -68,3 +68,13 @@ exports.getAmountByMajorHeadAndPeriodAndSubHead = catchAsync(async (req, res) =>
 		data,
 	});
 });
+
+exports.approveBudget = catchAsync(async (req, res) => {
+  const { ids } = req.body;
+  const data = await budgetService.approveBudget(ids);
+
+  res.status(StatusCodes.OK).json({
+    message: 'Budgets approved successfully',
+    data,
+  });
+});

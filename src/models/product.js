@@ -124,6 +124,11 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.BOOLEAN,
 				defaultValue: false,
 			},
+			criticality: {
+				type: DataTypes.ENUM(['low', 'medium', 'high']),
+				defaultValue: 'low',
+				allowNull:true,
+			}
 		},
 		{
 			sequelize,

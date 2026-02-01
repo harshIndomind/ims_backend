@@ -1,34 +1,34 @@
 module.exports = {
   apps: [
     // Development
-    {
-      name: 'dev-indomind-vendor-backend',
-      script: 'src/index.js',
-      cwd: '/var/www/html/indomind.vc.dev/api',
-      env: {
-        PORT: 5200,
-        NODE_ENV: 'development',
-      },
-    },
+    // {
+    //   name: 'dev-indomind-vendor-backend',
+    //   script: 'src/index.js',
+    //   cwd: '/var/www/html/indomind.vc.dev/api',
+    //   env: {
+    //     PORT: 5200,
+    //     NODE_ENV: 'development',
+    //   },
+    // },
 
-    // Testing
-    {
-      name: 'test-indomind-vendor-backend',
-      script: 'src/index.js',
-      cwd: '/var/www/html/indomind.vc.test/api',
-      env: {
-        PORT: 7200,
-        NODE_ENV: 'test',
-      },
-    },
+    // // Testing
+    // {
+    //   name: 'test-indomind-vendor-backend',
+    //   script: 'src/index.js',
+    //   cwd: '/var/www/html/indomind.vc.test/api',
+    //   env: {
+    //     PORT: 7200,
+    //     NODE_ENV: 'test',
+    //   },
+    // },
 
     // Production
     {
-      name: 'ims-backend-prod',
+      name: 'scm-swayamm-backend',
       script: 'src/index.js',
-      cwd: '/var/www/html/indomind.ims.prod/backend',
+      cwd: '/var/www/html/scm.swayamm.com/api',
       env: {
-        PORT: 6100,
+        PORT: 4006,
         NODE_ENV: 'production',
       },
     }

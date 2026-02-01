@@ -10,19 +10,23 @@ module.exports = (sequelize, DataTypes) => {
 		static associate(models) {
 			MasterMajorHeadAmount.belongsTo(models.MasterMajorHead, {
 				foreignKey: 'major_head_id',
-				as: 'majorHead'
-			})
+				as: 'majorHead',
+			});
 			MasterMajorHeadAmount.belongsTo(models.MasterPeriod, {
 				foreignKey: 'period_id',
-				as: 'period'
-			})
+				as: 'period',
+			});
 			MasterMajorHeadAmount.hasMany(models.MasterSubHeadAmount, {
 				foreignKey: 'major_head_amount_id',
-				as: 'subHeadAmount'
-			})
+				as: 'subHeadAmount',
+			});
 			MasterMajorHeadAmount.belongsTo(models.organization, {
 				foreignKey: 'org_id',
 				as: 'organization',
+			});
+			MasterMajorHeadAmount.hasMany(models.Budget, {
+				foreignKey: 'major_head_amount_id',
+				as: 'budgets',
 			});
 		}
 	}

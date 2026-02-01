@@ -1,9 +1,15 @@
 const AuthService = require('../services/auth.service');
-const { JWT_REFRESH_SECRET } = require('../config/serverConfig');
+const { JWT_REFRESH_SECRET, COOKIE_DOMAIN } = require('../config/serverConfig');
 const catchAsync = require('../utils/catchAsync');
 const jwt = require('jsonwebtoken');
 const { generateAccessToken } = require('../utils/generateToken');
-const { User, Role, BusinessPartner, Address, organization } = require('../models/index');
+const {
+	User,
+	Role,
+	BusinessPartner,
+	Address,
+	organization,
+} = require('../models/index');
 const { generateSignedUrl } = require('../utils/s3Bucket');
 
 exports.register = catchAsync(async (req, res) => {
@@ -51,6 +57,7 @@ exports.refreshToken = catchAsync(async (req, res) => {
 
 		const payload = {
 			id: decoded.id,
+			email: user.email,
 			role: decoded.role,
 			companyId: decoded.companyId ?? null,
 			roleId: decoded.roleId,
@@ -63,6 +70,7 @@ exports.refreshToken = catchAsync(async (req, res) => {
 
 		res.cookie('accessToken', accessToken, {
 			httpOnly: true,
+			domain: COOKIE_DOMAIN,
 			secure: false, // set true in production
 			sameSite: 'strict',
 			maxAge: 15 * 60 * 1000,
@@ -70,13 +78,30 @@ exports.refreshToken = catchAsync(async (req, res) => {
 		});
 
 		res.json({ message: 'A new refresh token is generated...', accessToken });
-	} catch (err) {		
+	} catch (err) {
 		return res.status(403).json({ message: 'Invalid token' });
 	}
 });
 
 exports.logout = catchAsync((req, res) => {
-	res.clearCookie('accessToken', { httpOnly: true, secure: true });
-	res.clearCookie('refreshToken', { httpOnly: true, secure: true });
+	res.clearCookie('accessToken', {
+		httpOnly: true,
+		secure: true,
+		domain: COOKIE_DOMAIN,
+	});
+	res.clearCookie('refreshToken', {
+		httpOnly: true,
+		secure: true,
+		domain: COOKIE_DOMAIN,
+	});
 	res.json({ message: 'Logged out successfully' });
+});
+
+
+exports.getLoggedInUser = catchAsync(async (req, res) => {
+	const userId = req.user.id;
+	console.log("userId ", userId);
+	
+	const userData = await AuthService.getLoggedInUser(userId, res);
+	res.json({ message: 'User details fetched Successfully', data: userData });
 });

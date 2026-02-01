@@ -22,6 +22,10 @@ module.exports = (sequelize, DataTypes) => {
 	}
 	organization.init(
 		{
+			swayamm_org_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
 			org_name: { type: DataTypes.STRING, allowNull: false },
 			org_code: { type: DataTypes.STRING, allowNull: false, unique: true },
 			is_gst_registered: {
@@ -72,7 +76,7 @@ module.exports = (sequelize, DataTypes) => {
 		{
 			sequelize,
 			modelName: 'organization',
-		}
+		},
 	);
 	return organization;
 };
