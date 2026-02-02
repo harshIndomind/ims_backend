@@ -24,7 +24,7 @@ module.exports = {
 
     // Production
     {
-      name: 'scm-swayamm-backend',
+      name: 'scm-swayamm-backend-prod',
       script: 'src/index.js',
       cwd: '/var/www/html/scm.swayamm.com/api',
       env: {
