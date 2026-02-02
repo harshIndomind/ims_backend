@@ -9,6 +9,9 @@ const {
 	MasterMajorHeadAmount,
 	MasterSubHead,
 	MasterSubHeadAmount,
+  Budget,
+  organization,
+  Product
 } = require('../models/index');
 const {
 	getAmountByMajorHeadAndPeriod,
@@ -42,7 +45,13 @@ exports.updateBudget = async (id, payload) => {
 };
 
 exports.getAllBudgets = async (options = {}) => {
-  return budgetRepo.findAll({}, options);
+  return budgetRepo.findAll({}, {
+    include: [
+      { model: MasterPeriod, as: 'period', attributes: ['id', 'period_short', 'period', 'period_detail'] },
+      { model: Product, as: 'product', attributes: ['id', 'name', 'uniqueProductId'] },
+      { model: organization, as: 'organization' },
+    ],
+  });
 };
 
 exports.getBudgetById = async (id) => {
@@ -78,27 +87,89 @@ const getSubAmountByMajorHeadAndPeriod = async (major_head_id, period_id) => {
 	});
 };
 
-exports.getAmountByMajorHeadAndPeriodAndSubHead = async (
-	major_head_id,
-	period_id,
-	sub_head_id
-) => {
-	const whereClause = { major_head_id, period_id };
-	const include = [];
+// exports.getAmountByMajorHeadAndPeriodAndSubHead = async (
+// 	major_head_id,
+// 	period_id,
+// 	sub_head_id
+// ) => {
+// 	const whereClause = { major_head_id, period_id };
+// 	const include = [];
 
-	if (sub_head_id) {
-		include.push({
-			model: MasterSubHeadAmount,
-			as: 'subHeadAmount',
-			attributes: ['amount'],
-			where: { sub_head_id },
-			required: true,
-		});
-	}
-	logger.info('Fetching all Master Major Head Amounts');
-	return await budgetRepo.getAmountByMajorHeadAndPeriodAndSubHead({
-		where: whereClause,
-		include,
-		attributes: ['amount'],
-	});
+// 	if (sub_head_id) {
+// 		include.push({
+// 			model: MasterSubHeadAmount,
+// 			as: 'subHeadAmount',
+// 			attributes: [['id', 'sub_head_amount_id'], 'amount'],
+// 			where: { sub_head_id },
+// 			required: true,
+// 		});
+// 	}
+// 	logger.info('Fetching all Master Major Head Amounts');
+// 	return await budgetRepo.getAmountByMajorHeadAndPeriodAndSubHead({
+// 		where: whereClause,
+// 		include,
+// 		attributes: [['id', 'major_head_amount_id'], 'amount'],
+// 	});
+// };
+
+
+exports.getAmountByMajorHeadAndPeriodAndSubHead = async (
+  major_head_id,
+  period_id,
+  sub_head_id
+) => {
+  if (!major_head_id || !period_id || !sub_head_id) {
+    throw new AppError(
+      'major_head_id, period_id, and sub_head_id are required',
+      StatusCodes.BAD_REQUEST
+    );
+  }
+
+  const whereClause = {
+    major_head_id,
+    period_id,
+    sub_head_id,
+  };
+
+  const include = [
+    {
+      model: Budget,
+      as: 'budgets',
+      attributes: [],
+      required: false,
+    },
+  ];
+
+  return await budgetRepo.getAmountByMajorHeadAndPeriodAndSubHead({
+    where: whereClause,
+    include,
+  });
+};
+
+exports.approveBudget = async (budget_ids) => {
+  if (!budget_ids || !Array.isArray(budget_ids) || budget_ids.length === 0) {
+    throw new AppError(
+      'budget_ids must be a non-empty array',
+      StatusCodes.BAD_REQUEST
+    );
+  }
+
+  const updatedBudgets = [];
+
+  for (const id of budget_ids) {
+    const budget = await budgetRepo.findById(id);
+
+    if (!budget) {
+      throw new AppError(`Budget with ID ${id} not found`, StatusCodes.NOT_FOUND);
+    }
+
+    const updatedBudget = await budgetRepo.updateById(id, {
+      sanc_by: 'yes',
+      is_lock: 0,
+    });
+
+    updatedBudgets.push(updatedBudget);
+  }
+
+  return updatedBudgets;
 };

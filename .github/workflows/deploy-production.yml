@@ -1,4 +1,4 @@
-name: Deploy Production Indomind Vendor Backend to EC2
+name: Deploy Supply Chain Management Backend to EC2
 
 on:
   push:
@@ -30,9 +30,13 @@ jobs:
             set -e
             echo "📦 Backing up from ${{ secrets.APP_DIR }}"
             [ -z ${{ secrets.APP_DIR }} ] && echo "❌ APP_DIR is empty" && exit 1
-            rm -rf ~/ims-backup-prod
-            mkdir -p ~/ims-backup-prod
-            cp -a ${{ secrets.APP_DIR }}/* ~/ims-backup-prod/
+            rm -rf ~/test-scm-backup
+            mkdir -p ~/test-scm-backup
+
+            # Only copy if not empty
+            shopt -s nullglob
+            cp -a \$APP_DIR/* ~/test-scm-backup/ || echo "⚠️ No files to backup"
+            
             echo "✅ Backup completed"
           EOF
 
@@ -59,6 +63,8 @@ jobs:
             --exclude='.github' \
             --exclude='.env*' \
             --exclude='src/uploads' \
+            --exclude='storage' \
+            --exclude='logs' \
             . ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:${{ secrets.APP_DIR }}
 
   deploy-to-ec2:
@@ -85,26 +91,26 @@ jobs:
             cd ${{ secrets.APP_DIR }}
             nvm use 22
           
-            echo "🚀 Starting deployment..."
+            echo "🚀 Starting testing..."
                     
             if ! npm ci --legacy-peer-deps; then
               echo "❌ NPM install failed! Rolling back..."
               rm -rf ./*
-              cp -a ~/ims-backup-prod/. .
-              pm2 delete ims-backend-prod || true
-              pm2 start ecosystem.config.js --only ims-backend-prod
+              cp -a ~/test-scm-backup/. .
+              pm2 delete scm-swayamm-backend-prod || true
+              pm2 start ecosystem.config.js --only scm-swayamm-backend-prod
               pm2 save
               sudo systemctl restart nginx
               exit 1
             fi
           
-            pm2 delete ims-backend-prod || true
-            if ! pm2 start ecosystem.config.js --only ims-backend-prod; then
+            pm2 delete scm-swayamm-backend-prod || true
+            if ! pm2 start ecosystem.config.js --only scm-swayamm-backend-prod; then
               echo "❌ PM2 start failed! Rolling back..."
               rm -rf ./*
-              cp -a ~/ims-backup-prod/. .
-              pm2 delete ims-backend-prod || true
-              pm2 start ecosystem.config.js --only ims-backend-prod
+              cp -a ~/test-scm-backup/. .
+              pm2 delete scm-swayamm-backend-prod || true
+              pm2 start ecosystem.config.js --only scm-swayamm-backend-prod
               pm2 save
               sudo systemctl restart nginx
               exit 1

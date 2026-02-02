@@ -69,6 +69,26 @@ module.exports = {
 				onUpdate: 'CASCADE',
 				allowNull: false,
 			},
+			major_head_amount_id: {
+				type: Sequelize.INTEGER,
+				references: {
+					model: 'MasterMajorHeadAmounts',
+					key: 'id',
+				},
+				onDelete: 'CASCADE',
+				onUpdate: 'CASCADE',
+				allowNull: false,
+			},
+			sub_head_amount_id: {
+				type: Sequelize.INTEGER,
+				references: {
+					model: 'MasterSubHeadAmounts',
+					key: 'id',
+				},
+				onDelete: 'CASCADE',
+				onUpdate: 'CASCADE',
+				allowNull: true,
+			},
 			budget_head_id: {
 				type: Sequelize.STRING(50),
 				allowNull: true,
@@ -126,8 +146,9 @@ module.exports = {
 				allowNull: true,
 			},
 			sanc_by: {
-				type: Sequelize.STRING(50),
+				type: Sequelize.ENUM('yes', 'no'),
 				allowNull: true,
+				defaultValue: 'no',
 			},
 			category: {
 				type: Sequelize.STRING(50),
@@ -139,7 +160,7 @@ module.exports = {
 			},
 			is_lock: {
 				type: Sequelize.BOOLEAN,
-				defaultValue: false,
+				defaultValue: true,
 			},
 			active_ph: {
 				type: Sequelize.TINYINT,

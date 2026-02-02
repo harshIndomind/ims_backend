@@ -24,6 +24,18 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'org_id',
 				as: 'organization',
 			});
+			Budget.belongsTo(models.MasterMajorHeadAmount, {
+				foreignKey: 'major_head_amount_id',
+				as: 'majorHeadAmount',
+			});
+			Budget.belongsTo(models.MasterMajorHeadAmount, {
+				foreignKey: 'sub_head_amount_id',
+				as: 'subHeadAmount',
+			});
+			Budget.belongsTo(models.Product, {
+				foreignKey: 'product_id',
+				as: 'product',
+			})
 		}
 	}
 	Budget.init(
@@ -66,6 +78,12 @@ module.exports = (sequelize, DataTypes) => {
 			sub_head_id: {
 				type: DataTypes.INTEGER,
 				allowNull: false,
+			},
+			major_head_amount_id: {
+				type: DataTypes.INTEGER,
+			},
+			sub_head_amount_id: {
+				type: DataTypes.INTEGER,
 			},
 			budget_head_id: {
 				type: DataTypes.STRING(50),
@@ -124,8 +142,9 @@ module.exports = (sequelize, DataTypes) => {
 				allowNull: true,
 			},
 			sanc_by: {
-				type: DataTypes.STRING(50),
+				type: DataTypes.ENUM('yes', 'no'),
 				allowNull: true,
+				defaultValue: 'no',
 			},
 			category: {
 				type: DataTypes.STRING(50),
@@ -137,7 +156,7 @@ module.exports = (sequelize, DataTypes) => {
 			},
 			is_lock: {
 				type: DataTypes.BOOLEAN,
-				defaultValue: false,
+				defaultValue: true,
 			},
 			active_ph: {
 				type: DataTypes.TINYINT,

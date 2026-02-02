@@ -38,6 +38,10 @@ async function prepareAndStartServer() {
 		'http://localhost:3000',
 		'https://vctest.swayamm.com',
 		'https://vcdev.swayamm.com',
+		'https://auth.swayamm.test:3000',
+		'http://scm.swayamm.test:3003',
+		'https://scm.swayamm.com',
+		'https://auth.swayamm.com',
 	];
 
 	app.use(
@@ -117,6 +121,12 @@ async function prepareAndStartServer() {
 	app.use(`${apiPrefix}/v1/master/major-head-amount`, require('./routes/v1/masterMajorHeadAmount.routes'));
 	app.use(`${apiPrefix}/v1/master/sub-head-amount`, require('./routes/v1/masterSubHeadAmount.routes'));
 	app.use(`${apiPrefix}/v1/master/budget`, require('./routes/v1/budget.routes'));
+
+	// API'S FOR OTHER SERVICES
+	app.use(
+		`${apiPrefix}/v1/service/organizations`,
+		require('./routes/v1/service-organization.route')
+	);
 
 	app.get('/', (req, res) => {
 		res.status(200).json({ status: true, message: '✅ Its working.' });

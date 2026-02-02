@@ -1,7 +1,7 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { User, Role, BusinessPartner, Address, organization } = require('../models/index');
-const { JWT_ACCESS_SECRET } = require('../config/serverConfig');
+const { JWT_ACCESS_SECRET, COOKIE_DOMAIN } = require('../config/serverConfig');
 const {
 	generateAccessToken,
 	generateRefreshToken,
@@ -45,6 +45,7 @@ exports.login = async ({ email, password }, res) => {
 
 	const payload = {
 		id: user.id,
+		email: user.email,
 		role: user.Role.name,
 		companyId: user.companyIds,
 		roleId: user.roleId,
@@ -58,6 +59,7 @@ exports.login = async ({ email, password }, res) => {
 	// Send refresh token via HTTP-only cookie
 	res.cookie('refreshToken', refreshToken, {
 		httpOnly: true,
+		domain: COOKIE_DOMAIN,
 		secure: false, // set true in production
 		sameSite: 'strict',
 		maxAge: 7 * 24 * 60 * 60 * 1000,
@@ -66,6 +68,7 @@ exports.login = async ({ email, password }, res) => {
 
 	res.cookie('accessToken', accessToken, {
 		httpOnly: true,
+		domain: COOKIE_DOMAIN,
 		secure: false, // set true in production
 		sameSite: 'strict',
 		maxAge: 15 * 60 * 1000,
@@ -84,3 +87,43 @@ exports.login = async ({ email, password }, res) => {
 		state_id
 	};
 };
+
+exports.getLoggedInUser = async (user_id, res) => {
+	const user = await User.findOne({
+		where: { id: user_id, is_active: 1 },
+		include: [
+			{ model: Role },
+			// {
+			// 	model: BusinessPartner,
+			// 	as: 'partner',
+			// 	include: { model: Address, as: 'addresses' },
+			// },
+			// { model: organization, as: 'organization' },
+		],
+	});
+	if (!user) throw new AppError('User not found!', 401);
+
+	if (user.image) {
+		user.image = await generateSignedUrl(user.image);
+	}
+
+	let state_id = null;
+	if (user.Role.name === 'Admin') {
+		state_id = user?.organization?.state_id ?? null;
+	} else if (['Vendor', 'Vendor-Customer'].includes(user.Role.name)) {
+		state_id = user?.partner?.addresses[0].state_id ?? null;
+	}
+
+	return {
+		id: user.id,
+		role: user.Role.name,
+		name: user.name,
+		email: user.email,
+		companyId: user.companyId,
+		roleId: user.roleId,
+		imageUrl: user.image,
+		org_id: user.org_id,
+		state_id,
+	};
+};
+
