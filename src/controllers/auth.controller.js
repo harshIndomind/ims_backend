@@ -1,5 +1,5 @@
 const AuthService = require('../services/auth.service');
-const { JWT_REFRESH_SECRET, COOKIE_DOMAIN } = require('../config/serverConfig');
+const { JWT_REFRESH_SECRET, COOKIE_DOMAIN, COOKIE_SECURE } = require('../config/serverConfig');
 const catchAsync = require('../utils/catchAsync');
 const jwt = require('jsonwebtoken');
 const { generateAccessToken } = require('../utils/generateToken');
@@ -71,7 +71,7 @@ exports.refreshToken = catchAsync(async (req, res) => {
 		res.cookie('accessToken', accessToken, {
 			httpOnly: true,
 			domain: COOKIE_DOMAIN,
-			secure: false, // set true in production
+			secure: COOKIE_SECURE, // set true in production
 			sameSite: 'strict',
 			maxAge: 15 * 60 * 1000,
 			// maxAge: 7 * 24 * 60 * 60 * 1000,
@@ -86,12 +86,12 @@ exports.refreshToken = catchAsync(async (req, res) => {
 exports.logout = catchAsync((req, res) => {
 	res.clearCookie('accessToken', {
 		httpOnly: true,
-		secure: true,
+		secure: COOKIE_SECURE,
 		domain: COOKIE_DOMAIN,
 	});
 	res.clearCookie('refreshToken', {
 		httpOnly: true,
-		secure: true,
+		secure: COOKIE_SECURE,
 		domain: COOKIE_DOMAIN,
 	});
 	res.json({ message: 'Logged out successfully' });

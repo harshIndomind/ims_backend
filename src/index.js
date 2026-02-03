@@ -127,6 +127,10 @@ async function prepareAndStartServer() {
 		`${apiPrefix}/v1/service/organizations`,
 		require('./routes/v1/service-organization.route')
 	);
+	app.use(
+		`${apiPrefix}/v1/service/users`,
+		require('./routes/v1/service-user.routes')
+	);
 
 	app.get('/', (req, res) => {
 		res.status(200).json({ status: true, message: '✅ Its working.' });

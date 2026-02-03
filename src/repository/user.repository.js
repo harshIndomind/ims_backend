@@ -44,8 +44,9 @@ class UserRepository {
 
 	async update(id, data) {
 		try {
-			await User.update(data, { where: { id } });
-			return User.findByPk(id, {
+			await User.update(data, {where: {swayamm_user_id: id}});
+			return User.findOne({
+				where: { swayamm_user_id: id },
 				include: {
 					model: Role,
 					attributes: ['name'],
