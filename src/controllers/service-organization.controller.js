@@ -41,6 +41,7 @@ exports.createOrganization = catchAsync(async (req, res) => {
 			update_gst_on_invoices,
 			bankDetails,
 			app_ids,
+			swayamm_user_id
 		} = req.body;
 		console.log('req.body ', req.body);
 
@@ -97,6 +98,7 @@ exports.createOrganization = catchAsync(async (req, res) => {
 				password: hashedPassword,
 				roleId: 2, // Admin Role
 				is_active: 1,
+				swayamm_user_id: swayamm_user_id
 			},
 			{ transaction: t },
 		);

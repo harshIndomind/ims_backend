@@ -88,6 +88,10 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.TEXT,
 				allowNull: true,
 			},
+			swayamm_user_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			}
 		},
 		{
 			sequelize,

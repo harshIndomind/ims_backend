@@ -1,7 +1,7 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { User, Role, BusinessPartner, Address, organization } = require('../models/index');
-const { JWT_ACCESS_SECRET, COOKIE_DOMAIN } = require('../config/serverConfig');
+const { JWT_ACCESS_SECRET, COOKIE_DOMAIN, COOKIE_SECURE } = require('../config/serverConfig');
 const {
 	generateAccessToken,
 	generateRefreshToken,
@@ -60,7 +60,7 @@ exports.login = async ({ email, password }, res) => {
 	res.cookie('refreshToken', refreshToken, {
 		httpOnly: true,
 		domain: COOKIE_DOMAIN,
-		secure: false, // set true in production
+		secure: COOKIE_SECURE, // set true in production
 		sameSite: 'strict',
 		maxAge: 7 * 24 * 60 * 60 * 1000,
 		// maxAge: 2 * 60 * 1000,
@@ -69,7 +69,7 @@ exports.login = async ({ email, password }, res) => {
 	res.cookie('accessToken', accessToken, {
 		httpOnly: true,
 		domain: COOKIE_DOMAIN,
-		secure: false, // set true in production
+		secure: COOKIE_SECURE, // set true in production
 		sameSite: 'strict',
 		maxAge: 15 * 60 * 1000,
 		// maxAge: 7 * 24 * 60 * 60 * 1000,
