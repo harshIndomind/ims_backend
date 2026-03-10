@@ -9,16 +9,16 @@ module.exports = {
 				primaryKey: true,
 				type: Sequelize.INTEGER,
 			},
-			menuId: {
+			menu_id: {
 				type: Sequelize.INTEGER,
-				allowNull: true,
+				allowNull: false,
 				references: {
 					model: 'Menus',
 					key: 'id',
 				},
 				onDelete: 'CASCADE',
 			},
-			permission: {
+			action: {
 				type: Sequelize.STRING,
 			},
 			createdAt: {

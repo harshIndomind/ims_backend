@@ -22,12 +22,20 @@ module.exports = {
 				type: Sequelize.STRING,
 				allowNull: false,
 			},
+			slug: {
+				type: Sequelize.STRING,
+				unique: true,
+			},
 			icon: {
 				type: Sequelize.STRING,
 				allowNull: true,
 			},
 			url: {
 				type: Sequelize.STRING,
+			},
+			showInSidebar:{
+				type: Sequelize.TINYINT,
+				defaultValue: 1,
 			},
 			isActive: {
 				type: Sequelize.BOOLEAN,

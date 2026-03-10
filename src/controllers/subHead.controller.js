@@ -3,7 +3,7 @@ const { StatusCodes } = require('http-status-codes');
 const masterSubHeadService = require('../services/masterSubHead.service');
 
 exports.createMasterSubHead = catchAsync(async (req, res) => {
-	const data = await masterSubHeadService.createMasterSubHead(req.body);
+	const data = await masterSubHeadService.createMasterSubHead(req, req.body);
 
 	res.status(StatusCodes.CREATED).json({
 		message: 'Master Sub Head created successfully',

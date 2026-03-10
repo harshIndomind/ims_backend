@@ -32,10 +32,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'sub_head_amount_id',
 				as: 'subHeadAmount',
 			});
-			Budget.belongsTo(models.Product, {
-				foreignKey: 'product_id',
-				as: 'product',
-			})
+			// Budget.belongsTo(models.Product, {
+			// 	foreignKey: 'product_id',
+			// 	as: 'product',
+			// })
 		}
 	}
 	Budget.init(
@@ -178,6 +178,14 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.DATE,
 				allowNull: true,
 			},
+			productSnapshot: {
+				type: DataTypes.JSON,
+				allowNull: true,
+			},
+			uom_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
 			createdAt: {
 				allowNull: false,
 				type: DataTypes.DATE,
@@ -190,7 +198,7 @@ module.exports = (sequelize, DataTypes) => {
 		{
 			sequelize,
 			modelName: 'Budget',
-		}
+		},
 	);
 	return Budget;
 };

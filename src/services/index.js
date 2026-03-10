@@ -5,4 +5,5 @@ module.exports = {
     MenuService: require('./menu.service'),
     PermissionService: require('./permission.service'),
     RolesPermissionService: require('./roles-permission.service'),
+    IndentService: require('./indent.service'),
 }

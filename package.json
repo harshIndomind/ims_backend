@@ -16,6 +16,7 @@
 	"dependencies": {
 		"@aws-sdk/client-s3": "^3.844.0",
 		"@aws-sdk/s3-request-presigner": "^3.848.0",
+		"amqplib": "^0.10.9",
 		"axios": "^1.13.2",
 		"bcrypt": "^6.0.0",
 		"body-parser": "^2.2.0",
@@ -43,6 +44,7 @@
 		"sequelize": "^6.37.7",
 		"sequelize-cli": "^6.6.3",
 		"socket.io": "^4.8.1",
+		"undici": "^7.22.0",
 		"winston": "^3.17.0",
 		"winston-daily-rotate-file": "^5.0.0"
 	},

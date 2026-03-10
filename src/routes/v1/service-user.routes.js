@@ -11,7 +11,7 @@ router.post('/reset-password', serviceUserController.resetPassword);
 
 // router.use(verifyToken);
 
-// router.post('/', checkRole(['Super Admin', 'Admin']), serviceUserController.create);
+router.post('/', verifyServiceToken, serviceUserController.create);
 // router.get(
 // 	'/profile',
 // 	checkRole(['Super Admin', 'Admin', 'Vendor']),

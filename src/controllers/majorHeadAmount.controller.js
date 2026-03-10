@@ -3,7 +3,7 @@ const { StatusCodes } = require('http-status-codes');
 const masterMajorHeadAmountService = require('../services/masterMajorHeadAmount.service');
 
 exports.createMasterMajorHeadAmount = catchAsync(async (req, res) => {
-	const data = await masterMajorHeadAmountService.createMasterMajorHeadAmount(req.body);
+	const data = await masterMajorHeadAmountService.createMasterMajorHeadAmount(req, req.body);
 
 	res.status(StatusCodes.CREATED).json({
 		message: 'Master Major Head Amount created successfully',

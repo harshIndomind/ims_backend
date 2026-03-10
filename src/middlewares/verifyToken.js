@@ -17,8 +17,6 @@ const {
 const verifyToken = async (req, res, next) => {
 	// Regular Token Verification
 	const authHeader = req.cookies.accessToken;
-	console.log('authHeader ', authHeader);
-
 	// Check if token is present
 	// if (!authHeader || !authHeader.startsWith('Bearer ')) {
 	if (!authHeader) {
@@ -30,16 +28,10 @@ const verifyToken = async (req, res, next) => {
 
 	try {
 		const decoded = jwt.verify(token, JWT_ACCESS_SECRET);
-		console.log('old decoded ', decoded);
 		const user = await User.findOne({
 			where: { email: decoded.email, is_active: 1 },
 			include: [
 				{ model: Role },
-				{
-					model: BusinessPartner,
-					as: 'partner',
-					include: { model: Address, as: 'addresses' },
-				},
 				{ model: organization, as: 'organization' },
 			],
 		});
@@ -52,9 +44,10 @@ const verifyToken = async (req, res, next) => {
 		let state_id = null;
 		if (user.Role.name === 'Admin') {
 			state_id = user.organization.state_id;
-		} else if (['Vendor', 'Vendor-Customer'].includes(user.Role.name)) {
-			state_id = user?.partner?.addresses[0].state_id;
 		}
+		//  else if (['Vendor', 'Vendor-Customer'].includes(user.Role.name)) {
+		// 	state_id = user?.partner?.addresses[0].state_id;
+		// }
 
 		const payload = {
 			id: user.id,
@@ -65,9 +58,9 @@ const verifyToken = async (req, res, next) => {
 			imageUrl: user.image,
 			org_id: user.org_id,
 			state_id,
+			permissions: decoded.permissions,
+			isSuperAdmin: user.Role.name === 'Super Admin'
 		};
-		console.log('new decoded ', payload);
-
 		req.user = payload; // Attach user info to request
 		next();
 	} catch (err) {

@@ -169,11 +169,11 @@ const updateUser = catchAsync(async (req, res) => {
 exports.update = [...validateUpdateUser, updateUser];
 
 exports.getAllUsers = catchAsync(async (req, res) => {
-	const { org_id } = req.user;
-	const vendors = await userService.getAllUsers(org_id);
+	const { org_id, role } = req.user;
+	const vendors = await userService.getAllUsers(org_id, role);
 	res.status(201).json({
 		status: true,
-		message: 'Vendors fetched successfully',
+		message: 'Users fetched successfully',
 		data: vendors,
 	});
 });

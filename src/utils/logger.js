@@ -11,6 +11,9 @@ if (!fs.existsSync(logDir)) {
 
 const logger = createLogger({
 	level: process.env.LOG_LEVEL || 'info',
+	defaultMeta: {
+		serviceName: 'SCM Service'
+	},
 	format: format.combine(
 		format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
 		format.errors({ stack: true }),
@@ -38,7 +41,7 @@ if (process.env.APP_ENV !== 'production') {
 		new transports.Console({
 			format: format.combine(
 				format.colorize(),
-				format.timestamp({ format: 'HH:mm:ss' }),
+				format.timestamp({ format: 'DD-MM-YYYY HH:mm:ss' }),
 				format.printf(({ level, message, timestamp, ...meta }) => {
 					return `${timestamp} [${level}]: ${message} ${
 						Object.keys(meta).length ? JSON.stringify(meta) : ''

@@ -59,10 +59,18 @@ class UserRepository {
 		}
 	}
 
-	async allUsers(org_id) {
+	async allUsers(org_id, role) {
 		try {
+
+			if(role === 'Super Admin') {
+				var whereClause = {};
+			} else {
+				var whereClause = { roleId: { [Op.notIn]: [1, 2] }, org_id };
+			}
+			console.log("allUsers whereClause => ", whereClause);
+			
 			const users = await User.findAll({
-				where: { roleId: { [Op.notIn]: [1, 2] }, org_id },
+				where: whereClause,
 				attributes: [
 					'id',
 					'name',
@@ -137,19 +145,19 @@ class UserRepository {
 						as: 'organization',
 						// attributes: ['org_name', 'org_code'],
 					},
-					{
-						model: BusinessPartner,
-						as: 'partner',
-						// attributes: ['org_name', 'org_code'],
-						include: {
-							model: Address,
-							as: 'addresses',
-							include: {
-								model: GstStateCode,
-								as: 'stateData',
-							},
-						},
-					},
+					// {
+					// 	model: BusinessPartner,
+					// 	as: 'partner',
+					// 	// attributes: ['org_name', 'org_code'],
+					// 	include: {
+					// 		model: Address,
+					// 		as: 'addresses',
+					// 		include: {
+					// 			model: GstStateCode,
+					// 			as: 'stateData',
+					// 		},
+					// 	},
+					// },
 				],
 			});
 
@@ -332,6 +340,16 @@ class UserRepository {
 			console.error('Something went wrong in the repository layer');
 			throw error;
 		}
+	}
+
+	async getOrganizationIdBySwayammOrgId(swayamm_org_id){
+		const orgData = await organization.findOne({where: {swayamm_org_id}});
+
+		if(!orgData){
+			throw new AppError("Organization not found with swayamm org id");
+		}
+
+		return orgData.id;
 	}
 }
 

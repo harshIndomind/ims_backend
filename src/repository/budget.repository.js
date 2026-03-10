@@ -16,7 +16,7 @@ exports.updateById = async (id, data, options = {}) => {
 
 exports.findAll = async (where = {}, options = {}) => {
   return Budget.findAndCountAll({
-    where,
+    ...where,
     ...options,
   });
 };
@@ -38,6 +38,43 @@ exports.deleteById = async (id, options = {}) => {
 // 	})
 // };
 
+// exports.getAmountByMajorHeadAndPeriodAndSubHead = async ({
+//   where,
+//   include,
+// }) => {
+//   return MasterSubHeadAmount.findOne({
+//     where,
+//     attributes: [
+//       ['id', 'sub_head_amount_id'],
+//       'major_head_amount_id',
+//       'amount', // base amount
+
+//       // TOTAL BUDGET USED
+//       [
+//         literal(`
+//           COALESCE(SUM(budgets.amount + budgets.tax_duty_amount), 0)
+//         `),
+//         'total_budget_used',
+//       ],
+
+//       // FINAL AMOUNT
+//       [
+//         literal(`
+//           MasterSubHeadAmount.amount
+//           -
+//           COALESCE(SUM(budgets.amount + budgets.tax_duty_amount), 0)
+//         `),
+//         'final_amount',
+//       ],
+//     ],
+//     include,
+//     group: ['MasterSubHeadAmount.id'],
+//     subQuery: false,
+//     raw: true,
+//   });
+// };
+
+// Removed tax amount
 exports.getAmountByMajorHeadAndPeriodAndSubHead = async ({
   where,
   include,
@@ -52,7 +89,7 @@ exports.getAmountByMajorHeadAndPeriodAndSubHead = async ({
       // TOTAL BUDGET USED
       [
         literal(`
-          COALESCE(SUM(budgets.amount + budgets.tax_duty_amount), 0)
+          COALESCE(SUM(budgets.amount), 0)
         `),
         'total_budget_used',
       ],
@@ -62,7 +99,7 @@ exports.getAmountByMajorHeadAndPeriodAndSubHead = async ({
         literal(`
           MasterSubHeadAmount.amount
           -
-          COALESCE(SUM(budgets.amount + budgets.tax_duty_amount), 0)
+          COALESCE(SUM(budgets.amount), 0)
         `),
         'final_amount',
       ],

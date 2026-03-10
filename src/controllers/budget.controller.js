@@ -1,9 +1,12 @@
 const catchAsync = require('../utils/catchAsync');
 const { StatusCodes } = require('http-status-codes');
 const budgetService = require('../services/budget.service');
+const logger = require('../utils/logger');
 
 exports.createBudget = catchAsync(async (req, res) => {
-  const data = await budgetService.createBudget(req.body);
+  console.log("req.body ", req.body);
+  
+  const data = await budgetService.createBudget(req, req.body);
 
   res.status(StatusCodes.CREATED).json({
     message: 'Budget created successfully',
@@ -13,6 +16,7 @@ exports.createBudget = catchAsync(async (req, res) => {
 
 exports.updateBudget = catchAsync(async (req, res) => {
   const { id } = req.params;
+  console.log("req.body ", req.body);
 
   const data = await budgetService.updateBudget(id, req.body);
 
@@ -59,8 +63,7 @@ exports.deleteBudget = catchAsync(async (req, res) => {
 
 exports.getAmountByMajorHeadAndPeriodAndSubHead = catchAsync(async (req, res) => {
 	const { major_head_id, period_id, subhead_id } = req.params;
-	console.log("{ major_head_id, period_id, subhead_id }", { major_head_id, period_id, subhead_id });
-	
+	logger.info("Sanctioned Amount Controller", { major_head_id, period_id, subhead_id });
 	const data = await budgetService.getAmountByMajorHeadAndPeriodAndSubHead(major_head_id, period_id, subhead_id);
 
 	res.status(StatusCodes.OK).json({
@@ -77,4 +80,18 @@ exports.approveBudget = catchAsync(async (req, res) => {
     message: 'Budgets approved successfully',
     data,
   });
+});
+
+exports.getAllApprovedBudgets = catchAsync(async (req, res) => {
+  const { limit, offset, budgetType } = req.query;
+
+  const options = {};
+  if (limit) {
+    options.limit = Number(limit);
+    options.offset = Number(offset || 0);
+  }
+
+  const data = await budgetService.getAllApprovedBudgets(options, budgetType || 'item-wise');
+
+  res.status(StatusCodes.OK).json({ data });
 });

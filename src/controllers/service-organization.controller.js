@@ -227,10 +227,10 @@ exports.updateOrganization = catchAsync(async (req, res) => {
 			},
 		);
 
-		await UserApp.destroy({
-			where: { user_id: isUserExists.id },
-			transaction: t,
-		});
+		// await UserApp.destroy({
+		// 	where: { user_id: isUserExists.id },
+		// 	transaction: t,
+		// });
 
 		// if (app_ids?.length) {
 		// 	await UserApp.bulkCreate(

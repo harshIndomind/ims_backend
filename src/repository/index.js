@@ -10,4 +10,11 @@ module.exports = {
     masterMajorHeadAmountRepo: require('./masterMajorHeadAmount.repository'),
     masterSubHeadAmountRepo: require('./masterSubHeadAmount.repository'),
     budgetRepo: require('./budget.repository'),
+    userRoleRepo: require('./userRole.repository'),
+    AdminUserRepository: require('./admin-user.repository'),
+    DepartmentRepository: require('./department.repository'),
+	DesignationRepository: require('./designation.repository'),
+	IndentRepository: require('./indent.repository'),
+	IndentItemRepository: require('./indentItem.repository'),
+	IndentSerialRepository: require('./indentserials.repository'),
 }

@@ -190,7 +190,7 @@ class MenuRespository {
 			// ✅ Admin sees all menus
 			if (role.name === 'Super Admin') {
 				const allMenus = await Menu.findAll({
-					where: { parentId: null },
+					where: { parentId: null, isActive: 1 },
 					attributes: ['id', 'menuName', ['menuName', 'title'], 'icon', 'url'],
 					include: [
 						{
@@ -213,7 +213,7 @@ class MenuRespository {
 
 			// ✅ For other roles, fetch only menus linked to role
 			const permittedMenus = await Menu.findAll({
-				where: { parentId: null },
+				where: { parentId: null, isActive: 1 },
 				attributes: ['id', 'menuName', ['menuName', 'title'], 'icon', 'url'],
 				include: [
 					{
@@ -274,7 +274,7 @@ class MenuRespository {
 		const roots = [];
 
 		list.forEach(
-			(item) => (map[item.id] = { ...item.dataValues, children: [] })
+			(item) => (map[item.id] = { ...item.dataValues, children: [] }),
 		);
 
 		list.forEach((item) => {
@@ -324,5 +324,7 @@ class MenuRespository {
 		}
 	}
 }
+
+
 
 module.exports = MenuRespository;

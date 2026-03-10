@@ -3,7 +3,7 @@ const { StatusCodes } = require('http-status-codes');
 const masterSubHeadAmountService = require('../services/subHeadAmount.service');
 
 exports.createSubHeadAmount = catchAsync(async (req, res) => {
-	const data = await masterSubHeadAmountService.createSubHeadAmount(req.body);
+	const data = await masterSubHeadAmountService.createSubHeadAmount(req, req.body);
 
 	res.status(StatusCodes.CREATED).json({
 		message: 'Sub head amount created successfully',

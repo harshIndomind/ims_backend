@@ -12,6 +12,8 @@ const { sendTestMail } = require('./utils/mailer');
 app.use('/uploads', express.static(path.join(__dirname, '/uploads')));
 const http = require('http');
 const { init } = require('./utils/socket');
+const publishMessage = require('./publisher/publisher');
+
 const limiter = rateLimit({
 	windowMs: 1 * 60 * 1000,
 	limit: 100,
@@ -69,19 +71,21 @@ async function prepareAndStartServer() {
 
 	app.use(`${apiPrefix}/v1/auth`, authRoutes);
 	app.use(`${apiPrefix}/v1/users`, require('./routes/v1/user.routes'));
-	app.use(`${apiPrefix}/v1/dashboard`, require('./routes/v1/dashboard.routes'));
+	app.use(`${apiPrefix}/v1/user-roles`, require('./routes/v1/user-roles.routes'));
+
+	// app.use(`${apiPrefix}/v1/dashboard`, require('./routes/v1/dashboard.routes'));
 	app.use(
 		`${apiPrefix}/v1/organizations`,
 		require('./routes/v1/organization.route')
 	);
-	app.use(
-		`${apiPrefix}/v1/docs-categories`,
-		require('./routes/v1/docs-category.route')
-	);
-	app.use(
-		`${apiPrefix}/v1/docs-uploads`,
-		require('./routes/v1/doc-uploads.routes')
-	);
+	// app.use(
+	// 	`${apiPrefix}/v1/docs-categories`,
+	// 	require('./routes/v1/docs-category.route')
+	// );
+	// app.use(
+	// 	`${apiPrefix}/v1/docs-uploads`,
+	// 	require('./routes/v1/doc-uploads.routes')
+	// );
 	app.use(`${apiPrefix}/v1/roles`, require('./routes/v1/role.routes'));
 	app.use(`${apiPrefix}/v1/menus`, require('./routes/v1/menu.routes'));
 	app.use(
@@ -96,23 +100,23 @@ async function prepareAndStartServer() {
 		`${apiPrefix}/v1/notifications`,
 		require('./routes/v1/notifications.routes')
 	);
-	app.use(`${apiPrefix}/v1/partners`, require('./routes/v1/partners.route'));
-	app.use(
-		`${apiPrefix}/v1/product-groups`,
-		require('./routes/v1/product-group.route')
-	);
-	app.use(`${apiPrefix}/v1/taxes`, require('./routes/v1/tax.routes'));
-	app.use(`${apiPrefix}/v1/units`, require('./routes/v1/unit.routes'));
+	// app.use(`${apiPrefix}/v1/partners`, require('./routes/v1/partners.route'));
+	// app.use(
+	// 	`${apiPrefix}/v1/product-groups`,
+	// 	require('./routes/v1/product-group.route')
+	// );
+	// app.use(`${apiPrefix}/v1/taxes`, require('./routes/v1/tax.routes'));
+	// app.use(`${apiPrefix}/v1/units`, require('./routes/v1/unit.routes'));
 	app.use(`${apiPrefix}/v1/countries`, require('./routes/v1/country.routes'));
 	app.use(`${apiPrefix}/v1/states`, require('./routes/v1/state.routes'));
-	app.use(
-		`${apiPrefix}/v1/product-services`,
-		require('./routes/v1/productService.route')
-	);
-	app.use(`${apiPrefix}/v1/invoices`, require('./routes/v1/invoice.routes'));
-	app.use(`${apiPrefix}/v1/reports`, require('./routes/v1/reports.routes'));
-	app.use(`${apiPrefix}/v1/registration-types`, require('./routes/v1/registration-types.routes'));
-	app.use(`${apiPrefix}/v1/credit-note`, require('./routes/v1/credit-note-invoice.routes'));
+	// app.use(
+	// 	`${apiPrefix}/v1/product-services`,
+	// 	require('./routes/v1/productService.route')
+	// );
+	// app.use(`${apiPrefix}/v1/invoices`, require('./routes/v1/invoice.routes'));
+	// app.use(`${apiPrefix}/v1/reports`, require('./routes/v1/reports.routes'));
+	// app.use(`${apiPrefix}/v1/registration-types`, require('./routes/v1/registration-types.routes'));
+	// app.use(`${apiPrefix}/v1/credit-note`, require('./routes/v1/credit-note-invoice.routes'));
 
 	// Budget Planner
 	app.use(`${apiPrefix}/v1/master/major-head`, require('./routes/v1/masterMajorHead.routes'));
@@ -121,7 +125,9 @@ async function prepareAndStartServer() {
 	app.use(`${apiPrefix}/v1/master/major-head-amount`, require('./routes/v1/masterMajorHeadAmount.routes'));
 	app.use(`${apiPrefix}/v1/master/sub-head-amount`, require('./routes/v1/masterSubHeadAmount.routes'));
 	app.use(`${apiPrefix}/v1/master/budget`, require('./routes/v1/budget.routes'));
-
+	
+	app.use(`${apiPrefix}/v1/departments`, require('./routes/v1/department.routes'));
+	app.use(`${apiPrefix}/v1/designations`, require('./routes/v1/designation.routes'));
 	// API'S FOR OTHER SERVICES
 	app.use(
 		`${apiPrefix}/v1/service/organizations`,
@@ -131,6 +137,9 @@ async function prepareAndStartServer() {
 		`${apiPrefix}/v1/service/users`,
 		require('./routes/v1/service-user.routes')
 	);
+	app.use(`${apiPrefix}/v1/admin-users`, require('./routes/v1/admin-user.routes'));
+	app.use(`${apiPrefix}/v1/indent`, require('./routes/v1/indent.routes'));
+
 
 	app.get('/', (req, res) => {
 		res.status(200).json({ status: true, message: '✅ Its working.' });
@@ -153,17 +162,18 @@ async function prepareAndStartServer() {
 		});
 	} else {
 		db.sequelize
-			.authenticate()
-			.then(() => {
-				server.listen(PORT, () => {
-					console.log(`Production server running on ${BASE_URL}`);
-				});
-			})
-			.catch((err) => {
-				console.error('Database connection failed:', err);
-				process.exit(1);
+		.authenticate()
+		.then(() => {
+			server.listen(PORT, () => {
+				console.log(`Production server running on ${BASE_URL}`);
 			});
+		})
+		.catch((err) => {
+			console.error('Database connection failed:', err);
+			process.exit(1);
+		});
 	}
+	// await publishMessage();
 }
 
 prepareAndStartServer();

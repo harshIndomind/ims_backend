@@ -1,5 +1,9 @@
 const AuthService = require('../services/auth.service');
-const { JWT_REFRESH_SECRET, COOKIE_DOMAIN, COOKIE_SECURE } = require('../config/serverConfig');
+const {
+	JWT_REFRESH_SECRET,
+	COOKIE_DOMAIN,
+	COOKIE_SECURE,
+} = require('../config/serverConfig');
 const catchAsync = require('../utils/catchAsync');
 const jwt = require('jsonwebtoken');
 const { generateAccessToken } = require('../utils/generateToken');
@@ -9,6 +13,7 @@ const {
 	BusinessPartner,
 	Address,
 	organization,
+	sequelize,
 } = require('../models/index');
 const { generateSignedUrl } = require('../utils/s3Bucket');
 
@@ -30,15 +35,16 @@ exports.refreshToken = catchAsync(async (req, res) => {
 
 	try {
 		const decoded = jwt.verify(token, JWT_REFRESH_SECRET);
+		console.log("refreshToken decoded ", decoded)
 		const user = await User.findOne({
 			where: { id: decoded.id, is_active: 1 },
 			include: [
 				{ model: Role },
-				{
-					model: BusinessPartner,
-					as: 'partner',
-					include: { model: Address, as: 'addresses' },
-				},
+				// {
+				// 	model: BusinessPartner,
+				// 	as: 'partner',
+				// 	include: { model: Address, as: 'addresses' },
+				// },
 				{ model: organization, as: 'organization' },
 			],
 		});
@@ -55,6 +61,23 @@ exports.refreshToken = catchAsync(async (req, res) => {
 			state_id = user?.partner?.addresses[0].state_id;
 		}
 
+		const permissions = await sequelize.query(
+			`
+		  SELECT DISTINCT CONCAT(m.slug, ':', p.action) AS permission
+		  FROM user_roles ur
+		  JOIN role_permissions rp ON rp.role_id = ur.role_id
+		  JOIN Permissions p ON p.id = rp.permission_id
+		  JOIN Menus m ON m.id = p.menu_id
+		  WHERE ur.user_id = ?
+		`,
+			{
+				replacements: [user.id],
+				type: sequelize.QueryTypes.SELECT,
+			},
+		);
+
+		const permissionList = permissions.map((p) => p.permission);
+
 		const payload = {
 			id: decoded.id,
 			email: user.email,
@@ -64,9 +87,10 @@ exports.refreshToken = catchAsync(async (req, res) => {
 			avatar: decoded.avatar,
 			org_id: decoded.org_id,
 			state_id,
+			isSuperAdmin: user.Role.name === 'Super Admin'
 		};
 
-		const accessToken = generateAccessToken(payload);
+		const accessToken = generateAccessToken({...payload, permissions: permissionList});
 
 		res.cookie('accessToken', accessToken, {
 			httpOnly: true,
@@ -97,11 +121,10 @@ exports.logout = catchAsync((req, res) => {
 	res.json({ message: 'Logged out successfully' });
 });
 
-
 exports.getLoggedInUser = catchAsync(async (req, res) => {
 	const userId = req.user.id;
-	console.log("userId ", userId);
-	
+	console.log('userId ', userId);
+
 	const userData = await AuthService.getLoggedInUser(userId, res);
 	res.json({ message: 'User details fetched Successfully', data: userData });
 });
