@@ -23,15 +23,7 @@ exports.getNextIndentId = catchAsync(async (req, res) => {
 });
 
 exports.getAllIndents = catchAsync(async (req, res) => {
-	const { limit, offset } = req.query;
-
-	const options = {};
-	if (limit) {
-		options.limit = Number(limit);
-		options.offset = Number(offset);
-	}
-
-	const data = await indentService.getAllIndents(options);
+	const data = await indentService.getAllIndents(req);
 
 	res.status(StatusCodes.OK).json({
 		message: 'Indents fetched successfully',

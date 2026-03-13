@@ -17,4 +17,7 @@ module.exports = {
 	IndentRepository: require('./indent.repository'),
 	IndentItemRepository: require('./indentItem.repository'),
 	IndentSerialRepository: require('./indentserials.repository'),
+    costCenterRepository: require('./costCenter.repository'),
+    masterAccountRepository: require('./masterAccount.repository'),
+
 }

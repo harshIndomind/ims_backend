@@ -125,6 +125,8 @@ async function prepareAndStartServer() {
 	app.use(`${apiPrefix}/v1/master/major-head-amount`, require('./routes/v1/masterMajorHeadAmount.routes'));
 	app.use(`${apiPrefix}/v1/master/sub-head-amount`, require('./routes/v1/masterSubHeadAmount.routes'));
 	app.use(`${apiPrefix}/v1/master/budget`, require('./routes/v1/budget.routes'));
+	app.use(`${apiPrefix}/v1/master/cost-center`, require('./routes/v1/costCenter.routes'));
+	app.use(`${apiPrefix}/v1/master/accounts`, require('./routes/v1/masterAccounts.routes'));
 	
 	app.use(`${apiPrefix}/v1/departments`, require('./routes/v1/department.routes'));
 	app.use(`${apiPrefix}/v1/designations`, require('./routes/v1/designation.routes'));

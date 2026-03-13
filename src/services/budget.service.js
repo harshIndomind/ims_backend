@@ -16,7 +16,8 @@ const {
 const {
 	getAmountByMajorHeadAndPeriod,
 } = require('./masterMajorHeadAmount.service');
-const { fn, col } = require('sequelize');
+const { fn, col, Op } = require('sequelize');
+const parseDate = require('../utils/parse-date');
 
 exports.createBudget = async (req, payload) => {
 	// 🔒 Example business rule
@@ -44,25 +45,71 @@ exports.updateBudget = async (id, payload) => {
 	return budgetRepo.updateById(id, payload);
 };
 
-exports.getAllBudgets = async (options = {}) => {
-	return budgetRepo.findAll(
-		{},
-		{
-			include: [
-				{
-					model: MasterPeriod,
-					as: 'period',
-					attributes: ['id', 'period_short', 'period', 'period_detail'],
-				},
-				// {
-				// 	model: Product,
-				// 	as: 'product',
-				// 	attributes: ['id', 'name', 'uniqueProductId'],
-				// },
-				{ model: organization, as: 'organization' },
-			],
+exports.getAllBudgets = async (req) => {
+	const {
+		limit,
+		offset,
+		fromDate,
+		toDate,
+		selectedPeriodId,
+		selectedDepartmentId,
+		selectedStatusId,
+		selectedCostCenterId,
+		selectedBudgetTypeId,
+		budgetId,
+	} = req.query;
+
+	if (!fromDate || !toDate) {
+		throw new AppError("fromDate and toDate are required");
+	}
+
+	const from_date = parseDate(fromDate);
+	const to_date = parseDate(toDate);
+	to_date.setDate(to_date.getDate() + 1);
+
+	if (isNaN(from_date) || isNaN(to_date)) {
+		throw new AppError("Invalid date range");
+	}
+
+	const where = {
+		is_lock: selectedStatusId === "lock" ? 1 : 0,
+		budgetType: selectedBudgetTypeId,
+		createdAt: {
+			[Op.gte]: from_date,
+			[Op.lt]: to_date,
 		},
-	);
+	};
+
+	const periodId = Number(selectedPeriodId);
+	const departmentId = Number(selectedDepartmentId);
+	const costCenterId = Number(selectedCostCenterId);
+
+	if (periodId > 0) where.period_id = periodId;
+	if (departmentId > 0) where.department_id = departmentId;
+	if (costCenterId > 0) where.cost_center_id = costCenterId;
+	if (budgetId) where.budget_id = budgetId;
+
+	const filterOptions = {
+		where,
+		include: [
+			{
+				model: MasterPeriod,
+				as: "period",
+				attributes: ["id", "period_short", "period", "period_detail"],
+			},
+			{
+				model: organization,
+				as: "organization",
+			},
+		],
+	};
+
+	if (limit) {
+		filterOptions.limit = Number(limit);
+		filterOptions.offset = Number(offset || 0);
+	}
+
+	return budgetRepo.findAll({}, filterOptions);
 };
 
 exports.getBudgetById = async (id) => {
@@ -200,12 +247,12 @@ exports.getAllApprovedBudgets = async (options = {}, budgetType) => {
 				{
 					model: MasterMajorHead,
 					as: 'majorHead',
-					attributes: ['id', 'm_name', 'm_code'] 
+					attributes: ['id', 'm_name', 'm_code'],
 				},
 				{
 					model: MasterSubHead,
 					as: 'subHead',
-					attributes: ['id', 'sh_name', 'sh_code'] 
+					attributes: ['id', 'sh_name', 'sh_code'],
 				},
 				{ model: organization, as: 'organization' },
 			],

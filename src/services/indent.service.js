@@ -16,6 +16,7 @@ const AppError = require('../utils/AppError');
 const { Op } = require('sequelize');
 const logger = require('../utils/logger');
 const { StatusCodes } = require('http-status-codes');
+const parseDate = require('../utils/parse-date');
 
 exports.createIndent = async (req, payload) => {
 	const transaction = await sequelize.transaction();
@@ -150,34 +151,78 @@ exports.getNextIndentId = async (req) => {
 	return `IND-${nextId}`;
 };
 
-exports.getAllIndents = async (options) => {
-	return IndentRepository.findAll(
-		{},
-		{
-			...options,
-			order: [['createdAt', 'DESC']],
-			include: [
-				{ association: 'department' },
-				{ association: 'period' },
-				{ association: 'remark' },
-				{
-					association: 'IndentItems',
-					include: [
-						{
-							model: Budget,
-							as: 'budget',
-							attributes: ['budget_id'],
-						},
-						{
-							model: IndentSerialItem,
-							as: 'serial_items',
-							attributes: ['serial_no', 'is_issued'],
-						},
-					],
-				},
-			],
+exports.getAllIndents = async (req) => {
+	const {
+		limit,
+		offset,
+		fromDate,
+		toDate,
+		selectedPeriodId,
+		selectedDepartmentId,
+		selectedStatusId,
+		selectedBudgetTypeId,
+		indentNo,
+	} = req.query;
+
+	if (!fromDate || !toDate) {
+		throw new AppError('fromDate and toDate are required');
+	}
+
+	const from_date = parseDate(fromDate);
+	const to_date = parseDate(toDate);
+	to_date.setDate(to_date.getDate() + 1);
+
+	if (isNaN(from_date) || isNaN(to_date)) {
+		throw new AppError('Invalid date range');
+	}
+
+	const where = {
+		isVerified: selectedStatusId === 'yes' ? 1 : 0,
+		budgetType: selectedBudgetTypeId,
+		createdAt: {
+			[Op.gte]: from_date,
+			[Op.lt]: to_date,
 		},
-	);
+	};
+
+	const periodId = Number(selectedPeriodId);
+	const departmentId = Number(selectedDepartmentId);
+
+	if (periodId > 0) where.period_id = periodId;
+	if (departmentId > 0) where.department_id = departmentId;
+	if (indentNo) where.indent_no = indentNo;
+
+	const filterOptions = {
+		where,
+		include: [
+			{ association: 'department' },
+			{ association: 'period' },
+			{ association: 'remark' },
+			{
+				association: 'IndentItems',
+				include: [
+					{
+						model: Budget,
+						as: 'budget',
+						attributes: ['budget_id'],
+					},
+					{
+						model: IndentSerialItem,
+						as: 'serial_items',
+						attributes: ['serial_no', 'is_issued'],
+					},
+				],
+			},
+		],
+		order: [['createdAt', 'DESC']],
+	};
+
+	if (limit) {
+		filterOptions.limit = Number(limit);
+		filterOptions.offset = Number(offset || 0);
+	}
+
+	return IndentRepository.findAll({}, filterOptions);
 };
 
 exports.verifyIndentQuantity = async (req, indent_ids) => {

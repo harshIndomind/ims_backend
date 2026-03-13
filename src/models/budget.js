@@ -32,10 +32,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'sub_head_amount_id',
 				as: 'subHeadAmount',
 			});
-			// Budget.belongsTo(models.Product, {
-			// 	foreignKey: 'product_id',
-			// 	as: 'product',
-			// })
+			Budget.belongsTo(models.CostCenter, {
+				foreignKey: 'cost_center_id',
+				as: 'cost_center',
+			});
 		}
 	}
 	Budget.init(
@@ -87,6 +87,10 @@ module.exports = (sequelize, DataTypes) => {
 			},
 			budget_head_id: {
 				type: DataTypes.STRING(50),
+				allowNull: true,
+			},
+			cost_center_id: {
+				type: DataTypes.INTEGER,
 				allowNull: true,
 			},
 			product_id: {
