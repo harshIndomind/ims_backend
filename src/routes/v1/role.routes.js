@@ -7,6 +7,16 @@ const verifyToken = require('../../middlewares/verifyToken');
 router.use(verifyToken);
 
 router.post('/', RoleController.create);
+router.get(
+  '/:id/permissions',
+//   checkPermission('roles', 'view'),
+  RoleController.getRolePermissions
+);
+router.post(
+  '/:id/permissions',
+//   checkPermission('roles', 'edit'),
+  RoleController.saveRolePermissions
+);
 router.put('/:id', RoleController.update);
 router.delete('/:id', RoleController.destory);
 router.get('/:id', RoleController.getRoleById);

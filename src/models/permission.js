@@ -8,37 +8,52 @@ module.exports = (sequelize, DataTypes) => {
 		 * The `models/index` file will call this method automatically.
 		 */
 		static associate(models) {
+			// Permission.belongsTo(models.Menu, {
+			// 	foreignKey: 'menuId',
+			// 	as: 'menu',
+			// 	onDelete: 'CASCADE',
+			// });
+
+			// Permission.belongsToMany(models.Role, {
+			// 	through: 'RolesPermissions',
+			// 	foreignKey: 'permissionId',
+			// 	otherKey: 'roleId',
+			// 	as: 'roles',
+			// 	onDelete: 'CASCADE',
+			// });
+
 			Permission.belongsTo(models.Menu, {
-				foreignKey: 'menuId',
-				as: 'menu',
-				onDelete: 'CASCADE',
+				foreignKey: 'menu_id',
 			});
 
 			Permission.belongsToMany(models.Role, {
-				through: 'RolesPermissions',
-				foreignKey: 'permissionId',
-				otherKey: 'roleId',
-				as: 'roles',
-				onDelete: 'CASCADE',
+				through: models.RolePermission,
+				foreignKey: 'permission_id',
 			});
 		}
 	}
 	Permission.init(
 		{
-			menuId: {
-				type: DataTypes.STRING,
-				references: {
-					model: 'Menus',
-					key: 'id',
-				},
-				onDelete: 'CASCADE',
+			id: {
+				type: DataTypes.INTEGER,
+				autoIncrement: true,
+				primaryKey: true,
 			},
-			permission: DataTypes.STRING,
+			menu_id: {
+				type: DataTypes.INTEGER,
+				allowNull: false,
+			},
+			action: {
+				type: DataTypes.STRING,
+			},
 		},
 		{
 			sequelize,
 			modelName: 'Permission',
-		}
+			tableName: 'Permissions',
+			underscored: true,
+
+		},
 	);
 	return Permission;
 };

@@ -3,7 +3,7 @@ const { StatusCodes } = require('http-status-codes');
 const masterPeriodService = require('../services/masterPeriod.service');
 
 exports.createMasterPeriod = catchAsync(async (req, res) => {
-	const data = await masterPeriodService.createMasterPeriod(req.body);
+	const data = await masterPeriodService.createMasterPeriod(req, req.body);
 
 	res.status(StatusCodes.CREATED).json({
 		message: 'Master Period created successfully',
@@ -31,7 +31,8 @@ exports.getAllMasterPeriod = catchAsync(async (req, res) => {
 		options.offset = Number(offset);
 	}
 	const data = await masterPeriodService.getAllMasterPeriod(options);
-
+	console.log("data ", data);
+	
 	res.status(StatusCodes.OK).json({ data });
 });
 

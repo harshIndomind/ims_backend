@@ -25,10 +25,14 @@ module.exports = (sequelize, DataTypes) => {
 				allowNull: true,
 				references: { model: 'organization', key: 'id' },
 			},
-			// major_code_id: {
-			// 	type: DataTypes.INTEGER,
-			// 	allowNull: false,
-			// },
+			from_date: {
+				type: DataTypes.DATEONLY,
+				allowNull: true,
+			},
+			end_date: {
+				type: DataTypes.DATEONLY,
+				allowNull: true,
+			},
 			period_code: {
 				type: DataTypes.STRING,
 				allowNull: false,
@@ -55,7 +59,7 @@ module.exports = (sequelize, DataTypes) => {
 			paranoid: true,
 			timestamps: true,
 			modelName: 'MasterPeriod',
-		}
+		},
 	);
 	return MasterPeriod;
 };

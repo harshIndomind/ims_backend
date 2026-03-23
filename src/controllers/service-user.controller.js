@@ -83,40 +83,44 @@ const validateUpdateUser = [
 ];
 
 const createUser = catchAsync(async (req, res) => {
-	const errors = validationResult(req);
-	if (!errors.isEmpty()) {
-		return res.status(400).json({ errors: errors.array() });
-	}
+	// const errors = validationResult(req);
+	// if (!errors.isEmpty()) {
+	// 	return res.status(400).json({ errors: errors.array() });
+	// }
 
 	const {
+		employee_code,
+		department_id,
+		designation_id,
+		layer,
 		name,
 		email,
 		password,
 		roleId,
-		orgId,
-		vendorCompanyName,
-		vendorCompanyCode,
-		vendorContactNo,
-		vendorAddress,
+		org_id,
+		swayamm_user_id,
+		is_active
 	} = req.body;
 
 	const hashedPassword = await bcrypt.hash(password, 10);
-	const vendor = await userService.create({
+	const user = await userService.create({
 		name,
 		email,
 		password: hashedPassword,
 		roleId,
-		org_id: orgId,
-		vendor_company_name: vendorCompanyName,
-		vendor_company_code: vendorCompanyCode,
-		vendor_contact_no: vendorContactNo,
-		vendor_address: vendorAddress,
+		employee_code,
+		department_id,
+		designation_id,
+		layer,
+		org_id,
+		swayamm_user_id,
+		is_active
 	});
 
 	res.status(201).json({
 		status: true,
-		message: 'Vendor created successfully',
-		data: vendor,
+		message: 'Admin user created successfully',
+		data: user,
 	});
 });
 

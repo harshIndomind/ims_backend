@@ -4,6 +4,8 @@ const UserController = require('../../controllers/user.controller');
 const checkRole = require('../../middlewares/checkRole');
 const verifyToken = require('../../middlewares/verifyToken');
 const { uploadTo } = require('../../middlewares/multer');
+const checkPermission = require('../../middlewares/checkPermission');
+const fetchPermissions = require('../../helpers/fetchPermissions');
 
 router.post('/forgot-password', UserController.sendForgotPasswordMail);
 router.post('/reset-password', UserController.resetPassword);
@@ -13,12 +15,12 @@ router.use(verifyToken);
 router.post('/', checkRole(['Super Admin', 'Admin']), UserController.create);
 router.get(
 	'/profile',
-	checkRole(['Super Admin', 'Admin', 'Vendor']),
+	checkPermission('account', 'view'),
 	UserController.getUserProfileById
 );
 router.put(
 	'/profile',
-	checkRole(['Super Admin', 'Admin', 'Vendor']),
+	checkPermission('account', 'edit'),
 	uploadTo('uploads/profile').fields([
 		{ name: 'image', maxCount: 1 },
 		{ name: 'logo', maxCount: 1 },

@@ -20,17 +20,22 @@ module.exports = (sequelize, DataTypes) => {
 				as: 'parent',
 			});
 
-			Menu.hasMany(models.Permission, {
-				foreignKey: 'menuId',
-				as: 'permissions',
-				onDelete: 'CASCADE',
-			});
+			// Menu.hasMany(models.Permission, {
+			// 	foreignKey: 'menuId',
+			// 	as: 'permissions',
+			// 	onDelete: 'CASCADE',
+			// });
 
-			Menu.belongsToMany(models.Role, {
-				through: 'RoleMenus',
-				as: 'roles',
-				foreignKey: 'menuId',
-				otherKey: 'roleId',
+			// Menu.belongsToMany(models.Role, {
+			// 	through: 'RoleMenus',
+			// 	as: 'roles',
+			// 	foreignKey: 'menuId',
+			// 	otherKey: 'roleId',
+			// });
+
+			Menu.hasMany(models.Permission, {
+				foreignKey: 'menu_id',
+				as: 'permissions',
 			});
 		}
 	}
@@ -46,6 +51,10 @@ module.exports = (sequelize, DataTypes) => {
 				onDelete: 'CASCADE',
 			},
 			menuName: { type: DataTypes.STRING, allowNull: false },
+			slug: {
+				type: DataTypes.STRING,
+				unique: true,
+			},
 			icon: { type: DataTypes.STRING, allowNull: true },
 			url: DataTypes.STRING,
 			isActive: { type: DataTypes.BOOLEAN, defaultValue: true },
@@ -53,7 +62,7 @@ module.exports = (sequelize, DataTypes) => {
 		{
 			sequelize,
 			modelName: 'Menu',
-		}
+		},
 	);
 	return Menu;
 };

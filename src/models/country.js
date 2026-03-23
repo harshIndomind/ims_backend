@@ -12,10 +12,10 @@ module.exports = (sequelize, DataTypes) => {
 			// 	foreignKey: 'country_id',
 			// 	as: 'states',
 			// });
-			Country.hasMany(models.Address, {
-				foreignKey: 'country_id',
-				as: 'addresses',
-			});
+			// Country.hasMany(models.Address, {
+			// 	foreignKey: 'country_id',
+			// 	as: 'addresses',
+			// });
 		}
 	}
 	Country.init(

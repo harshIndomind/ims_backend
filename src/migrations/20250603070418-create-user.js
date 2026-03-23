@@ -14,6 +14,34 @@ module.exports = {
 				allowNull: true,
 				references: { model: 'organizations', key: 'id' },
 			},
+			employee_code: {
+				type: Sequelize.STRING,
+				allowNull: true,
+			},
+			department_id: {
+				type: Sequelize.INTEGER,
+				allowNull: true,
+				references: {
+					model: 'departments',
+					key: 'id',
+				},
+				onUpdate: 'CASCADE',
+				onDelete: 'RESTRICT',
+			},
+			designation_id: {
+				type: Sequelize.INTEGER,
+				allowNull: true,
+				references: {
+					model: 'designations',
+					key: 'id',
+				},
+				onUpdate: 'CASCADE',
+				onDelete: 'RESTRICT',
+			},
+			layer: {
+				type: Sequelize.INTEGER,
+				allowNull: true,
+			},
 			name: {
 				type: Sequelize.STRING,
 				allowNull: false,
@@ -27,25 +55,12 @@ module.exports = {
 				type: Sequelize.STRING,
 				allowNull: false,
 			},
-			// vendor_company_name: {
-			// 	type: Sequelize.STRING,
-			// 	allowNull: true,
-			// },
-			// vendor_company_code: {
-			// 	type: Sequelize.STRING,
-			// 	allowNull: true,
-			// 	unique: true,
-			// },
-			// vendor_contact_no: {
-			// 	type: Sequelize.STRING,
-			// 	allowNull: true,
-			// },
-			// vendor_address: {
-			// 	type: Sequelize.STRING,
-			// 	allowNull: true,
-			// },
 			image: {
 				type: Sequelize.STRING,
+				allowNull: true,
+			},
+			logo: {
+				type: Sequelize.TEXT,
 				allowNull: true,
 			},
 			roleId: {

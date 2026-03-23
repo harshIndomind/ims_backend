@@ -8,16 +8,18 @@ const {
 	MasterPeriod,
 	MasterMajorHeadAmount,
 	MasterSubHead,
+	organization,
 } = require('../models/index');
 const {
 	getAmountByMajorHeadAndPeriod,
 } = require('../services/masterMajorHeadAmount.service');
-const {fn, col} = require('sequelize');
+const { fn, col } = require('sequelize');
 
 /**
  * Create
  */
-exports.createSubHeadAmount = async (payload) => {
+exports.createSubHeadAmount = async (req, payload) => {
+	const { org_id } = req.user;
 	const {
 		major_head_amount_id,
 		major_head_id,
@@ -27,8 +29,9 @@ exports.createSubHeadAmount = async (payload) => {
 	} = payload;
 
 	const majorHeadAmount = await getAmountByMajorHeadAndPeriod(
+		org_id,
 		major_head_id,
-		period_id
+		period_id,
 	);
 
 	if (!majorHeadAmount) {
@@ -38,9 +41,9 @@ exports.createSubHeadAmount = async (payload) => {
 
 	const subHeadAmount = await getSubAmountByMajorHeadAndPeriod(
 		major_head_id,
-		sub_head_id
+		sub_head_id,
 	);
-	
+
 	let totalAmountLeftForUse = parseFloat(majorHeadAmount.amount);
 	let totalSubHeadAmount = 0;
 	if (subHeadAmount) {
@@ -51,7 +54,7 @@ exports.createSubHeadAmount = async (payload) => {
 	if (Number(amount) > Number(totalAmountLeftForUse)) {
 		throw new AppError(
 			`Sub head amount is greater than the left amount for use ${totalAmountLeftForUse}`,
-			400
+			400,
 		);
 	}
 
@@ -59,7 +62,7 @@ exports.createSubHeadAmount = async (payload) => {
 		logger.warn('Validation failed while creating Sub head amount', payload);
 		throw new AppError(
 			'Major head id, period id and amount are required',
-			StatusCodes.BAD_REQUEST
+			StatusCodes.BAD_REQUEST,
 		);
 	}
 
@@ -104,7 +107,7 @@ exports.updateSubHeadAmount = async (id, payload) => {
 
 	const majorHeadAmount = await getAmountByMajorHeadAndPeriod(
 		major_head_id,
-		period_id
+		period_id,
 	);
 
 	if (!majorHeadAmount) {
@@ -114,20 +117,20 @@ exports.updateSubHeadAmount = async (id, payload) => {
 
 	const subHeadAmount = await getSubAmountByMajorHeadAndPeriod(
 		major_head_id,
-		period_id
+		period_id,
 	);
-	
+
 	let totalAmountLeftForUse = parseFloat(majorHeadAmount.amount);
 	let totalSubHeadAmount = 0;
 	if (subHeadAmount) {
-		totalSubHeadAmount = (subHeadAmount - masterMajorHeadAmount.amount);
+		totalSubHeadAmount = subHeadAmount - masterMajorHeadAmount.amount;
 		totalAmountLeftForUse = totalAmountLeftForUse - totalSubHeadAmount;
 	}
 
 	if (Number(amount) > Number(totalAmountLeftForUse)) {
 		throw new AppError(
 			`Sub head amount is greater than the left amount for use ${totalAmountLeftForUse}`,
-			400
+			400,
 		);
 	}
 
@@ -168,6 +171,11 @@ exports.getAllSubHeadAmount = async (options = {}) => {
 				model: MasterSubHead,
 				as: 'subHead',
 				attributes: ['sh_code', 'sh_name'],
+			},
+			{
+				model: organization,
+				as: 'organization',
+				attributes: ['org_code', 'org_name'],
 			},
 		],
 	});
@@ -211,10 +219,10 @@ exports.getSubHeadAmountById = async (id) => {
 
 	const subHeadAmount = await getSubAmountByMajorHeadAndPeriod(
 		masterMajorHeadAmount.major_head_id,
-		masterMajorHeadAmount.period_id
+		masterMajorHeadAmount.period_id,
 	);
 
-	const responseData = {...masterMajorHeadAmount.toJSON(), subHeadAmount };
+	const responseData = { ...masterMajorHeadAmount.toJSON(), subHeadAmount };
 
 	return responseData;
 };
@@ -238,15 +246,18 @@ exports.deleteSubHeadAmount = async (id) => {
 };
 
 const getSubAmountByMajorHeadAndPeriod = async (major_head_id, period_id) => {
-	return await masterSubHeadAmountRepo.getSubAmountByMajorHeadAndPeriod('amount',{
-		where: { major_head_id, period_id },
-	});
+	return await masterSubHeadAmountRepo.getSubAmountByMajorHeadAndPeriod(
+		'amount',
+		{
+			where: { major_head_id, period_id },
+		},
+	);
 };
 
 exports.getAmountByMajorHeadAndPeriod = async (
 	id,
 	major_head_id,
-	period_id
+	period_id,
 ) => {
 	logger.info('Fetching all Master Major Head Amounts');
 	return await masterSubHeadAmountRepo.getAmountByMajorHeadAndPeriod({

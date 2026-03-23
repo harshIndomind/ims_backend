@@ -7,7 +7,9 @@ class UserService {
 
 	async create(data) {
 		try {
-			const user = await this.userRepo.create(data);
+			const org_id = await this.userRepo.getOrganizationIdBySwayammOrgId(data.org_id);
+			console.log("getOrganizationIdBySwayammOrgId ", org_id)
+			const user = await this.userRepo.create({...data, org_id});
 
 			return user;
 		} catch (error) {
@@ -38,9 +40,9 @@ class UserService {
 		}
 	}
 
-	async getAllUsers(org_id) {
+	async getAllUsers(org_id, role) {
 		try {
-			const users = await this.userRepo.allUsers(org_id);
+			const users = await this.userRepo.allUsers(org_id, role);
 
 			return users;
 		} catch (error) {

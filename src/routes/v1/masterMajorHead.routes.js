@@ -2,32 +2,33 @@ const router = require('express').Router();
 const MasterMajorHeadController = require('../../controllers/majorHead.controller');
 const verifyToken = require('../../middlewares/verifyToken');
 const checkRole = require('../../middlewares/checkRole');
+const checkPermission = require('../../middlewares/checkPermission');
 
 router.use(verifyToken); // all routes protected
 
 router.post(
 	'/',
-	checkRole(['Super Admin', 'Admin']),
+	checkPermission('major-head', 'create'),
 	MasterMajorHeadController.createMasterMajorHead
 );
 router.put(
 	'/:id',
-	checkRole(['Super Admin', 'Admin']),
+	checkPermission('major-head', 'edit'),
 	MasterMajorHeadController.updateMasterMajorHead
 );
 router.get(
 	'/',
-	checkRole(['Super Admin', 'Admin']),
+	checkPermission('major-head', 'view'),
 	MasterMajorHeadController.getAllMasterMajorHead
 );
 router.get(
 	'/:id',
-	checkRole(['Super Admin', 'Admin']),
+	checkPermission('major-head', 'view'),
 	MasterMajorHeadController.getMasterMajorHeadById
 );
 router.delete(
 	'/:id',
-	checkRole(['Super Admin', 'Admin']),
+	checkPermission('major-head', 'delete'),
 	MasterMajorHeadController.deleteMasterMajorHead
 );
 

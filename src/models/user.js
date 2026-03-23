@@ -9,16 +9,16 @@ module.exports = (sequelize, DataTypes) => {
 		 */
 		static associate(models) {
 			// 1. Documents
-			User.hasMany(models.DocumentsUpload, {
-				foreignKey: 'user_id',
-				as: 'vendor_docs',
-			});
+			// User.hasMany(models.DocumentsUpload, {
+			// 	foreignKey: 'user_id',
+			// 	as: 'vendor_docs',
+			// });
 
-			// 2. BusinessPartner
-			User.hasOne(models.BusinessPartner, {
-				foreignKey: 'user_id',
-				as: 'partner',
-			});
+			// // 2. BusinessPartner
+			// User.hasOne(models.BusinessPartner, {
+			// 	foreignKey: 'user_id',
+			// 	as: 'partner',
+			// });
 
 			// 3. Role
 			User.belongsTo(models.Role, { foreignKey: 'roleId' });
@@ -28,11 +28,48 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'org_id',
 				as: 'organization',
 			});
+
+			User.belongsToMany(models.Role, {
+				through: models.UserRole,
+				foreignKey: 'user_id',
+				as: 'userRoles'
+			});
+
+			User.belongsTo(models.Department, { foreignKey: 'department_id' });
+			User.belongsTo(models.Designation, { foreignKey: 'designation_id' });
 		}
 	}
 	User.init(
 		{
 			org_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
+			employee_code: {
+				type: DataTypes.STRING,
+				allowNull: true,
+			},
+			department_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+				references: {
+					model: 'departments',
+					key: 'id',
+				},
+				onUpdate: 'CASCADE',
+				onDelete: 'RESTRICT',
+			},
+			designation_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+				references: {
+					model: 'designations',
+					key: 'id',
+				},
+				onUpdate: 'CASCADE',
+				onDelete: 'RESTRICT',
+			},
+			layer: {
 				type: DataTypes.INTEGER,
 				allowNull: true,
 			},
@@ -50,23 +87,6 @@ module.exports = (sequelize, DataTypes) => {
 				allowNull: true,
 			},
 			password: { type: DataTypes.STRING, allowNull: false },
-			// vendor_company_name: {
-			// 	type: DataTypes.STRING,
-			// 	allowNull: true,
-			// },
-			// vendor_company_code: {
-			// 	type: DataTypes.STRING,
-			// 	allowNull: true,
-			// 	unique: true,
-			// },
-			// vendor_contact_no: {
-			// 	type: DataTypes.STRING,
-			// 	allowNull: true,
-			// },
-			// vendor_address: {
-			// 	type: DataTypes.STRING,
-			// 	allowNull: true,
-			// },
 			roleId: {
 				type: DataTypes.INTEGER,
 				references: {
@@ -91,12 +111,12 @@ module.exports = (sequelize, DataTypes) => {
 			swayamm_user_id: {
 				type: DataTypes.INTEGER,
 				allowNull: true,
-			}
+			},
 		},
 		{
 			sequelize,
 			modelName: 'User',
-		}
+		},
 	);
 
 	// User.associate = (models) => {

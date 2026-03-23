@@ -1,13 +1,25 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const { User, Role, BusinessPartner, Address, organization } = require('../models/index');
-const { JWT_ACCESS_SECRET, COOKIE_DOMAIN, COOKIE_SECURE } = require('../config/serverConfig');
+const {
+	User,
+	Role,
+	BusinessPartner,
+	Address,
+	organization,
+	sequelize,
+} = require('../models/index');
+const {
+	JWT_ACCESS_SECRET,
+	COOKIE_DOMAIN,
+	COOKIE_SECURE,
+} = require('../config/serverConfig');
 const {
 	generateAccessToken,
 	generateRefreshToken,
 } = require('../utils/generateToken');
 const AppError = require('../utils/AppError');
 const { generateSignedUrl } = require('../utils/s3Bucket');
+const fetchPermissions = require('../helpers/fetchPermissions');
 
 exports.register = async ({ name, email, password, roleId }) => {
 	const hashed = await bcrypt.hash(password, 10);
@@ -19,11 +31,11 @@ exports.login = async ({ email, password }, res) => {
 		where: { email, is_active: 1 },
 		include: [
 			{ model: Role },
-			{
-				model: BusinessPartner,
-				as: 'partner',
-				include: { model: Address, as: 'addresses' },
-			},
+			// {
+			// 	model: BusinessPartner,
+			// 	as: 'partner',
+			// 	include: { model: Address, as: 'addresses' },
+			// },
 			{ model: organization, as: 'organization' },
 		],
 	});
@@ -43,6 +55,23 @@ exports.login = async ({ email, password }, res) => {
 		state_id = user?.partner?.addresses[0].state_id;
 	}
 
+	const permissions = await sequelize.query(
+		`
+  SELECT DISTINCT CONCAT(m.slug, ':', p.action) AS permission
+  FROM user_roles ur
+  JOIN role_permissions rp ON rp.role_id = ur.role_id
+  JOIN Permissions p ON p.id = rp.permission_id
+  JOIN Menus m ON m.id = p.menu_id
+  WHERE ur.user_id = ?
+`,
+		{
+			replacements: [user.id],
+			type: sequelize.QueryTypes.SELECT,
+		},
+	);
+
+	const permissionList = permissions.map((p) => p.permission);
+
 	const payload = {
 		id: user.id,
 		email: user.email,
@@ -52,6 +81,8 @@ exports.login = async ({ email, password }, res) => {
 		avatar: user.image,
 		org_id: user.org_id,
 		state_id,
+		permissions: permissionList,
+		isSuperAdmin: user.Role.name === 'Super Admin'
 	};
 	const accessToken = generateAccessToken(payload);
 	const refreshToken = generateRefreshToken(payload);
@@ -84,7 +115,8 @@ exports.login = async ({ email, password }, res) => {
 		roleId: user.roleId,
 		imageUrl: user.image,
 		org_id: user.org_id,
-		state_id
+		state_id,
+		isSuperAdmin: user.Role.name === 'Super Admin'
 	};
 };
 
@@ -114,6 +146,9 @@ exports.getLoggedInUser = async (user_id, res) => {
 		state_id = user?.partner?.addresses[0].state_id ?? null;
 	}
 
+	const req = { user: { id: user.id } };
+	const permissions = await fetchPermissions(req);
+	
 	return {
 		id: user.id,
 		role: user.Role.name,
@@ -124,6 +159,7 @@ exports.getLoggedInUser = async (user_id, res) => {
 		imageUrl: user.image,
 		org_id: user.org_id,
 		state_id,
+		permissions,
+		isSuperAdmin: user.Role.name === 'Super Admin'
 	};
 };
-
