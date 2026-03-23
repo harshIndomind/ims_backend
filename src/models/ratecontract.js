@@ -1,0 +1,113 @@
+'use strict';
+const { Model } = require('sequelize');
+module.exports = (sequelize, DataTypes) => {
+	class RateContract extends Model {
+		/**
+		 * Helper method for defining associations.
+		 * This method is not a part of Sequelize lifecycle.
+		 * The `models/index` file will call this method automatically.
+		 */
+		static associate(models) {
+			RateContract.belongsTo(models.organization, {
+				foreignKey: 'org_id',
+				as: 'organization',
+			});
+			RateContract.hasMany(models.RateContractUnitSupplier, {
+				foreignKey: 'rate_contract_id',
+				as: 'unit_supplier_mapping'
+			})
+			RateContract.hasMany(models.RateContractUnitItem, {
+				foreignKey: 'rate_contract_id',
+				as: 'unit_product_mapping'
+			})
+		}
+	}
+	RateContract.init(
+		{
+			org_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
+			supplier_id: {
+				type: DataTypes.INTEGER,
+			},
+			supplierSnapshot: {
+				type: DataTypes.JSON,
+				allowNull: true,
+			},
+			product_id: {
+				type: DataTypes.INTEGER,
+			},
+			productSnapshot: {
+				type: DataTypes.JSON,
+				allowNull: true,
+			},
+			contract_subject: {
+				type: DataTypes.STRING,
+			},
+			universal_code: {
+				type: DataTypes.STRING,
+			},
+			uom_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
+			specification: {
+				type: DataTypes.STRING,
+				allowNull: true,
+			},
+			contract_rate: {
+				type: DataTypes.DOUBLE,
+				defaultValue: 0,
+			},
+			discount: {
+				type: DataTypes.DOUBLE,
+				defaultValue: 0,
+			},
+			special_discount: {
+				type: DataTypes.DOUBLE,
+				defaultValue: 0,
+			},
+			special_discount_details: {
+				type: DataTypes.STRING,
+				allowNull: true,
+			},
+			effective_date: {
+				type: DataTypes.DATEONLY,
+			},
+			end_date: {
+				type: DataTypes.DATEONLY,
+			},
+			price_term_id: {
+				type: DataTypes.INTEGER,
+			},
+			gst_term_id: {
+				type: DataTypes.INTEGER,
+			},
+			payment_term_id: {
+				type: DataTypes.INTEGER,
+			},
+			delivery_term_id: {
+				type: DataTypes.INTEGER,
+			},
+			pf_term_id: {
+				type: DataTypes.INTEGER,
+			},
+			ld_clause_term_id: {
+				type: DataTypes.INTEGER,
+			},
+			dispatch_id: {
+				type: DataTypes.INTEGER,
+			},
+			others: {
+				type: DataTypes.STRING,
+				allowNull: true,
+			},
+		},
+		{
+			sequelize,
+			modelName: 'RateContract',
+		},
+	);
+	return RateContract;
+};

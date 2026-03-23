@@ -11,6 +11,11 @@ router.post(
 	budgetController.createBudget,
 );
 router.get(
+	'/report/download',
+	checkPermission('budget', 'export'),
+	budgetController.downloadBudgetReport,
+);
+router.get(
 	'/',
 	checkPermission('budget', 'view'),
 	budgetController.getAllBudgets,

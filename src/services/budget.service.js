@@ -11,7 +11,9 @@ const {
 	MasterSubHeadAmount,
 	Budget,
 	organization,
-	Product,
+	Department,
+	CostCenter,
+	MasterAccount
 } = require('../models/index');
 const {
 	getAmountByMajorHeadAndPeriod,
@@ -93,6 +95,16 @@ exports.getAllBudgets = async (req) => {
 		where,
 		include: [
 			{
+				model: MasterMajorHead,
+				as: "majorHead",
+				attributes: ["id", "m_code", "m_name"],
+			},
+			{
+				model: MasterSubHead,
+				as: "subHead",
+				attributes: ["id", "sh_code", "sh_name"],
+			},
+			{
 				model: MasterPeriod,
 				as: "period",
 				attributes: ["id", "period_short", "period", "period_detail"],
@@ -100,6 +112,17 @@ exports.getAllBudgets = async (req) => {
 			{
 				model: organization,
 				as: "organization",
+			},
+			{
+				model: Department,
+				as: "department",
+				attributes: ['id', 'name']
+			},
+			{
+				model: CostCenter,
+				as: "cost_center",
+				attributes: ['id', 'code', 'name'],
+				include: {model: MasterAccount, as: 'account', attributes: ['id', 'A_NAME', 'A_CODE'],}
 			},
 		],
 	};
@@ -255,6 +278,7 @@ exports.getAllApprovedBudgets = async (options = {}, budgetType) => {
 					attributes: ['id', 'sh_name', 'sh_code'],
 				},
 				{ model: organization, as: 'organization' },
+				{ model: Department, as: 'department', attributes: ['id', 'name'] },
 			],
 		},
 	);

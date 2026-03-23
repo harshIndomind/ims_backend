@@ -19,5 +19,9 @@ module.exports = {
 	IndentSerialRepository: require('./indentserials.repository'),
     costCenterRepository: require('./costCenter.repository'),
     masterAccountRepository: require('./masterAccount.repository'),
+    masterTermsRepository: require('./masterTerms.repository'),
+    masterTransporterRepository: require('./masterTransporter.repository'),
+    masterUnitsRepositoy: require('./masterUnits.repository'),
+    rateContractRepositoy: require('./rate-contract.repository'),
 
 }

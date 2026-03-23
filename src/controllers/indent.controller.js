@@ -1,6 +1,7 @@
 const catchAsync = require('../utils/catchAsync');
 const { StatusCodes } = require('http-status-codes');
 const indentService = require('../services/indent.service');
+const indentReportService = require('../services/indent-report.service');
 
 exports.createIndent = catchAsync(async (req, res) => {
 	console.log('data ', req.body);
@@ -72,7 +73,7 @@ exports.lastIndentByBudgetId = catchAsync(async (req, res) => {
 
 exports.verifyIndentQuantity = catchAsync(async (req, res) => {
 	const { ids } = req.body;
-  
+
 	const data = await indentService.verifyIndentQuantity(req, ids);
 
 	res.status(StatusCodes.OK).json({
@@ -82,13 +83,38 @@ exports.verifyIndentQuantity = catchAsync(async (req, res) => {
 });
 
 exports.verifyAndApproveIndent = catchAsync(async (req, res) => {
-  const {id} = req.params;
+	const { id } = req.params;
 	const { items } = req.body;
-  console.log("verifyAndApproveIndent ", items)
+	console.log('verifyAndApproveIndent ', items);
 	const data = await indentService.approveIndent(req, id, items);
 
 	res.status(StatusCodes.OK).json({
 		message: 'Indent approved successfully',
 		data,
 	});
+});
+
+exports.downloadIndentReport = catchAsync(async (req, res) => {
+	const data = await indentService.getAllIndents(req);
+
+	if (!data.rows || data.rows.length == 0) {
+		return res
+			.status(StatusCodes.NO_CONTENT)
+			.json({ message: 'Indent data is not available' });
+	}
+
+	const workbook = await indentReportService.generateExcel(data);
+	console.log('workbook ', workbook);
+	// 👉 Headers set karo
+	res.setHeader(
+		'Content-Type',
+		'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+	);
+
+	res.setHeader('Content-Disposition', 'attachment; filename=indent.xlsx');
+
+	// 👉 Direct response me bhejo
+	await workbook.xlsx.write(res);
+
+	res.end();
 });

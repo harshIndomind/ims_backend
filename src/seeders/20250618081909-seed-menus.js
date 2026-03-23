@@ -210,6 +210,30 @@ module.exports = {
 				createdAt: new Date(),
 				updatedAt: new Date(),
 			},
+			{
+				id: 18,
+				parentId: 2,
+				menuName: 'Cost Center',
+				icon: null,
+				url: '/masters/cost-center',
+				slug: 'cost-center',
+				showInSidebar: true,
+				isActive: 1,
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			},
+			{
+				id: 19,
+				parentId: 8,
+				menuName: 'Rate Contract',
+				icon: null,
+				url: '/transaction/rate-contract',
+				slug: 'rate-contract',
+				showInSidebar: true,
+				isActive: 1,
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			}
 		]);
 	},
 

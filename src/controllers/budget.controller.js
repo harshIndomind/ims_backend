@@ -1,6 +1,7 @@
 const catchAsync = require('../utils/catchAsync');
 const { StatusCodes } = require('http-status-codes');
 const budgetService = require('../services/budget.service');
+const budgetReportService = require('../services/budget-report.service');
 const logger = require('../utils/logger');
 
 exports.createBudget = catchAsync(async (req, res) => {
@@ -99,4 +100,27 @@ exports.getAllApprovedBudgets = catchAsync(async (req, res) => {
 	);
 
 	res.status(StatusCodes.OK).json({ data });
+});
+
+exports.downloadBudgetReport = catchAsync(async (req, res) => {
+	const data = await budgetService.getAllBudgets(req);
+
+	if (!data.rows || data.rows.length == 0) {
+		return res.status(StatusCodes.NO_CONTENT).json({ message: 'Budget data is not available' });
+	}
+
+	const workbook = await budgetReportService.generateExcel(data);
+	console.log('workbook ', workbook);
+	// 👉 Headers set karo
+	res.setHeader(
+		'Content-Type',
+		'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+	);
+
+	res.setHeader('Content-Disposition', 'attachment; filename=budget.xlsx');
+
+	// 👉 Direct response me bhejo
+	await workbook.xlsx.write(res);
+
+	res.end();
 });

@@ -40,11 +40,11 @@ if (process.env.APP_ENV !== 'production') {
 	logger.add(
 		new transports.Console({
 			format: format.combine(
-				format.colorize(),
+				format.colorize({all:true}),
 				format.timestamp({ format: 'DD-MM-YYYY HH:mm:ss' }),
 				format.printf(({ level, message, timestamp, ...meta }) => {
 					return `${timestamp} [${level}]: ${message} ${
-						Object.keys(meta).length ? JSON.stringify(meta) : ''
+						Object.keys(meta).length ? JSON.stringify(meta, null, 2) : ''
 					}`;
 				})
 			),

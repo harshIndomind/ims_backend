@@ -10,7 +10,11 @@ router.post(
 	checkPermission('indent', 'create'),
 	indentController.createIndent,
 );
-
+router.get(
+	'/report/download',
+	checkPermission('indent', 'export'),
+	indentController.downloadIndentReport,
+);
 router.get(
 	'/',
 	checkPermission('indent', 'view'),

@@ -127,6 +127,9 @@ async function prepareAndStartServer() {
 	app.use(`${apiPrefix}/v1/master/budget`, require('./routes/v1/budget.routes'));
 	app.use(`${apiPrefix}/v1/master/cost-center`, require('./routes/v1/costCenter.routes'));
 	app.use(`${apiPrefix}/v1/master/accounts`, require('./routes/v1/masterAccounts.routes'));
+	app.use(`${apiPrefix}/v1/master/terms`, require('./routes/v1/masterTerms.routes'));
+	app.use(`${apiPrefix}/v1/master/transporter`, require('./routes/v1/masterTransporter.routes'));
+	app.use(`${apiPrefix}/v1/master/units`, require('./routes/v1/masterUnit.routes'));
 	
 	app.use(`${apiPrefix}/v1/departments`, require('./routes/v1/department.routes'));
 	app.use(`${apiPrefix}/v1/designations`, require('./routes/v1/designation.routes'));
@@ -141,6 +144,7 @@ async function prepareAndStartServer() {
 	);
 	app.use(`${apiPrefix}/v1/admin-users`, require('./routes/v1/admin-user.routes'));
 	app.use(`${apiPrefix}/v1/indent`, require('./routes/v1/indent.routes'));
+	app.use(`${apiPrefix}/v1/rate-contract`, require('./routes/v1/rate-contract.routes'));
 
 
 	app.get('/', (req, res) => {

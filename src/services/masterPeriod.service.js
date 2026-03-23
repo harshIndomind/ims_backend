@@ -5,16 +5,23 @@ const {
 	masterMajorHeadRepo,
 } = require('../repository/index');
 const logger = require('../utils/logger');
-const {  MasterMajorHead } = require('../models/index');
+const { MasterMajorHead } = require('../models/index');
 const { organization } = require('../models/index');
 
 /**
  * Create
  */
 exports.createMasterPeriod = async (req, payload) => {
-	const {org_id} = req.user;
-	const { period_code, period, period_detail, period_short, is_lock } =
-		payload;
+	const { org_id } = req.user;
+	const {
+		period_code,
+		period,
+		period_detail,
+		period_short,
+		is_lock,
+		from_date,
+		end_date,
+	} = payload;
 	// const masterMajorHead = masterMajorHeadRepo.findById(major_code_id);
 
 	// if (!masterMajorHead) {
@@ -26,7 +33,7 @@ exports.createMasterPeriod = async (req, payload) => {
 		logger.warn('Validation failed while creating Master Period', payload);
 		throw new AppError(
 			'period_code, period, period_detail and period_short are required',
-			StatusCodes.BAD_REQUEST
+			StatusCodes.BAD_REQUEST,
 		);
 	}
 
@@ -37,6 +44,8 @@ exports.createMasterPeriod = async (req, payload) => {
 		period_detail,
 		period_short,
 		is_lock,
+		from_date,
+		end_date,
 	});
 
 	logger.info('Master Period created', {
@@ -46,6 +55,8 @@ exports.createMasterPeriod = async (req, payload) => {
 		period_detail: MasterPeriod.period_detail,
 		period_short: MasterPeriod.period_short,
 		is_lock: MasterPeriod.is_lock,
+		from_date: MasterPeriod.from_date,
+		end_date: MasterPeriod.end_date,
 	});
 
 	return MasterPeriod;
@@ -55,8 +66,15 @@ exports.createMasterPeriod = async (req, payload) => {
  * Update
  */
 exports.updateMasterPeriod = async (id, payload) => {
-	const { period_code, period, period_detail, period_short, is_lock } =
-		payload;
+	const {
+		period_code,
+		period,
+		period_detail,
+		period_short,
+		is_lock,
+		from_date,
+		end_date,
+	} = payload;
 
 	const MasterPeriod = await masterPeriodRepo.findById(id);
 
@@ -76,7 +94,7 @@ exports.updateMasterPeriod = async (id, payload) => {
 		logger.warn('Validation failed while creating Master Period', payload);
 		throw new AppError(
 			'period_code, period, period_detail and period_short are required',
-			StatusCodes.BAD_REQUEST
+			StatusCodes.BAD_REQUEST,
 		);
 	}
 
@@ -86,6 +104,8 @@ exports.updateMasterPeriod = async (id, payload) => {
 		period_detail,
 		period_short,
 		is_lock,
+		from_date,
+		end_date,
 	});
 
 	logger.info('Master Period updated', {
@@ -103,19 +123,12 @@ exports.getAllMasterPeriod = async (options = {}) => {
 	options.include = [
 		{
 			model: organization,
-			as: "organization",
-			attributes: ['org_code','org_name']
-		}
-	]
+			as: 'organization',
+			attributes: ['org_code', 'org_name'],
+		},
+	];
 	return await masterPeriodRepo.findAll({
-		// include: [
-		// 	{
-		// 		model: MasterMajorHead,
-		// 		as: 'majorHead',
-		// 		attributes: ['m_code', 'm_name'],
-		// 	},
-		// ],
-		...options
+		...options,
 	});
 };
 
