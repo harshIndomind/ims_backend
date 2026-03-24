@@ -1,6 +1,6 @@
 'use strict';
 
-const ACTIONS = ['view', 'create', 'edit', 'delete', 'export'];
+const ACTIONS = ['view', 'create', 'edit', 'delete', 'export', 'approver'];
 
 module.exports = {
   async up(queryInterface, Sequelize) {
