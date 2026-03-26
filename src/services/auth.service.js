@@ -81,6 +81,7 @@ exports.login = async ({ email, password }, res) => {
 		avatar: user.image,
 		org_id: user.org_id,
 		state_id,
+		organization_name: user?.organization?.org_name ?? null,
 		// permissions: permissionList,
 		isSuperAdmin: user.Role.name === 'Super Admin'
 	};
@@ -116,6 +117,7 @@ exports.login = async ({ email, password }, res) => {
 		imageUrl: user.image,
 		org_id: user.org_id,
 		state_id,
+		organization_name: user?.organization?.org_name ?? null,
 		isSuperAdmin: user.Role.name === 'Super Admin'
 	};
 };
@@ -130,7 +132,7 @@ exports.getLoggedInUser = async (user_id, res) => {
 			// 	as: 'partner',
 			// 	include: { model: Address, as: 'addresses' },
 			// },
-			// { model: organization, as: 'organization' },
+			{ model: organization, as: 'organization' },
 		],
 	});
 	if (!user) throw new AppError('User not found!', 401);
@@ -160,6 +162,7 @@ exports.getLoggedInUser = async (user_id, res) => {
 		org_id: user.org_id,
 		state_id,
 		permissions,
+		organization_name: user?.organization?.org_name ?? null,
 		isSuperAdmin: user.Role.name === 'Super Admin'
 	};
 };

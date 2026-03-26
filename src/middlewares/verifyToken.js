@@ -58,6 +58,7 @@ const verifyToken = async (req, res, next) => {
 			imageUrl: user.image,
 			org_id: user.org_id,
 			state_id,
+			organization_name: user?.organization?.org_name ?? null,
 			permissions: decoded.permissions,
 			isSuperAdmin: user.Role.name === 'Super Admin'
 		};

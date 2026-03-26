@@ -87,6 +87,7 @@ exports.refreshToken = catchAsync(async (req, res) => {
 			avatar: decoded.avatar,
 			org_id: decoded.org_id,
 			state_id,
+			organization_name: decoded?.organization_name ?? null,
 			isSuperAdmin: user.Role.name === 'Super Admin'
 		};
 
