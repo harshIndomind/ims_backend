@@ -55,22 +55,22 @@ exports.login = async ({ email, password }, res) => {
 		state_id = user?.partner?.addresses[0].state_id;
 	}
 
-	const permissions = await sequelize.query(
-		`
-  SELECT DISTINCT CONCAT(m.slug, ':', p.action) AS permission
-  FROM user_roles ur
-  JOIN role_permissions rp ON rp.role_id = ur.role_id
-  JOIN Permissions p ON p.id = rp.permission_id
-  JOIN Menus m ON m.id = p.menu_id
-  WHERE ur.user_id = ?
-`,
-		{
-			replacements: [user.id],
-			type: sequelize.QueryTypes.SELECT,
-		},
-	);
+// 	const permissions = await sequelize.query(
+// 		`
+//   SELECT DISTINCT CONCAT(m.slug, ':', p.action) AS permission
+//   FROM user_roles ur
+//   JOIN role_permissions rp ON rp.role_id = ur.role_id
+//   JOIN Permissions p ON p.id = rp.permission_id
+//   JOIN Menus m ON m.id = p.menu_id
+//   WHERE ur.user_id = ?
+// `,
+// 		{
+// 			replacements: [user.id],
+// 			type: sequelize.QueryTypes.SELECT,
+// 		},
+// 	);
 
-	const permissionList = permissions.map((p) => p.permission);
+	// const permissionList = permissions.map((p) => p.permission);
 
 	const payload = {
 		id: user.id,
@@ -81,7 +81,7 @@ exports.login = async ({ email, password }, res) => {
 		avatar: user.image,
 		org_id: user.org_id,
 		state_id,
-		permissions: permissionList,
+		// permissions: permissionList,
 		isSuperAdmin: user.Role.name === 'Super Admin'
 	};
 	const accessToken = generateAccessToken(payload);
