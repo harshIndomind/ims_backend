@@ -36,4 +36,9 @@ module.exports = {
 	COOKIE_SECURE: process.env.COOKIE_SECURE === 'true',
 	VCP_SERVICE_API_BASE_URL: process.env.VCP_SERVICE_API_BASE_URL,
 	VCP_SERVICE_PRODUCT_ENDPOINT: process.env.VCP_SERVICE_PRODUCT_ENDPOINT,
+	rabbitmq: {
+		url: process.env.RABBITMQ_URL || 'amqp://localhost',
+		authQueue: process.env.RABBITMQ_AUTH_SERVICE_QUEUE || 'auth_service_queue'
+	},
+	defaultPassword: process.env.DEFAULT_USER_PASSWORD || 123456
 };
