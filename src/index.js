@@ -13,7 +13,8 @@ app.use('/uploads', express.static(path.join(__dirname, '/uploads')));
 const http = require('http');
 const { init } = require('./utils/socket');
 const publishMessage = require('./publisher/publisher');
-
+const { connectQueue } = require('./shared/rabbitmq');
+const {consumeAdminEvents} = require('./shared/consumeEvent');
 const limiter = rateLimit({
 	windowMs: 1 * 60 * 1000,
 	limit: 100,
@@ -57,7 +58,7 @@ async function prepareAndStartServer() {
 				}
 			},
 			credentials: true,
-		})
+		}),
 	);
 	app.use(express.json());
 	app.use(express.urlencoded({ extended: true }));
@@ -71,12 +72,15 @@ async function prepareAndStartServer() {
 
 	app.use(`${apiPrefix}/v1/auth`, authRoutes);
 	app.use(`${apiPrefix}/v1/users`, require('./routes/v1/user.routes'));
-	app.use(`${apiPrefix}/v1/user-roles`, require('./routes/v1/user-roles.routes'));
+	app.use(
+		`${apiPrefix}/v1/user-roles`,
+		require('./routes/v1/user-roles.routes'),
+	);
 
 	// app.use(`${apiPrefix}/v1/dashboard`, require('./routes/v1/dashboard.routes'));
 	app.use(
 		`${apiPrefix}/v1/organizations`,
-		require('./routes/v1/organization.route')
+		require('./routes/v1/organization.route'),
 	);
 	// app.use(
 	// 	`${apiPrefix}/v1/docs-categories`,
@@ -90,15 +94,15 @@ async function prepareAndStartServer() {
 	app.use(`${apiPrefix}/v1/menus`, require('./routes/v1/menu.routes'));
 	app.use(
 		`${apiPrefix}/v1/permissions`,
-		require('./routes/v1/permission.routes')
+		require('./routes/v1/permission.routes'),
 	);
 	app.use(
 		`${apiPrefix}/v1/role-permissions`,
-		require('./routes/v1/roles-permission.routes')
+		require('./routes/v1/roles-permission.routes'),
 	);
 	app.use(
 		`${apiPrefix}/v1/notifications`,
-		require('./routes/v1/notifications.routes')
+		require('./routes/v1/notifications.routes'),
 	);
 	// app.use(`${apiPrefix}/v1/partners`, require('./routes/v1/partners.route'));
 	// app.use(
@@ -119,33 +123,77 @@ async function prepareAndStartServer() {
 	// app.use(`${apiPrefix}/v1/credit-note`, require('./routes/v1/credit-note-invoice.routes'));
 
 	// Budget Planner
-	app.use(`${apiPrefix}/v1/master/major-head`, require('./routes/v1/masterMajorHead.routes'));
-	app.use(`${apiPrefix}/v1/master/sub-head`, require('./routes/v1/masterSubHead.routes'));
-	app.use(`${apiPrefix}/v1/master/period`, require('./routes/v1/masterPeriod.routes'));
-	app.use(`${apiPrefix}/v1/master/major-head-amount`, require('./routes/v1/masterMajorHeadAmount.routes'));
-	app.use(`${apiPrefix}/v1/master/sub-head-amount`, require('./routes/v1/masterSubHeadAmount.routes'));
-	app.use(`${apiPrefix}/v1/master/budget`, require('./routes/v1/budget.routes'));
-	app.use(`${apiPrefix}/v1/master/cost-center`, require('./routes/v1/costCenter.routes'));
-	app.use(`${apiPrefix}/v1/master/accounts`, require('./routes/v1/masterAccounts.routes'));
-	app.use(`${apiPrefix}/v1/master/terms`, require('./routes/v1/masterTerms.routes'));
-	app.use(`${apiPrefix}/v1/master/transporter`, require('./routes/v1/masterTransporter.routes'));
-	app.use(`${apiPrefix}/v1/master/units`, require('./routes/v1/masterUnit.routes'));
-	
-	app.use(`${apiPrefix}/v1/departments`, require('./routes/v1/department.routes'));
-	app.use(`${apiPrefix}/v1/designations`, require('./routes/v1/designation.routes'));
+	app.use(
+		`${apiPrefix}/v1/master/major-head`,
+		require('./routes/v1/masterMajorHead.routes'),
+	);
+	app.use(
+		`${apiPrefix}/v1/master/sub-head`,
+		require('./routes/v1/masterSubHead.routes'),
+	);
+	app.use(
+		`${apiPrefix}/v1/master/period`,
+		require('./routes/v1/masterPeriod.routes'),
+	);
+	app.use(
+		`${apiPrefix}/v1/master/major-head-amount`,
+		require('./routes/v1/masterMajorHeadAmount.routes'),
+	);
+	app.use(
+		`${apiPrefix}/v1/master/sub-head-amount`,
+		require('./routes/v1/masterSubHeadAmount.routes'),
+	);
+	app.use(
+		`${apiPrefix}/v1/master/budget`,
+		require('./routes/v1/budget.routes'),
+	);
+	app.use(
+		`${apiPrefix}/v1/master/cost-center`,
+		require('./routes/v1/costCenter.routes'),
+	);
+	app.use(
+		`${apiPrefix}/v1/master/accounts`,
+		require('./routes/v1/masterAccounts.routes'),
+	);
+	app.use(
+		`${apiPrefix}/v1/master/terms`,
+		require('./routes/v1/masterTerms.routes'),
+	);
+	app.use(
+		`${apiPrefix}/v1/master/transporter`,
+		require('./routes/v1/masterTransporter.routes'),
+	);
+	app.use(
+		`${apiPrefix}/v1/master/units`,
+		require('./routes/v1/masterUnit.routes'),
+	);
+
+	app.use(
+		`${apiPrefix}/v1/departments`,
+		require('./routes/v1/department.routes'),
+	);
+	app.use(
+		`${apiPrefix}/v1/designations`,
+		require('./routes/v1/designation.routes'),
+	);
 	// API'S FOR OTHER SERVICES
 	app.use(
 		`${apiPrefix}/v1/service/organizations`,
-		require('./routes/v1/service-organization.route')
+		require('./routes/v1/service-organization.route'),
 	);
 	app.use(
 		`${apiPrefix}/v1/service/users`,
-		require('./routes/v1/service-user.routes')
+		require('./routes/v1/service-user.routes'),
 	);
-	app.use(`${apiPrefix}/v1/admin-users`, require('./routes/v1/admin-user.routes'));
+	app.use(
+		`${apiPrefix}/v1/admin-users`,
+		require('./routes/v1/admin-user.routes'),
+	);
 	app.use(`${apiPrefix}/v1/indent`, require('./routes/v1/indent.routes'));
-	app.use(`${apiPrefix}/v1/rate-contract`, require('./routes/v1/rate-contract.routes'));
-
+	app.use(
+		`${apiPrefix}/v1/rate-contract`,
+		require('./routes/v1/rate-contract.routes'),
+	);
 
 	app.get('/', (req, res) => {
 		res.status(200).json({ status: true, message: '✅ Its working.' });
@@ -160,25 +208,29 @@ async function prepareAndStartServer() {
 	const server = http.createServer(app);
 	const io = init(server);
 
-	if (APP_ENV === 'development') {
-		db.sequelize.authenticate().then(() => {
-			server.listen(PORT, () => {
-				console.log(`Dev server running on ${BASE_URL}`);
-			});
-		});
-	} else {
-		db.sequelize
+	const envLabel = APP_ENV === 'development' ? 'Dev' : 'Production';
+
+	db.sequelize
 		.authenticate()
-		.then(() => {
+		.then(async () => {
+			console.log(`✅ DB connected (${envLabel})`);
+
 			server.listen(PORT, () => {
-				console.log(`Production server running on ${BASE_URL}`);
+				console.log(`${envLabel} server running on ${BASE_URL}`);
 			});
+			// try {
+			// 	await connectQueue();
+			// 	await consumeAdminEvents();
+			// 	console.log('✅ RabbitMQ connected');
+			// } catch (err) {
+			// 	console.error('❌ RabbitMQ connection failed:', err);
+			// 	// DO NOT exit — retry instead
+			// }
 		})
 		.catch((err) => {
-			console.error('Database connection failed:', err);
+			console.error(`${envLabel} DB connection failed:`, err);
 			process.exit(1);
 		});
-	}
 	// await publishMessage();
 }
 

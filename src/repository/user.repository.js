@@ -23,17 +23,17 @@ class UserRepository {
 	// 	this.userModel = userModel;
 	// }
 
-	async create(data) {
+	async create(data, options = {}) {
 		try {
 			console.log('existingUser ', data);
 			const existingUser = await User.findOne({ where: { email: data.email } });
 			if (existingUser) {
 				throw new AppError(
 					'A user already exists with this e-mail address',
-					400
+					400,
 				);
 			}
-			const user = await User.create(data);
+			const user = await User.create(data, options);
 
 			return user;
 		} catch (error) {
@@ -44,7 +44,7 @@ class UserRepository {
 
 	async update(id, data) {
 		try {
-			await User.update(data, {where: {swayamm_user_id: id}});
+			await User.update(data, { where: { swayamm_user_id: id } });
 			return User.findOne({
 				where: { swayamm_user_id: id },
 				include: {
@@ -61,14 +61,13 @@ class UserRepository {
 
 	async allUsers(org_id, role) {
 		try {
-
-			if(role === 'Super Admin') {
+			if (role === 'Super Admin') {
 				var whereClause = {};
 			} else {
 				var whereClause = { roleId: { [Op.notIn]: [1, 2] }, org_id };
 			}
-			console.log("allUsers whereClause => ", whereClause);
-			
+			console.log('allUsers whereClause => ', whereClause);
+
 			const users = await User.findAll({
 				where: whereClause,
 				attributes: [
@@ -258,7 +257,7 @@ class UserRepository {
 			if (isUserExists === null) {
 				throw new AppError(
 					'No user found with the provided email address.',
-					400
+					400,
 				);
 			}
 
@@ -317,7 +316,7 @@ class UserRepository {
 			if (!resetRecord) {
 				throw new AppError(
 					'Your reset password link is invalid or expired. Please try again.',
-					400
+					400,
 				);
 			}
 
@@ -342,11 +341,11 @@ class UserRepository {
 		}
 	}
 
-	async getOrganizationIdBySwayammOrgId(swayamm_org_id){
-		const orgData = await organization.findOne({where: {swayamm_org_id}});
+	async getOrganizationIdBySwayammOrgId(swayamm_org_id) {
+		const orgData = await organization.findOne({ where: { swayamm_org_id } });
 
-		if(!orgData){
-			throw new AppError("Organization not found with swayamm org id");
+		if (!orgData) {
+			throw new AppError('Organization not found with swayamm org id');
 		}
 
 		return orgData.id;

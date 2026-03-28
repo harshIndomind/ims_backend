@@ -31,11 +31,6 @@ exports.login = async ({ email, password }, res) => {
 		where: { email, is_active: 1 },
 		include: [
 			{ model: Role },
-			// {
-			// 	model: BusinessPartner,
-			// 	as: 'partner',
-			// 	include: { model: Address, as: 'addresses' },
-			// },
 			{ model: organization, as: 'organization' },
 		],
 	});
@@ -55,23 +50,6 @@ exports.login = async ({ email, password }, res) => {
 		state_id = user?.partner?.addresses[0].state_id;
 	}
 
-// 	const permissions = await sequelize.query(
-// 		`
-//   SELECT DISTINCT CONCAT(m.slug, ':', p.action) AS permission
-//   FROM user_roles ur
-//   JOIN role_permissions rp ON rp.role_id = ur.role_id
-//   JOIN Permissions p ON p.id = rp.permission_id
-//   JOIN Menus m ON m.id = p.menu_id
-//   WHERE ur.user_id = ?
-// `,
-// 		{
-// 			replacements: [user.id],
-// 			type: sequelize.QueryTypes.SELECT,
-// 		},
-// 	);
-
-	// const permissionList = permissions.map((p) => p.permission);
-
 	const payload = {
 		id: user.id,
 		email: user.email,
@@ -80,9 +58,9 @@ exports.login = async ({ email, password }, res) => {
 		roleId: user.roleId,
 		avatar: user.image,
 		org_id: user.org_id,
+		swayamm_org_id: user?.organization?.swayamm_org_id ?? null,
 		state_id,
 		organization_name: user?.organization?.org_name ?? null,
-		// permissions: permissionList,
 		isSuperAdmin: user.Role.name === 'Super Admin'
 	};
 	const accessToken = generateAccessToken(payload);
@@ -116,6 +94,7 @@ exports.login = async ({ email, password }, res) => {
 		roleId: user.roleId,
 		imageUrl: user.image,
 		org_id: user.org_id,
+		swayamm_org_id: user?.organization?.swayamm_org_id ?? null,
 		state_id,
 		organization_name: user?.organization?.org_name ?? null,
 		isSuperAdmin: user.Role.name === 'Super Admin'
@@ -162,6 +141,7 @@ exports.getLoggedInUser = async (user_id, res) => {
 		org_id: user.org_id,
 		state_id,
 		permissions,
+		swayamm_org_id: user?.organization?.swayamm_org_id ?? null,
 		organization_name: user?.organization?.org_name ?? null,
 		isSuperAdmin: user.Role.name === 'Super Admin'
 	};
