@@ -24,6 +24,7 @@ module.exports = {
     masterUnitsRepositoy: require('./masterUnits.repository'),
     rateContractRepositoy: require('./rate-contract.repository'),
     organizationRepository: require('./organization.repository'),
-    organizationBankRepository: require('./organizationBank.repository')
+    organizationBankRepository: require('./organizationBank.repository'),
+    purchaseOrderRepository: require('./purchase-order.repository'),
 
 }

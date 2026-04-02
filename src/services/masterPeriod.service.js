@@ -118,7 +118,15 @@ exports.updateMasterPeriod = async (id, payload) => {
 /**
  * Get All
  */
-exports.getAllMasterPeriod = async (options = {}) => {
+exports.getAllMasterPeriod = async (req) => {
+	const { org_id } = req.user;
+	const { limit, offset } = req.query;
+
+	const options = {};
+	if (limit) {
+		options.limit = Number(limit);
+		options.offset = Number(offset);
+	}
 	logger.info('Fetching all Master Periods');
 	options.include = [
 		{
@@ -128,6 +136,7 @@ exports.getAllMasterPeriod = async (options = {}) => {
 		},
 	];
 	return await masterPeriodRepo.findAll({
+		where: { org_id },
 		...options,
 	});
 };

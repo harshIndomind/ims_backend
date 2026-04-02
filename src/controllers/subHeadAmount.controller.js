@@ -12,9 +12,9 @@ exports.createSubHeadAmount = catchAsync(async (req, res) => {
 });
 
 exports.updateSubHeadAmount = catchAsync(async (req, res) => {
-	const { id } = req.params;
+	
 
-	const data = await masterSubHeadAmountService.updateSubHeadAmount(id, req.body);
+	const data = await masterSubHeadAmountService.updateSubHeadAmount(req, req.body);
 
 	res.status(StatusCodes.OK).json({
 		message: 'Sub head amount updated successfully',
@@ -23,15 +23,7 @@ exports.updateSubHeadAmount = catchAsync(async (req, res) => {
 });
 
 exports.getAllSubHeadAmount = catchAsync(async (req, res) => {
-	const { limit, offset } = req.query;
-
-	const options = {};
-	if(limit){
-		options.limit = Number(limit);
-		options.offset = Number(offset);
-	}
-
-	const data = await masterSubHeadAmountService.getAllSubHeadAmount(options);
+	const data = await masterSubHeadAmountService.getAllSubHeadAmount(req);
 
 	res.status(StatusCodes.OK).json({ data });
 });

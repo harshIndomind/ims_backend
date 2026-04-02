@@ -233,6 +233,18 @@ module.exports = {
 				isActive: 1,
 				createdAt: new Date(),
 				updatedAt: new Date(),
+			},
+			{
+				id: 20,
+				parentId: null,
+				menuName: 'Purchase Order',
+				icon: 'IconFileInvoice',
+				url: '/purchase-order',
+				slug: 'purchase-order',
+				showInSidebar: true,
+				isActive: 1,
+				createdAt: new Date(),
+				updatedAt: new Date(),
 			}
 		]);
 	},

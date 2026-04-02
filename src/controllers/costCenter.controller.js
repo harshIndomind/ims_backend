@@ -23,15 +23,7 @@ exports.updateCostCenter = catchAsync(async (req, res) => {
 });
 
 exports.getAllCostCenter = catchAsync(async (req, res) => {
-	const { limit, offset } = req.query;
-
-	const options = {};
-	if(limit){
-		options.limit = Number(limit);
-		options.offset = Number(offset);
-	}
-
-	const data = await costCenterService.getAllCostCenter(options);
+	const data = await costCenterService.getAllCostCenter(req);
 
 	res.status(StatusCodes.OK).json({ data });
 });

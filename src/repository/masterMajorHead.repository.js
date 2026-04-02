@@ -9,10 +9,17 @@ exports.findById = (id, options = {}) => {
 };
 
 exports.findAll = (where = {}, options = {}) => {	
-	return MasterMajorHead.findAndCountAll({
-		where,
-		...options,
-	});
+	try {
+		console.log("where ", where);
+		
+		return MasterMajorHead.findAndCountAll({
+			where,
+			...options,
+		});
+	} catch (error) {
+		console.error('Error fetching Master Major Heads:', error);
+		throw error;
+	}
 };
 
 exports.update = (instance, data, options = {}) => {

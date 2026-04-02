@@ -86,18 +86,7 @@ exports.approveBudget = catchAsync(async (req, res) => {
 });
 
 exports.getAllApprovedBudgets = catchAsync(async (req, res) => {
-	const { limit, offset, budgetType } = req.query;
-
-	const options = {};
-	if (limit) {
-		options.limit = Number(limit);
-		options.offset = Number(offset || 0);
-	}
-
-	const data = await budgetService.getAllApprovedBudgets(
-		options,
-		budgetType || 'item-wise',
-	);
+	const data = await budgetService.getAllApprovedBudgets(req);
 
 	res.status(StatusCodes.OK).json({ data });
 });
@@ -106,7 +95,9 @@ exports.downloadBudgetReport = catchAsync(async (req, res) => {
 	const data = await budgetService.getAllBudgets(req);
 
 	if (!data.rows || data.rows.length == 0) {
-		return res.status(StatusCodes.NO_CONTENT).json({ message: 'Budget data is not available' });
+		return res
+			.status(StatusCodes.NO_CONTENT)
+			.json({ message: 'Budget data is not available' });
 	}
 
 	const workbook = await budgetReportService.generateExcel(data);

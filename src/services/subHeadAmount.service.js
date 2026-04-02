@@ -41,8 +41,13 @@ exports.createSubHeadAmount = async (req, payload) => {
 
 	const subHeadAmount = await getSubAmountByMajorHeadAndPeriod(
 		major_head_id,
-		sub_head_id,
+		period_id,
 	);
+	logger.info('Sub head amount fetched for major head and period', {
+		major_head_id,
+		period_id,
+		subHeadAmount,
+	});
 
 	let totalAmountLeftForUse = parseFloat(majorHeadAmount.amount);
 	let totalSubHeadAmount = 0;
@@ -67,6 +72,7 @@ exports.createSubHeadAmount = async (req, payload) => {
 	}
 
 	const subHeadAmountData = await masterSubHeadAmountRepo.create({
+		org_id,
 		major_head_amount_id: majorHeadAmount.id,
 		major_head_id,
 		period_id,
@@ -89,7 +95,9 @@ exports.createSubHeadAmount = async (req, payload) => {
 /**
  * Update
  */
-exports.updateSubHeadAmount = async (id, payload) => {
+exports.updateSubHeadAmount = async (req, payload) => {
+	const { org_id } = req.user;
+	const { id } = req.params;
 	const {
 		major_head_amount_id,
 		major_head_id,
@@ -135,6 +143,7 @@ exports.updateSubHeadAmount = async (id, payload) => {
 	}
 
 	await masterSubHeadAmountRepo.update(masterMajorHeadAmount, {
+		org_id,
 		major_head_amount_id,
 		major_head_id,
 		period_id,
@@ -152,9 +161,18 @@ exports.updateSubHeadAmount = async (id, payload) => {
 /**
  * Get All
  */
-exports.getAllSubHeadAmount = async (options = {}) => {
+exports.getAllSubHeadAmount = async (req) => {
+	const { org_id } = req.user;
+	const { limit, offset } = req.query;
+
+	const options = {};
+	if (limit) {
+		options.limit = Number(limit);
+		options.offset = Number(offset);
+	}
 	logger.info('Fetching all Sub head amounts');
 	return await masterSubHeadAmountRepo.findAll({
+		where: { org_id },
 		...options,
 		include: [
 			{

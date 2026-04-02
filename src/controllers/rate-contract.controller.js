@@ -48,3 +48,14 @@ exports.deleteRateContract = catchAsync(async (req, res) => {
 		message: 'Rate Contract Deleted Successfully',
 	});
 });
+
+exports.getRateContractByProductId = catchAsync(async (req, res) => {
+	const { product_id } = req.params;
+
+	const data = await rateContractService.getRateContractByProductId(product_id);
+
+	res.status(StatusCodes.OK).json({
+		message: 'Rate Contract Fetched Successfully',
+		data,
+	});
+});

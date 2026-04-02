@@ -13,7 +13,7 @@ const {
 	organization,
 	Department,
 	CostCenter,
-	MasterAccount
+	MasterAccount,
 } = require('../models/index');
 const {
 	getAmountByMajorHeadAndPeriod,
@@ -62,7 +62,7 @@ exports.getAllBudgets = async (req) => {
 	} = req.query;
 
 	if (!fromDate || !toDate) {
-		throw new AppError("fromDate and toDate are required");
+		throw new AppError('fromDate and toDate are required');
 	}
 
 	const from_date = parseDate(fromDate);
@@ -70,11 +70,11 @@ exports.getAllBudgets = async (req) => {
 	to_date.setDate(to_date.getDate() + 1);
 
 	if (isNaN(from_date) || isNaN(to_date)) {
-		throw new AppError("Invalid date range");
+		throw new AppError('Invalid date range');
 	}
 
 	const where = {
-		is_lock: selectedStatusId === "lock" ? 1 : 0,
+		is_lock: selectedStatusId === 'lock' ? 1 : 0,
 		budgetType: selectedBudgetTypeId,
 		createdAt: {
 			[Op.gte]: from_date,
@@ -96,33 +96,37 @@ exports.getAllBudgets = async (req) => {
 		include: [
 			{
 				model: MasterMajorHead,
-				as: "majorHead",
-				attributes: ["id", "m_code", "m_name"],
+				as: 'majorHead',
+				attributes: ['id', 'm_code', 'm_name'],
 			},
 			{
 				model: MasterSubHead,
-				as: "subHead",
-				attributes: ["id", "sh_code", "sh_name"],
+				as: 'subHead',
+				attributes: ['id', 'sh_code', 'sh_name'],
 			},
 			{
 				model: MasterPeriod,
-				as: "period",
-				attributes: ["id", "period_short", "period", "period_detail"],
+				as: 'period',
+				attributes: ['id', 'period_short', 'period', 'period_detail'],
 			},
 			{
 				model: organization,
-				as: "organization",
+				as: 'organization',
 			},
 			{
 				model: Department,
-				as: "department",
-				attributes: ['id', 'name']
+				as: 'department',
+				attributes: ['id', 'name'],
 			},
 			{
 				model: CostCenter,
-				as: "cost_center",
+				as: 'cost_center',
 				attributes: ['id', 'code', 'name'],
-				include: {model: MasterAccount, as: 'account', attributes: ['id', 'A_NAME', 'A_CODE'],}
+				include: {
+					model: MasterAccount,
+					as: 'account',
+					attributes: ['id', 'A_NAME', 'A_CODE'],
+				},
 			},
 		],
 	};
@@ -257,9 +261,23 @@ exports.approveBudget = async (budget_ids) => {
 	return updatedBudgets;
 };
 
-exports.getAllApprovedBudgets = async (options = {}, budgetType) => {
+exports.getAllApprovedBudgets = async (req) => {
+	const { limit, offset, budgetType, periodId, departmentId } = req.query;
+
+	const options = {};
+	if (limit) {
+		options.limit = Number(limit);
+		options.offset = Number(offset || 0);
+	}
+
+	const where = { sanc_by: 'yes', is_lock: 0 };
+
+	if (budgetType) where.budgetType = budgetType;
+	if (periodId) where.period_id = periodId;
+	if (departmentId) where.department_id = departmentId;
+
 	return budgetRepo.findAll(
-		{ where: { sanc_by: 'yes', is_lock: 0, budgetType } },
+		{ where },
 		{
 			include: [
 				{

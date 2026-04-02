@@ -21,6 +21,13 @@ router.get(
 	checkPermission('rate-contract', 'view'),
 	RateContractController.getAllRateContract
 );
+
+router.get(
+	'/:product_id/check',
+	checkPermission('rate-contract', 'view'),
+	RateContractController.getRateContractByProductId
+);
+
 router.get(
 	'/:id',
 	checkPermission('rate-contract', 'view'),

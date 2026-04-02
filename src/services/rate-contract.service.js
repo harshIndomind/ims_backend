@@ -226,3 +226,27 @@ exports.deleteRateContract = async (id) => {
 
 	return true;
 };
+
+exports.getRateContractByProductId = async (product_id) => {
+	const rateContract = await rateContractRepositoy.findOne(
+		{ where: { product_id } },
+		{
+			include: [
+				{
+					model: organization,
+					as: 'organization',
+				},
+				{
+					model: RateContractUnitSupplier,
+					as: 'unit_supplier_mapping',
+				},
+				{
+					model: RateContractUnitItem,
+					as: 'unit_product_mapping',
+				},
+			],
+		},
+	);
+
+	return rateContract;
+};

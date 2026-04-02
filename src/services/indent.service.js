@@ -11,7 +11,12 @@ const {
 	IndentSerialRepository,
 } = require('../repository/index');
 const { fetch } = require('undici');
-const { Indent, Budget, IndentSerialItem } = require('../models/index');
+const {
+	Indent,
+	Budget,
+	IndentSerialItem,
+	IndentItem,
+} = require('../models/index');
 const AppError = require('../utils/AppError');
 const { Op } = require('sequelize');
 const logger = require('../utils/logger');
@@ -162,35 +167,56 @@ exports.getAllIndents = async (req) => {
 		selectedStatusId,
 		selectedBudgetTypeId,
 		indentNo,
+		hasPurchaseQuantityIssue = false,
+		selectedBudgetId,
 	} = req.query;
 
-	if (!fromDate || !toDate) {
-		throw new AppError('fromDate and toDate are required');
-	}
-
-	const from_date = parseDate(fromDate);
-	const to_date = parseDate(toDate);
-	to_date.setDate(to_date.getDate() + 1);
-
-	if (isNaN(from_date) || isNaN(to_date)) {
-		throw new AppError('Invalid date range');
-	}
+	// if (!fromDate || !toDate) {
+	// 	throw new AppError('fromDate and toDate are required');
+	// }
 
 	const where = {
 		isVerified: selectedStatusId === 'yes' ? 1 : 0,
-		budgetType: selectedBudgetTypeId,
-		createdAt: {
+		// createdAt: {
+		// 	[Op.gte]: from_date,
+		// 	[Op.lt]: to_date,
+		// },
+	};
+
+	if (selectedBudgetTypeId > 0) where.budgetType = selectedBudgetTypeId;
+
+	if (fromDate && toDate) {
+		const from_date = parseDate(fromDate);
+		const to_date = parseDate(toDate);
+		to_date.setDate(to_date.getDate() + 1);
+
+		if (isNaN(from_date) || isNaN(to_date)) {
+			throw new AppError('Invalid date range');
+		}
+
+		where.createdAt = {
 			[Op.gte]: from_date,
 			[Op.lt]: to_date,
-		},
-	};
+		};
+	}
 
 	const periodId = Number(selectedPeriodId);
 	const departmentId = Number(selectedDepartmentId);
+	const budgetId = Number(selectedBudgetId);
 
 	if (periodId > 0) where.period_id = periodId;
 	if (departmentId > 0) where.department_id = departmentId;
 	if (indentNo) where.indent_no = indentNo;
+
+	const indentItemsWhere = {};
+	if (hasPurchaseQuantityIssue) {
+		indentItemsWhere['qty_for_purchase_order'] = {
+			[Op.gt]: 0,
+		};
+	}
+	if (budgetId > 0) {
+		indentItemsWhere['budget_id'] = budgetId;
+	}
 
 	const filterOptions = {
 		where,
@@ -199,7 +225,9 @@ exports.getAllIndents = async (req) => {
 			{ association: 'period' },
 			{ association: 'remark' },
 			{
-				association: 'IndentItems',
+				model: IndentItem,
+				as: 'IndentItems',
+				where: indentItemsWhere,
 				include: [
 					{
 						model: Budget,
