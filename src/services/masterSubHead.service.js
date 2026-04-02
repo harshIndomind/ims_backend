@@ -2,7 +2,7 @@ const AppError = require('../utils/AppError');
 const { StatusCodes } = require('http-status-codes');
 const { masterSubHeadRepo } = require('../repository/index');
 const logger = require('../utils/logger');
-const {organization} = require('../models/index');
+const { organization } = require('../models/index');
 
 /**
  * Create
@@ -61,10 +61,18 @@ exports.updateMasterSubHead = async (id, payload) => {
 /**
  * Get All
  */
-exports.getAllMasterSubHead = async (options = {}) => {
+exports.getAllMasterSubHead = async (req) => {
+	const { org_id } = req.user;
+	const { limit, offset } = req.query;
+
+	const options = {};
+	if (limit) {
+		options.limit = Number(limit);
+		options.offset = Number(offset);
+	}
 	logger.info('Fetching all Sub Heads');
 	return await masterSubHeadRepo.findAll(
-		{},
+		{ org_id },
 		{
 			include: [
 				{

@@ -23,15 +23,7 @@ exports.updateMasterMajorHead = catchAsync(async (req, res) => {
 });
 
 exports.getAllMasterMajorHead = catchAsync(async (req, res) => {
-	const { limit, offset } = req.query;
-
-	const options = {};
-	if(limit){
-		options.limit = Number(limit);
-		options.offset = Number(offset);
-	}
-
-	const data = await masterMajorHeadService.getAllMasterMajorHead(options);
+	const data = await masterMajorHeadService.getAllMasterMajorHead(req);
 
 	res.status(StatusCodes.OK).json({ data });
 });

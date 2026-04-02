@@ -23,14 +23,7 @@ exports.updateMasterSubHead = catchAsync(async (req, res) => {
 });
 
 exports.getAllMasterSubHead = catchAsync(async (req, res) => {
-	const { limit, offset } = req.query;
-
-	const options = {};
-	if (limit) {
-		options.limit = Number(limit);
-		options.offset = Number(offset);
-	}
-	const data = await masterSubHeadService.getAllMasterSubHead(options);
+	const data = await masterSubHeadService.getAllMasterSubHead(req);
 
 	res.status(StatusCodes.OK).json({ data });
 });

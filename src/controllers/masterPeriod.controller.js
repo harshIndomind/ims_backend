@@ -23,15 +23,7 @@ exports.updateMasterPeriod = catchAsync(async (req, res) => {
 });
 
 exports.getAllMasterPeriod = catchAsync(async (req, res) => {
-	const { limit, offset } = req.query;
-
-	const options = {};
-	if (limit) {
-		options.limit = Number(limit);
-		options.offset = Number(offset);
-	}
-	const data = await masterPeriodService.getAllMasterPeriod(options);
-	console.log("data ", data);
+	const data = await masterPeriodService.getAllMasterPeriod(req);
 	
 	res.status(StatusCodes.OK).json({ data });
 });

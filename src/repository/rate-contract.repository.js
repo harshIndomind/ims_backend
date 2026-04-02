@@ -4,6 +4,11 @@ exports.create = (data, options = {}) => {
 	return RateContract.create(data, options);
 };
 
+exports.findOne = (options = {}) => {
+	return RateContract.findOne(options);
+};
+
+
 exports.findById = (id, options = {}) => {
 	return RateContract.findByPk(id, options);
 };

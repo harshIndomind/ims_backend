@@ -7,7 +7,7 @@ const {
 	MasterMajorHead,
 	MasterPeriod,
 	MasterSubHeadAmount,
-	organization
+	organization,
 } = require('../models/index');
 const { fn, col } = require('sequelize');
 /**
@@ -77,9 +77,18 @@ exports.updateMasterMajorHeadAmount = async (id, payload) => {
 /**
  * Get All
  */
-exports.getAllMasterMajorHeadAmount = async (options = {}) => {
+exports.getAllMasterMajorHeadAmount = async (req) => {
+	const { org_id } = req.user;
+	const { limit, offset } = req.query;
+
+	const options = {};
+	if (limit) {
+		options.limit = Number(limit);
+		options.offset = Number(offset);
+	}
 	logger.info('Fetching all Master Major Head Amounts');
 	return await masterMajorHeadAmountRepo.findAll({
+		where: { org_id },
 		...options,
 		include: [
 			{
@@ -155,7 +164,11 @@ exports.deleteMasterMajorHeadAmount = async (id) => {
 	return true;
 };
 
-exports.getAmountByMajorHeadAndPeriod = async (org_id, major_head_id, period_id) => {
+exports.getAmountByMajorHeadAndPeriod = async (
+	org_id,
+	major_head_id,
+	period_id,
+) => {
 	logger.info('Fetching all Master Major Head Amounts');
 	return await masterMajorHeadAmountRepo.getAmountByMajorHeadAndPeriod({
 		where: { org_id, major_head_id, period_id },
