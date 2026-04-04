@@ -57,8 +57,13 @@ exports.updateCostCenter = async (id, payload) => {
 
 exports.getAllCostCenter = async (req) => {
 	const { org_id } = req.user;
-	const { limit, offset } = req.query;
+	const { limit, offset, is_lock } = req.query;
 
+	const where = { org_id };
+
+	if(is_lock !== undefined) {
+		where.is_lock = is_lock;
+	}
 	const options = {};
 	if (limit) {
 		options.limit = Number(limit);
@@ -77,7 +82,7 @@ exports.getAllCostCenter = async (req) => {
 			attributes: ['id', 'A_NAME', 'A_CODE'],
 		},
 	];
-	return await costCenterRepository.findAll({ org_id }, options);
+	return await costCenterRepository.findAll(where, options);
 };
 
 exports.getCostCenterById = async (id) => {

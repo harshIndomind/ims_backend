@@ -100,43 +100,31 @@ exports.createIndent = async (req, payload) => {
 					);
 				}
 			}
-
-			// itemsToCreate = selectedIndents.map((i) => {
-			// 	return {
-			// 		indent_id: indent.id,
-			// 		budget_id: i.budget_id,
-			// 		model_id: i.model || null,
-			// 		product_id: Number(i.product_id),
-			// 		batch_id: Number(i.batch_id) || null,
-			// 		item_name: i.product_name,
-			// 		item_code: i.product_code,
-			// 		uom_id: i.selected_uom_id || null,
-			// 		uom_name: i.selected_uom_unit || null,
-			// 		qty: i.qty,
-			// 		requested_qty: i.qty,
-			// 		avg_rate: i.price,
-			// 		discount: i.discount,
-			// 		amount: i.total,
-			// 		issue_date: i.issue_date,
-			// 		days: i.days,
-			// 		specification: i.specification,
-			// 		stock_type: i.stock_type,
-			// 		productSnapshot: i || null,
-			// 	};
-			// });
-			// console.log('Final Updated itemsToCreate ', itemsToCreate);
 		}
-
-		// console.log('itemsToCreate ', itemsToCreate);
-
-		// // 🔹 Bulk Create Items
-		// if (itemsToCreate.length > 0) {
-		// 	await IndentItemRepository.bulkCreate(itemsToCreate, { transaction });
-		// }
 
 		await transaction.commit();
 
-		return IndentRepository.findById(indent.id);
+		return IndentRepository.findById({
+			where: { id: indent.id },
+			include: [
+				{ association: 'department' },
+				{ association: 'period' },
+				{ association: 'remark' },
+				{
+					association: 'IndentItems',
+					include: [
+						{
+							model: IndentSerialItem,
+							as: 'serial_items',
+						},
+						{
+							model: Budget,
+							as: 'budget',
+						},
+					],
+				},
+			],
+		});
 	} catch (error) {
 		await transaction.rollback();
 		throw error;
@@ -228,6 +216,8 @@ exports.getAllIndents = async (req) => {
 				model: IndentItem,
 				as: 'IndentItems',
 				where: indentItemsWhere,
+				// separate: false,
+				// required: true,
 				include: [
 					{
 						model: Budget,
@@ -264,7 +254,27 @@ exports.verifyIndentQuantity = async (req, indent_ids) => {
 	const updatedIndents = [];
 	let verifiedQuantities = [];
 	for (const id of indent_ids) {
-		const indent = await IndentRepository.findById(id);
+		const indent = await IndentRepository.findById({
+			where: { id },
+			include: [
+				{ association: 'department' },
+				{ association: 'period' },
+				{ association: 'remark' },
+				{
+					association: 'IndentItems',
+					include: [
+						{
+							model: IndentSerialItem,
+							as: 'serial_items',
+						},
+						{
+							model: Budget,
+							as: 'budget',
+						},
+					],
+				},
+			],
+		});
 		console.log(`indent for ${id}`, indent.get({ plain: true }));
 
 		if (!indent) {
@@ -289,7 +299,7 @@ exports.verifyIndentQuantity = async (req, indent_ids) => {
 };
 
 exports.approveIndent = async (req, id, items) => {
-	const t = await sequelize.transaction();
+	const transaction = await sequelize.transaction();
 	const user = req.user;
 	const verifiedBy = {
 		id: user.id,
@@ -297,8 +307,30 @@ exports.approveIndent = async (req, id, items) => {
 		email: user.email,
 	};
 	try {
-		const indent = await IndentRepository.findById(id);
+		const indent = await IndentRepository.findById({
+			where: { id },
+			include: [
+				{ association: 'department' },
+				{ association: 'period' },
+				{ association: 'remark' },
+				{
+					association: 'IndentItems',
+					include: [
+						{
+							model: IndentSerialItem,
+							as: 'serial_items',
+						},
+						{
+							model: Budget,
+							as: 'budget',
+						},
+					],
+				},
+			],
+			transaction,
+		});
 		if (!indent) {
+			await transaction.rollback();
 			throw new AppError(
 				`Indent with ID ${id} not found`,
 				StatusCodes.NOT_FOUND,
@@ -374,7 +406,7 @@ exports.approveIndent = async (req, id, items) => {
 						checkMinimumStock: allocation?.checkMinimumStock || false,
 						qty_updated_by_verifier: updatedIssueQty,
 					},
-					{ transaction: t },
+					{ transaction },
 				);
 
 				if (i.stock_type === 'serial') {
@@ -383,7 +415,7 @@ exports.approveIndent = async (req, id, items) => {
 							{ is_issued: 1 },
 							{
 								where: { serial_no: { [Op.in]: allocation.issuedSerials } },
-								transaction: t,
+								transaction,
 							},
 						);
 					}
@@ -393,12 +425,12 @@ exports.approveIndent = async (req, id, items) => {
 
 		await indent.update(
 			{ isVerified: true, verifiedBy: verifiedBy },
-			{ transaction: t },
+			transaction,
 		);
 
-		await t.commit();
+		await transaction.commit();
 	} catch (error) {
-		await t.rollback();
+		await transaction.rollback();
 		console.log('error ', error);
 		throw error;
 	}
@@ -529,6 +561,7 @@ async function verifyIndentQuantityWithProductServices(
 	});
 
 	const data = await response.json();
+	console.log('data ', data);
 
 	if (!response.ok) {
 		throw new AppError(
