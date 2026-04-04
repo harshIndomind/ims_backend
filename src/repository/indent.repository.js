@@ -11,28 +11,8 @@ exports.updateById = async (id, data, options = {}) => {
 	});
 };
 
-exports.findById = async (id) => {
-	return Indent.findOne({
-		where: { id },
-		include: [
-			{ association: 'department' },
-			{ association: 'period' },
-			{ association: 'remark' },
-			{
-				association: 'IndentItems',
-				include: [
-					{
-						model: IndentSerialItem,
-						as: 'serial_items',
-					},
-					{
-						model: Budget,
-						as: 'budget',
-					},
-				],
-			},
-		],
-	});
+exports.findById = async (options = {}) => {
+	return Indent.findOne(options);
 };
 
 exports.findLastCreated = async () => {
