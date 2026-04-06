@@ -120,7 +120,13 @@ exports.updateMasterPeriod = async (id, payload) => {
  */
 exports.getAllMasterPeriod = async (req) => {
 	const { org_id } = req.user;
-	const { limit, offset, is_lock=0 } = req.query;
+	const { limit, offset, is_lock } = req.query;
+
+	const where = { org_id };
+
+	if (is_lock !== undefined) {
+		where.is_lock = is_lock;
+	}
 
 	const options = {};
 	if (limit) {
@@ -136,7 +142,7 @@ exports.getAllMasterPeriod = async (req) => {
 		},
 	];
 	return await masterPeriodRepo.findAll({
-		where: { org_id, is_lock },
+		where,
 		...options,
 	});
 };
