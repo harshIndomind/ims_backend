@@ -1,16 +1,19 @@
-const { MasterMajorHead } = require('../models/index');
+const { PurchaseOrder } = require('../models/index');
 
 exports.create = (data, options = {}) => {
 	return PurchaseOrder.create(data, options);
+};
+
+exports.findOne = (options = {}) => {
+	return PurchaseOrder.findOne(options);
 };
 
 exports.findById = (id, options = {}) => {
 	return PurchaseOrder.findByPk(id, options);
 };
 
-exports.findAll = (where = {}, options = {}) => {	
+exports.findAll = (options = {}) => {	
 	return PurchaseOrder.findAndCountAll({
-		where,
 		...options,
 	});
 };

@@ -11,3 +11,7 @@ exports.bulkCreate = async (data, options = {}) => {
 exports.findOne = async (query, options = {}) => {
   return IndentItem.findOne({ where: query, ...options });
 };
+
+exports.increment = async(query = {}, where={}) => {
+  return IndentItem.increment(query, where);
+}

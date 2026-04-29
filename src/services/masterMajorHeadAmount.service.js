@@ -2,7 +2,6 @@ const AppError = require('../utils/AppError');
 const { StatusCodes } = require('http-status-codes');
 const { masterMajorHeadAmountRepo } = require('../repository/index');
 const logger = require('../utils/logger');
-const { off } = require('pdfkit');
 const {
 	MasterMajorHead,
 	MasterPeriod,

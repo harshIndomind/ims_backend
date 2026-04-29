@@ -12,9 +12,12 @@ const { sendTestMail } = require('./utils/mailer');
 app.use('/uploads', express.static(path.join(__dirname, '/uploads')));
 const http = require('http');
 const { init } = require('./utils/socket');
-const publishMessage = require('./publisher/publisher');
-const { connectQueue } = require('./shared/rabbitmq');
-const {consumeAdminEvents} = require('./shared/consumeEvent');
+// const publishMessage = require('./publisher/publisher');
+// const { connectQueue } = require('./shared/rabbitmq');
+// const {consumeAdminEvents} = require('./shared/consumeEvent');
+const { connect } = require('./config/rabbitmq');
+const { startConsumer } = require('./events/consumer');
+
 const limiter = rateLimit({
 	windowMs: 1 * 60 * 1000,
 	limit: 100,
@@ -194,6 +197,10 @@ async function prepareAndStartServer() {
 		`${apiPrefix}/v1/rate-contract`,
 		require('./routes/v1/rate-contract.routes'),
 	);
+	app.use(
+		`${apiPrefix}/v1/purchase-orders`,
+		require('./routes/v1/purchase-order.routes'),
+	);
 
 	app.get('/', (req, res) => {
 		res.status(200).json({ status: true, message: '✅ Its working.' });
@@ -214,6 +221,9 @@ async function prepareAndStartServer() {
 		.authenticate()
 		.then(async () => {
 			console.log(`✅ DB connected (${envLabel})`);
+
+			await connect();
+			await startConsumer();
 
 			server.listen(PORT, () => {
 				console.log(`${envLabel} server running on ${BASE_URL}`);

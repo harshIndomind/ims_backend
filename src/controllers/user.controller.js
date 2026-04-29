@@ -2,18 +2,6 @@ const { UserService } = require('../services/index');
 const catchAsync = require('../utils/catchAsync');
 const bcrypt = require('bcrypt');
 const { body, validationResult } = require('express-validator');
-const { print } = require('../utils/common');
-const {
-	s3,
-	PutObjectCommand,
-	DeleteObjectCommand,
-	generateSignedUrl,
-} = require('../utils/s3Bucket');
-const path = require('node:path');
-const fs = require('node:fs');
-const { User } = require('../models/index');
-const AppError = require('../utils/AppError');
-const crypto = require('crypto');
 
 const userService = new UserService();
 
@@ -82,95 +70,65 @@ const validateUpdateUser = [
 	body('vendorAddress').optional().trim(),
 ];
 
-const createUser = catchAsync(async (req, res) => {
-	const errors = validationResult(req);
-	if (!errors.isEmpty()) {
-		return res.status(400).json({ errors: errors.array() });
-	}
+// ── Create User ────────────────────────────────────────────
+exports.createUser = catchAsync(async (req, res) => {
+  const { confirmPassword, password, ...rest } = req.body;
 
-	const {
-		name,
-		email,
-		password,
-		roleId,
-		orgId,
-		vendorCompanyName,
-		vendorCompanyCode,
-		vendorContactNo,
-		vendorAddress,
-	} = req.body;
+  // Validate passwords match
+  if (password !== confirmPassword) {
+    throw new AppError('Passwords do not match', 400);
+  }
 
-	const hashedPassword = await bcrypt.hash(password, 10);
-	const vendor = await userService.create({
-		name,
-		email,
-		password: hashedPassword,
-		roleId,
-		org_id: orgId,
-		vendor_company_name: vendorCompanyName,
-		vendor_company_code: vendorCompanyCode,
-		vendor_contact_no: vendorContactNo,
-		vendor_address: vendorAddress,
-	});
+  const data = await userService.createUser(
+    { ...rest, password },
+    req.user.id
+  );
 
-	res.status(201).json({
-		status: true,
-		message: 'Vendor created successfully',
-		data: vendor,
-	});
+  return res.status(201).json({
+    success: true,
+    message: 'User created successfully',
+    data,
+  });
 });
 
-exports.create = [...validateUser, createUser];
+// exports.create = [...validateUser, createUser];
 
-const updateUser = catchAsync(async (req, res) => {
-	const errors = validationResult(req);
-	if (!errors.isEmpty()) {
-		return res.status(400).json({ errors: errors.array() });
-	}
+exports.updateUser = catchAsync(async (req, res) => {
+  const { id }   = req.params;
+  const { confirmPassword, password, ...rest } = req.body;
 
-	const { id } = req.params;
-	const {
-		name,
-		email,
-		password,
-		roleId,
-		orgId,
-		vendorCompanyName,
-		vendorCompanyCode,
-		vendorContactNo,
-		vendorAddress,
-	} = req.body;
+  const data = await userService.updateUser(id, rest, req.user.id);
 
-	const payload = {
-		name,
-		email,
-		roleId,
-		org_id: orgId,
-		vendor_company_name: vendorCompanyName,
-		vendor_company_code: vendorCompanyCode,
-		vendor_contact_no: vendorContactNo,
-		vendor_address: vendorAddress,
-	};
-
-	if (password) {
-		const hashedPassword = await bcrypt.hash(password, 10);
-		payload.password = hashedPassword;
-	}
-
-	const vendor = await userService.update(id, payload);
-
-	res.status(201).json({
-		status: true,
-		message: 'Vendor updated successfully',
-		data: vendor,
-	});
+  return res.json({
+	success: true,
+	message: 'User updated successfully',
+	data,
+  });
 });
 
-exports.update = [...validateUpdateUser, updateUser];
+// exports.update = [...validateUpdateUser, updateUser];
+
+// ── Update User Profile ────────────────────────────────────────────
+exports.updateUserProfile = catchAsync(async (req, res) => {
+	const id = req.user.id;
+	const { name, password } = req.body;
+	const image = req.files?.image?.[0] ?? null;
+	const logo = req.files?.logo?.[0] ?? null;
+	const roles = req.user.roles ?? [];
+
+	const data = await userService.updateUserProfile(id, { name, password, image, logo }, roles);
+
+	return res.json({
+		success: true,
+		message: 'User updated successfully',
+		data,
+	});
+});
 
 exports.getAllUsers = catchAsync(async (req, res) => {
 	const { org_id, role } = req.user;
-	const vendors = await userService.getAllUsers(org_id, role);
+
+	const vendors = await userService.getAllUsers(req);
 	res.status(201).json({
 		status: true,
 		message: 'Users fetched successfully',
@@ -215,73 +173,11 @@ exports.getTechSupportUsers = catchAsync(async (req, res) => {
 exports.updateUserProfile = catchAsync(async (req, res) => {
 	const id = req.user.id;
 	const { name, password } = req.body;
-	// const image = req.file;
 	const image = req.files?.image?.[0] ?? null;
 	const logo = req.files?.logo?.[0] ?? null;
+	const roles = req.user.roles ?? [];
 
-	const userData = await User.findByPk(id);
-
-	if (!userData) {
-		throw new AppError('User not found.');
-		return;
-	}
-
-	const updateData = { name };
-
-	if (password) {
-		updateData.password = await bcrypt.hash(password, 10);
-	}
-
-	print(image, 'image => ');
-	print(logo, 'logo => ');
-	if (image) {
-		if (userData.image) {
-			const command = new DeleteObjectCommand({
-				Bucket: process.env.AWS_BUCKET_NAME,
-				Key: userData.image,
-			});
-
-			await s3.send(command);
-		}
-		const generated_filename = generateUniqueFilename(image.originalname);
-		const fullPath = `server_uploads/profile/${generated_filename}`;
-		const fileStream = fs.createReadStream(image.path);
-		const uploadParams = {
-			Bucket: process.env.AWS_BUCKET_NAME,
-			Key: fullPath,
-			Body: fileStream,
-			ContentType: image.mimetype,
-		};
-
-		const result = await s3.send(new PutObjectCommand(uploadParams));
-		updateData.image = fullPath;
-	}
-
-	if (logo) {
-		if (userData.logo) {
-			const command = new DeleteObjectCommand({
-				Bucket: process.env.AWS_BUCKET_NAME,
-				Key: userData.logo,
-			});
-
-			await s3.send(command);
-		}
-		print(logo, 'hasLogo => ')
-		const generated_filename = generateUniqueFilename(logo.originalname);
-		const fullPath = `server_uploads/company_logos/${generated_filename}`;
-		const fileStream = fs.createReadStream(logo.path);
-		const uploadParams = {
-			Bucket: process.env.AWS_BUCKET_NAME,
-			Key: fullPath,
-			Body: fileStream,
-			ContentType: logo.mimetype,
-		};
-
-		const result = await s3.send(new PutObjectCommand(uploadParams));
-		updateData.logo = fullPath;
-	}
-
-	const user = await userService.update(id, updateData);
+	const user = await userService.updateUserProfile(id, { name, password, image, logo }, roles);
 
 	res.status(201).json({
 		status: true,
@@ -323,9 +219,15 @@ exports.resetPassword = catchAsync(async (req, res) => {
 	});
 });
 
-function generateUniqueFilename(originalName) {
-	const timestamp = Date.now(); // milliseconds
-	const randomHash = crypto.randomBytes(6).toString('hex'); // 12 chars
-	const extension = path.extname(originalName); // e.g., '.jpeg'
-	return `${timestamp}-${randomHash}${extension}`;
-}
+exports.deactivateUser = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	await userService.deactivateUser(id);
+	res.json({ success: true, message: 'User deactivated' });
+});
+
+exports.activateUser = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	await userService.activateUser(id);
+	res.json({ success: true, message: 'User activated' });
+});
+

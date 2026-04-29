@@ -9,6 +9,15 @@ module.exports = (sequelize, DataTypes) => {
         primaryKey: true,
         autoIncrement: true,
       },
+      org_id: {
+				type: DataTypes.INTEGER,
+				references: {
+					model: 'organizations',
+					key: 'id',
+				},
+				onUpdate: 'CASCADE',
+				onDelete: 'CASCADE',
+			},
       department_id: {
         type: DataTypes.INTEGER,
         allowNull: false,

@@ -46,9 +46,10 @@ const findAllUsersWithRoles = async (roleWhereClause, orgWhereClause) => {
             },
 			{
 				model: Role,
+				// as: 'roles',
 				as: 'userRoles',
 				through: { attributes: [] },
-                attributes: ['id', 'name'],
+                attributes: ['id', 'name', 'code'],
                 where: roleWhereClause
 			},
 		],

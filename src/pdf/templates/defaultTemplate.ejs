@@ -319,7 +319,8 @@
         }
 
         .invoice-section {
-            position: relative; /* parent for absolute child */
+            position: relative;
+            /* parent for absolute child */
         }
 
         .watermark {
@@ -332,139 +333,98 @@
             font-weight: 900;
             pointer-events: none;
             user-select: none;
-            z-index: 0;   /* stays behind content */
+            z-index: 0;
+            /* stays behind content */
         }
     </style>
 </head>
 
 <body>
     <div class="invoice-section">
-        <% if (invoice.paymentStatus === 'CANCELLED') { %>
+        <% if (invoice.paymentStatus==='CANCELLED' ) { %>
             <div class="watermark">CANCELLED</div>
-        <% } %>
-        <div class="header">
-            <div class="header-left">
-                <% if(invoice.businessLogo){ %>
-                    <img src="<%= invoice.businessLogo %>" alt="Company Logo" class="logo" />
-                    <% }else { %>
-                        <img src="https://placehold.co/100x60" alt="Company Logo" class="logo" />
-                        <% } %>
-            </div>
+            <% } %>
+                <div class="header">
+                    <div class="header-left">
+                        <% if(invoice.businessLogo){ %>
+                            <img src="<%= invoice.businessLogo %>" alt="Company Logo" class="logo" />
+                            <% }else { %>
+                                <img src="https://placehold.co/100x60" alt="Company Logo" class="logo" />
+                                <% } %>
+                    </div>
 
-            <div class="header-center">
-                <h2>Tax Invoice</h2>
-            </div>
+                    <div class="header-center">
+                        <h2>Purchase Order</h2>
+                    </div>
 
-            <div class="header-right">
-                <h4>
-                    <%= invoice.business.org_name ?? '' %>
-                </h4>
-                <p>
-                    <% if(invoice.business.address) {%>
-                        <%- invoice.business.address %><br>
-                            <% } %>
-                                <% if(invoice.business.org_gst_number) {%>
-                                    <strong>GSTIN:</strong> <%- invoice.business.org_gst_number %><br>
-                                        <% } %>
-                                            <% if(invoice.business.org_email) {%>
-                                                <strong>Email:</strong> <%- invoice.business.org_email %><br>
-                                                    <% } %>
-                </p>
-                <h5><strong>
-                        <%= invoice.copyTitle %>
-                    </strong></h5>
-            </div>
-        </div>
-
-
-        <div class="info-section">
-            <div class="customer-info">
-                <h4>Billed To</h4>
-                <div class="customer-detail">
-                    <div class="info-row">
-                        <strong>Name:</strong>
-                        <span>
-                            <%= invoice.partner?.name || '' %>
-                        </span>
-                    </div>
-                    <div class="info-row">
-                        <strong>Address:</strong>
-                        <span>
-                            <%= invoice.customerInfo?.address || '' %>
-                        </span>
-                    </div>
-                    <div class="info-row">
-                        <strong>Contact Person:</strong>
-                        <span>
-                            <%= invoice.customerInfo?.contactPerson || '' %>
-                        </span>
-                    </div>
-                    <div class="info-row">
-                        <strong>Phone:</strong>
-                        <span>
-                            <%= invoice.customerInfo?.contactNo || '' %>
-                        </span>
-                    </div>
-                    <div class="info-row">
-                        <strong>GSTIN:</strong>
-                        <span>
-                            <%= invoice.customerInfo?.gstin || '' %>
-                        </span>
-                    </div>
-                    <div class="info-row">
-                        <strong>Place of Supply:</strong>
-                        <span>
-                            <%= invoice.customerInfo?.state_name || '' %>
-                        </span>
+                    <div class="header-right">
+                        <h4>
+                            <%= invoice.business.org_name ?? '' %>
+                        </h4>
+                        <p>
+                            <% if(invoice.business.address) {%>
+                                <%- invoice.business.address %><br>
+                                    <% } %>
+                                        <% if(invoice.business.org_gst_number) {%>
+                                            <strong>GSTIN:</strong> <%- invoice.business.org_gst_number %><br>
+                                                <% } %>
+                                                    <% if(invoice.business.org_email) {%>
+                                                        <strong>Email:</strong> <%- invoice.business.org_email %><br>
+                                                            <% } %>
+                        </p>
+                        <h5><strong>
+                                <%= invoice.copyTitle %>
+                            </strong></h5>
                     </div>
                 </div>
-            </div>
 
-            <% if(!invoice.customerInfo.isShippingAddSame) { %>
-                <div class="customer-info">
-                    <h4>Ship To</h4>
-                    <div class="customer-detail">
-                        <div class="info-row">
-                            <strong>Name:</strong>
-                            <span>
-                                <%= invoice.customerInfo.shippingInfo?.contact_person || '' %>
-                            </span>
+
+                <div class="info-section">
+                    <div class="customer-info">
+                        <h4>Vendor Details</h4>
+                        <div class="customer-detail">
+                            <div class="info-row">
+                                <strong>Name:</strong>
+                                <span>
+                                    <%= invoice.vendorInfo?.vendor_name || '' %>
+                                </span>
+                            </div>
+                            <div class="info-row">
+                                <strong>Address:</strong>
+                                <span>
+                                    <%= invoice.vendorInfo?.address || '' %>
+                                </span>
+                            </div>
+                            <div class="info-row">
+                                <strong>Contact Person:</strong>
+                                <span>
+                                    <%= invoice.vendorInfo?.contactPerson || '' %>
+                                </span>
+                            </div>
+                            <div class="info-row">
+                                <strong>Phone:</strong>
+                                <span>
+                                    <%= invoice.vendorInfo?.contactNo || '' %>
+                                </span>
+                            </div>
+                            <div class="info-row">
+                                <strong>GSTIN:</strong>
+                                <span>
+                                    <%= invoice.vendorInfo?.gstin || '' %>
+                                </span>
+                            </div>
+                            <div class="info-row">
+                                <strong>Place of Supply:</strong>
+                                <span>
+                                    <%= invoice.vendorInfo?.state_name || '' %>
+                                </span>
+                            </div>
                         </div>
-                        <div class="info-row">
-                            <strong>Address:</strong>
-                            <span>
-                                <%= invoice.customerInfo.shippingInfo?.address || '' %>
-                            </span>
-                        </div>
-                        <div class="info-row">
-                            <strong>Contact Person:</strong>
-                            <span>
-                                <%= invoice.customerInfo.shippingInfo?.contact_person || '' %>
-                            </span>
-                        </div>
-                        <div class="info-row">
-                            <strong>Phone:</strong>
-                            <span>
-                                <%= invoice.customerInfo.shippingInfo?.phone || '' %>
-                            </span>
-                        </div>
-                        <!-- <div class="info-row">
-                        <strong>GSTIN:</strong>
-                        <span>
-                            <%= invoice.customerInfo?.gstin || '' %>
-                        </span>
-                    </div> -->
-                        <!-- <div class="info-row">
-                        <strong>Place of Supply:</strong>
-                        <span>
-                            <%= invoice.customerInfo?.name || '' %>
-                        </span>
-                    </div> -->
                     </div>
-                </div>
-                <% } %>
+
+
                     <div class="invoice-info">
-                        <h4>Invoice Details</h4>
+                        <h4>Purchase Order Details</h4>
                         <div class="info-detail">
                             <div class="info-row">
                                 <strong>Invoice No:</strong>
@@ -475,7 +435,7 @@
                             <div class="info-row">
                                 <strong>Invoice Date:</strong>
                                 <span>
-                                    <%= new Date(invoice?.invoiceDetail?.date).toLocaleDateString() || '' %>
+                                    <%= new Date(invoice?.poDetail?.date).toLocaleDateString() || '' %>
                                 </span>
                             </div>
                             <div class="info-row">
@@ -486,53 +446,53 @@
                             </div>
                         </div>
                     </div>
-        </div>
+                </div>
 
 
 
 
 
-        <table>
-            <thead>
-                <tr>
-                    <th rowspan="2">Sr. No.</th>
-                    <th rowspan="2">Name of Product / Service</th>
-                    <th rowspan="2">HSN / SAC</th>
-                    <th rowspan="2">Qty</th>
-                    <th rowspan="2">Rate</th>
-                    <th rowspan="2">Disc. (%)</th>
-                    <th rowspan="2">Taxable Value</th>
-                    <% if (!invoice.same_state) { %>
-                        <th rowspan="2">IGST %</th>
-                        <th rowspan="2">IGST Amount</th>
-                        <% } else { %>
-                            <th colspan="2">CGST</th>
-                            <th colspan="2">SGST</th>
+                <table>
+                    <thead>
+                        <tr>
+                            <th rowspan="2">Sr. No.</th>
+                            <th rowspan="2">Name of Product / Service</th>
+                            <th rowspan="2">HSN / SAC</th>
+                            <th rowspan="2">Qty</th>
+                            <th rowspan="2">Rate</th>
+                            <th rowspan="2">Disc. (%)</th>
+                            <th rowspan="2">Taxable Value</th>
+                            <% if (!invoice.same_state) { %>
+                                <th rowspan="2">IGST %</th>
+                                <th rowspan="2">IGST Amount</th>
+                                <% } else { %>
+                                    <th colspan="2">CGST</th>
+                                    <th colspan="2">SGST</th>
+                                    <% } %>
+                                        <th rowspan="2">Amount</th>
+                        </tr>
+                        <% if (invoice.state_same) { %>
+                            <tr>
+                                <th>%</th>
+                                <th>Amount</th>
+                                <th>%</th>
+                                <th>Amount</th>
+                            </tr>
                             <% } %>
-                                <th rowspan="2">Amount</th>
-                </tr>
-                <% if (invoice.state_same) { %>
-                    <tr>
-                        <th>%</th>
-                        <th>Amount</th>
-                        <th>%</th>
-                        <th>Amount</th>
-                    </tr>
-                    <% } %>
-            </thead>
+                    </thead>
 
-            <tbody>
-                <% invoice.productItems.forEach((item, index)=> { %>
-                    <tr>
-                        <td style="text-align:center;">
-                            <%= index + 1 %>
-                        </td>
+                    <tbody>
+                        <% invoice.productItems.forEach((item, index)=> { %>
+                            <tr>
+                                <td style="text-align:center;">
+                                    <%= index + 1 %>
+                                </td>
 
-                        <td>
-                            <%= item.product?.name || 'N/A' %>
-                                <% if (item?.selectedSerials?.length) { %>
-                                    <br><small><strong>Serials:</strong></small><br>
-                                    <small><%- item.selectedSerials.join(', ') %></small>
+                                <td>
+                                    <%= item.product_name || 'N/A' %>
+                                        <% if (item?.selectedSerials?.length) { %>
+                                            <br><small><strong>Serials:</strong></small><br>
+                                            <small><%- item.selectedSerials.join(', ') %></small>
           <% } %>
           <% if (item?.note) { %>
             <br><small><strong>Description:</strong></small><br>

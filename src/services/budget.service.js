@@ -48,6 +48,7 @@ exports.updateBudget = async (id, payload) => {
 };
 
 exports.getAllBudgets = async (req) => {
+	const {org_id, role} = req.user;
 	const {
 		limit,
 		offset,
@@ -74,8 +75,7 @@ exports.getAllBudgets = async (req) => {
 	}
 
 	const where = {
-		is_lock: selectedStatusId === 'lock' ? 1 : 0,
-		budgetType: selectedBudgetTypeId,
+		org_id,
 		createdAt: {
 			[Op.gte]: from_date,
 			[Op.lt]: to_date,
@@ -86,6 +86,8 @@ exports.getAllBudgets = async (req) => {
 	const departmentId = Number(selectedDepartmentId);
 	const costCenterId = Number(selectedCostCenterId);
 
+	if (selectedBudgetTypeId != 'both') where.budgetType = selectedBudgetTypeId;
+	if (selectedStatusId != 'all') where.is_lock = selectedStatusId === 'lock' ? 1 : 0;
 	if (periodId > 0) where.period_id = periodId;
 	if (departmentId > 0) where.department_id = departmentId;
 	if (costCenterId > 0) where.cost_center_id = costCenterId;

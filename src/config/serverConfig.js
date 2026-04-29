@@ -5,6 +5,7 @@ dotenv.config();
 module.exports = {
 	APP_ENV: process.env.APP_ENV || 'development',
 	APP_DEBUG: process.env.APP_DEBUG,
+	APP_CODE: process.env.APP_CODE || 'SCM',
 	PORT: process.env.PORT || 3000,
 	BASE_URL:
 		process.env.APP_ENV === 'development'
@@ -40,5 +41,6 @@ module.exports = {
 		url: process.env.RABBITMQ_URL || 'amqp://localhost',
 		authQueue: process.env.RABBITMQ_AUTH_SERVICE_QUEUE || 'auth_service_queue'
 	},
-	defaultPassword: process.env.DEFAULT_USER_PASSWORD || 123456
+	defaultPassword: process.env.DEFAULT_USER_PASSWORD || 123456,
+	EVENT_SECRET: process.env.EVENT_SECRET,
 };

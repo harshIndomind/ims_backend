@@ -27,24 +27,51 @@ class RoleRepository {
 			throw error;
 		}
 	}
-	async allRoles(id) {
-		try {			
-			const user = await User.findOne({ where: { id }, include: [{ model: Role, attributes: ['id', 'name'] }] });
-			
-			if (user && user.Role && user.Role.name === 'Admin') {
-				const roles = await Role.findAll({where: { name: { [Op.notIn]: ['Admin', 'Super Admin'] } }});
-				console.log("user.Role.name: ",roles);
-				console.log("Roles: ",roles);
-				
-				return roles;
-			}
-			
-			const roles = await Role.findAll();
-			return roles;
+
+	async findAll(options = {}) {
+		try {
+			return await Role.findAll(options);
 		} catch (error) {
 			throw error;
 		}
 	}
+
+	// async findAll(id) {
+	// 	const user = await User.findOne({
+	// 		where: { id },
+	// 		include: [
+	// 			{
+	// 				model: Role,
+	// 				as: 'roles',
+	// 				through: { attributes: [] }, // ← exclude junction table fields
+	// 				attributes: ['id', 'name', 'code'],
+	// 			},
+	// 		],
+	// 	});
+
+	// 	if (!user) throw new AppError('User not found', 404);
+
+	// 	const roleCodes = user.roles.map((r) => r.code);
+	// 	const isAdmin = roleCodes.includes('org_admin');
+	// 	const isSuperAdmin = roleCodes.includes('super_admin');
+
+	// 	// Org Admin — cannot see Super Admin or other Org Admin roles
+	// 	if (isAdmin) {
+	// 		return await Role.findAll({
+	// 			where: {
+	// 				code: { [Op.notIn]: ['super_admin', 'org_admin'] },
+	// 			},
+	// 		});
+	// 	}
+
+	// 	// Super Admin — sees all roles
+	// 	if (isSuperAdmin) {
+	// 		return await Role.findAll();
+	// 	}
+
+	// 	// Anyone else — return empty or throw
+	// 	throw new AppError('Not authorized to view roles', 403);
+	// }
 	async roleById(id) {
 		try {
 			const role = await Role.findOne({ where: { id } });

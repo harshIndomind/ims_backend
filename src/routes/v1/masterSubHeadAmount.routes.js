@@ -24,7 +24,7 @@ router.get(
 );
 
 router.get(
-	':id/majorhead/:major_head_id/period/:period_id',
+	'/:id/majorhead/:major_head_id/period/:period_id',
 	checkPermission('sub-head-amount', 'view'),
 	MasterSubHeadAmountController.getAmountByMajorHeadAndPeriod
 );

@@ -245,6 +245,18 @@ module.exports = {
 				isActive: 1,
 				createdAt: new Date(),
 				updatedAt: new Date(),
+			},
+			{
+				id: 21,
+				parentId: null,
+				menuName: 'Users',
+				icon: 'IconUsers',
+				url: '/users',
+				slug: 'users',
+				showInSidebar: true,
+				isActive: 1,
+				createdAt: new Date(),
+				updatedAt: new Date(),
 			}
 		]);
 	},

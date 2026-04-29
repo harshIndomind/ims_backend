@@ -11,6 +11,7 @@ const {
 	BusinessPartner,
 	Address,
 	GstStateCode,
+	UserRole,
 } = require('../models/index');
 const AppError = require('../utils/AppError');
 const { sendForgotPasswordMail } = require('../utils/mailer');
@@ -18,10 +19,36 @@ const crypto = require('crypto');
 const { Op } = require('sequelize');
 const bcrypt = require('bcrypt');
 const { generateSignedUrl } = require('../utils/s3Bucket');
+const logger = require('../utils/logger');
 class UserRepository {
-	// constructor(userModel) {
-	// 	this.userModel = userModel;
-	// }
+	async findByEmail(email) {
+		return User.findOne({ where: { email } });
+	}
+
+	async findById(id) {
+		return User.findOne({
+			where: { id },
+			include: [
+				{
+					model: Role,
+					as: 'userRoles',
+					through: { attributes: [] },
+					attributes: ['name', 'code'],
+				},
+				{
+					model: organization,
+					as: 'organization',
+					required: false,
+				},
+			],
+			attributes: { exclude: ['password'] },
+		});
+	}
+	async findRoleByCode(code) {
+		return Role.findOne({
+			where: { code },
+		});
+	}
 
 	async create(data, options = {}) {
 		try {
@@ -44,9 +71,9 @@ class UserRepository {
 
 	async update(id, data) {
 		try {
-			await User.update(data, { where: { swayamm_user_id: id } });
+			await User.update(data, { where: { id } });
 			return User.findOne({
-				where: { swayamm_user_id: id },
+				where: { id },
 				include: {
 					model: Role,
 					attributes: ['name'],
@@ -57,6 +84,10 @@ class UserRepository {
 			console.error('Something went wrong in the repository layer');
 			throw error;
 		}
+	}
+
+	async createUserRole(data, transaction) {
+		return UserRole.create(data, { transaction });
 	}
 
 	async allUsers(org_id, role) {
@@ -122,90 +153,50 @@ class UserRepository {
 		try {
 			const user = await User.findOne({
 				where: { id },
-				attributes: [
-					'id',
-					'name',
-					'email',
-					'image',
-					'logo',
-					// ['image', 'imageUrl'],
-					// 'vendor_company_name',
-					// 'vendor_company_code',
-					// 'vendor_contact_no',
-					// 'vendor_address',
-				],
+				attributes: ['id', 'name', 'email', 'image', 'logo'],
 				include: [
 					{
 						model: Role,
-						attributes: ['name'],
+						as: 'userRoles',
+						through: { attributes: [] },
+						attributes: ['name', 'code'],
 					},
 					{
 						model: organization,
 						as: 'organization',
-						// attributes: ['org_name', 'org_code'],
 					},
-					// {
-					// 	model: BusinessPartner,
-					// 	as: 'partner',
-					// 	// attributes: ['org_name', 'org_code'],
-					// 	include: {
-					// 		model: Address,
-					// 		as: 'addresses',
-					// 		include: {
-					// 			model: GstStateCode,
-					// 			as: 'stateData',
-					// 		},
-					// 	},
-					// },
 				],
 			});
 
-			const userData = user.get({ plain: true });
+			if (!user) {
+				throw new AppError('User not found', 404);
+			}
 
-			let response = {};
+			const userData = user.get({ plain: true });
+			const roles = userData.userRoles?.map((r) => r.code);
+
+			logger.debug('userData.userRoles ', { userRoles: roles });
+			const response = { ...userData, roles };
+
 			if (userData.image) {
-				userData.imageUrl = await generateSignedUrl(user.image);
+				response.imageUrl = await generateSignedUrl(userData.image);
 			}
 			if (userData.logo) {
-				userData.logoUrl = await generateSignedUrl(user.logo);
+				response.logoUrl = await generateSignedUrl(userData.logo);
 			}
-			if (userData) {
-				response = { ...userData };
-				if (
-					userData.Role.name &&
-					['Admin', 'Super Admin'].includes(userData.Role.name)
-				) {
-					response['vendor_company_name'] =
-						userData?.organization?.org_name ?? '';
-					response['vendor_company_code'] =
-						userData?.organization?.org_code ?? '';
-					response['vendor_contact_no'] =
-						userData?.organization?.org_person_contact ?? '';
-					response['vendor_address'] =
-						userData?.organization?.org_address ?? '';
-				} else if (
-					userData.Role.name &&
-					['Vendor', 'Vendor-Customer'].includes(userData.Role.name) &&
-					userData?.partner
-				) {
-					const billing = userData?.partner?.addresses[0];
 
-					const addressParts = [
-						billing.address1,
-						billing.address2,
-						billing?.city,
-						billing?.pincode,
-						billing?.stateData?.state_name,
-						billing?.countryData?.name,
-					];
+			const isOrgRole = roles.some((r) =>
+				['org_admin', 'app_admin'].includes(r),
+			);
 
-					const address = addressParts.filter(Boolean).join(', ');
-
-					response['vendor_company_name'] = userData?.partner?.name ?? '';
-					response['vendor_company_code'] = userData?.partner?.code ?? '';
-					response['vendor_contact_no'] = userData?.partner?.contact_no ?? '';
-					response['vendor_address'] = address ?? '';
-				}
+			if (isOrgRole) {
+				response['vendor_company_name'] =
+					userData?.organization?.org_name ?? '';
+				response['vendor_company_code'] =
+					userData?.organization?.org_code ?? '';
+				response['vendor_contact_no'] =
+					userData?.organization?.org_person_contact ?? '';
+				response['vendor_address'] = userData?.organization?.org_address ?? '';
 			}
 
 			return response;
@@ -228,24 +219,11 @@ class UserRepository {
 		}
 	}
 
-	async getTechSupportUsers(companyId, projectId) {
-		try {
-			const users = await User.findAll({
-				where: { companyId, roleId: 4 },
-				include: [
-					{
-						model: UserProject,
-						as: 'UserProjects',
-						where: { projectId },
-					},
-				],
-			});
-
-			return users;
-		} catch (error) {
-			console.error('Something went wrong in the repository layer');
-			throw error;
-		}
+	async destroyUserRoles(userId, transaction) {
+		return UserRole.destroy({
+			where: { user_id: userId },
+			transaction,
+		});
 	}
 
 	async checkUserByEmail(email) {
@@ -350,6 +328,11 @@ class UserRepository {
 
 		return orgData.id;
 	}
+
+	// New Methods
+	async findAll(options = {}) {
+		return await User.findAll(options);
+	}
 }
 
-module.exports = UserRepository;
+module.exports = new UserRepository();

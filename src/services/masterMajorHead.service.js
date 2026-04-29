@@ -33,6 +33,14 @@ exports.createMasterMajorHead = async (req, payload) => {
 exports.updateMasterMajorHead = async (id, payload) => {
 	const { m_code, m_name } = payload;
 
+	if (!m_code || !m_name) {
+		logger.warn('Validation failed while updating Master Major Head', payload);
+		throw new AppError(
+			'Major head code and name are required',
+			StatusCodes.BAD_REQUEST,
+		);
+	}
+
 	const masterMajorHead = await masterMajorHeadRepo.findById(id);
 
 	if (!masterMajorHead) {

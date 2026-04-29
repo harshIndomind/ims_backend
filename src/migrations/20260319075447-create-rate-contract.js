@@ -11,8 +11,12 @@ module.exports = {
 			},
 			org_id: {
 				type: Sequelize.INTEGER,
-				allowNull: true,
-				references: { model: 'organizations', key: 'id' },
+				references: {
+					model: 'organizations',
+					key: 'id',
+				},
+				onUpdate: 'CASCADE',
+				onDelete: 'CASCADE',
 			},
 			supplier_id: {
 				type: Sequelize.INTEGER,

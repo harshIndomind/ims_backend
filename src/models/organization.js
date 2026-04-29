@@ -22,6 +22,12 @@ module.exports = (sequelize, DataTypes) => {
 	}
 	organization.init(
 		{
+			uuid: {
+				type: DataTypes.CHAR(36),
+				defaultValue: DataTypes.UUIDV4,
+				allowNull: false,
+				unique: true,
+			},
 			swayamm_org_id: {
 				type: DataTypes.INTEGER,
 				allowNull: true,

@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package productUom;
+
+service ProductUomService {
+  rpc GetProductUomById (ProductUomRequest) returns (ProductUomResponse);
+}
+
+message ProductUomRequest {
+  int32 id = 1;
+}
+
+message ProductUomResponse {
+  int32 id = 1;
+  int32 product_id = 2;
+  string unit_id = 3;
+  double qty = 4;
+}

@@ -56,7 +56,7 @@ const { BASE_URL } = require('../config/serverConfig');
 
 exports.generateInvoiceHTML = async (
 	invoice,
-	templateName = 'defaultTemplate'
+	templateName = 'defaultTemplate',
 ) => {
 	const templatePath = path.join(__dirname, `./templates/${templateName}.ejs`);
 	const html = await ejs.renderFile(templatePath, { invoice });
@@ -80,9 +80,15 @@ exports.generateInvoiceHTMLPDF = async (dataOrHtml, template, options = {}) => {
 		.toString()
 		.padStart(2, '0')}`;
 
-	const pdfName = `invoice_${formatted}.pdf`;
+	const pdfName = `purchase_order_${formatted}.pdf`;
 
-	const pdfPath = path.join(__dirname, `../../storage/invoices/${pdfName}`);
+	const purchaseOrderDir = path.join(
+		__dirname,
+		'../../storage/purchase-orders',
+	);
+	fs.mkdirSync(purchaseOrderDir, { recursive: true });
+
+	const pdfPath = path.join(purchaseOrderDir, pdfName);
 
 	const browser = await puppeteer.launch();
 	const page = await browser.newPage();
@@ -97,8 +103,7 @@ exports.generateInvoiceHTMLPDF = async (dataOrHtml, template, options = {}) => {
 
 	await browser.close();
 
-	const baseUrl = BASE_URL || 'http://localhost:5000'
+	const baseUrl = BASE_URL || 'http://localhost:5000';
 
-	return `${baseUrl}/storage/invoices/${pdfName}`;
+	return `${baseUrl}/storage/purchase-orders/${pdfName}`;
 };
-

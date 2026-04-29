@@ -1,30 +1,37 @@
 const fetchPermissions = require('../helpers/fetchPermissions');
+const AppError = require('../utils/AppError');
+const logger = require('../utils/logger');
 
+const checkPermission = (menu, action) => {  
+  const menus = Array.isArray(menu) ? menu : [menu];
+  const ACTION = action.toLowerCase();
 
-const checkPermission = (menu, action) => {
-	return async (req, res, next) => {
-		try {
-			console.log("req.user ", req.user);
-			
-			// 🔥 Super Admin bypass
-			if (req.user?.isSuperAdmin) {
-				return next();
-			}
+  return async (req, res, next) => {
 
-			const userPermissions = await fetchPermissions(req);
+    // Super Admin bypass — check roles array not isSuperAdmin
+    if (req.user?.roles?.includes('super_admin')) {
+      return next();
+    }
 
-			if (!userPermissions.includes(`${menu}:${action}`)) {
-				return res.status(403).json({
-					message: 'You do not have permission to perform this action.',
-				});
-			}
+    try {
+      const userPermissions = await fetchPermissions(req);
 
-			next();
-		} catch (err) {
-			console.error('Permission check failed', err);
-			return res.status(500).json({ message: 'Permission check failed' });
-		}
-	};
+      // Pass if the user holds the required permission for ANY of the given menus
+      const hasPermission = menus.some(m =>
+        userPermissions.includes(`${m}:${ACTION}`) ||
+        (ACTION === 'view' && userPermissions.includes(`${m}:api_read`))
+      );
+
+      if (!hasPermission) {
+        return next(new AppError('You do not have permission to perform this action', 403));
+      }
+
+      next();
+
+    } catch (err) {
+      next(err);
+    }
+  };
 };
 
 module.exports = checkPermission;

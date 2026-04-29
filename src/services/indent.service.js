@@ -42,7 +42,7 @@ exports.createIndent = async (req, payload) => {
 
 		// 🔹 Create Indent
 		const indent = await IndentRepository.create(
-			{ ...indentPayload, department_id: 1, createdBy },
+			{ ...indentPayload, department_id: 1, createdBy, org_id: user.org_id },
 			{ transaction },
 		);
 
@@ -145,6 +145,8 @@ exports.getNextIndentId = async (req) => {
 };
 
 exports.getAllIndents = async (req) => {
+	const {org_id, role} = req.user;
+
 	const {
 		limit,
 		offset,
@@ -164,13 +166,16 @@ exports.getAllIndents = async (req) => {
 	// }
 
 	const where = {
-		isVerified: selectedStatusId === 'yes' ? 1 : 0,
+		org_id,
+		// isVerified: selectedStatusId === 'yes' ? 1 : 0,
 		// createdAt: {
 		// 	[Op.gte]: from_date,
 		// 	[Op.lt]: to_date,
 		// },
 	};
 
+	if (selectedStatusId === 'yes') where.isVerified = 1;
+	if (selectedStatusId === 'no') where.isVerified = 0;
 	if (selectedBudgetTypeId > 0) where.budgetType = selectedBudgetTypeId;
 
 	if (fromDate && toDate) {
@@ -196,8 +201,10 @@ exports.getAllIndents = async (req) => {
 	if (departmentId > 0) where.department_id = departmentId;
 	if (indentNo) where.indent_no = indentNo;
 
+	logger.info("hasPurchaseQuantityIssue ", {hasPurchaseQuantityIssue});
+	
 	const indentItemsWhere = {};
-	if (hasPurchaseQuantityIssue) {
+	if (hasPurchaseQuantityIssue == true) {
 		indentItemsWhere['qty_for_purchase_order'] = {
 			[Op.gt]: 0,
 		};
@@ -205,7 +212,7 @@ exports.getAllIndents = async (req) => {
 	if (budgetId > 0) {
 		indentItemsWhere['budget_id'] = budgetId;
 	}
-
+	logger.debug("indentItemsWhere ", {indentItemsWhere})
 	const filterOptions = {
 		where,
 		include: [
@@ -299,141 +306,164 @@ exports.verifyIndentQuantity = async (req, indent_ids) => {
 };
 
 exports.approveIndent = async (req, id, items) => {
-	const transaction = await sequelize.transaction();
 	const user = req.user;
-	const verifiedBy = {
-		id: user.id,
-		name: user.name,
-		email: user.email,
-	};
-	try {
-		const indent = await IndentRepository.findById({
-			where: { id },
-			include: [
-				{ association: 'department' },
-				{ association: 'period' },
-				{ association: 'remark' },
-				{
-					association: 'IndentItems',
-					include: [
-						{
-							model: IndentSerialItem,
-							as: 'serial_items',
-						},
-						{
-							model: Budget,
-							as: 'budget',
-						},
-					],
-				},
-			],
-			transaction,
-		});
-		if (!indent) {
-			await transaction.rollback();
+	const verifiedBy = { id: user.id, name: user.name, email: user.email };
+
+	// --- Phase 0: fetch indent and validate inputs before touching any external service ---
+	const indent = await IndentRepository.findById({
+		where: { id },
+		include: [
+			{ association: 'department' },
+			{ association: 'period' },
+			{ association: 'remark' },
+			{
+				association: 'IndentItems',
+				include: [
+					{ model: IndentSerialItem, as: 'serial_items' },
+					{ model: Budget, as: 'budget' },
+				],
+			},
+		],
+	});
+
+	if (!indent) {
+		throw new AppError(`Indent with ID ${id} not found`, StatusCodes.NOT_FOUND);
+	}
+	if (!items || !Array.isArray(items) || items.length === 0) {
+		throw new AppError('Updated indents must be a non-empty array', StatusCodes.BAD_REQUEST);
+	}
+
+	const updatedIndentQuantityMap = new Map(items.map((i) => [i.product_id, i]));
+
+	// Verify every indent item has a matching entry in the caller-supplied map
+	for (const i of indent.IndentItems) {
+		if (!updatedIndentQuantityMap.has(i.product_id)) {
 			throw new AppError(
-				`Indent with ID ${id} not found`,
-				StatusCodes.NOT_FOUND,
-			);
-		}
-		if (!items || !Array.isArray(items) || items.length === 0) {
-			throw new AppError(
-				'Updated indents must be a non-empty array',
+				`Missing issue_qty for product_id ${i.product_id}`,
 				StatusCodes.BAD_REQUEST,
 			);
 		}
+	}
 
-		const updatedIndentQuantityMap = new Map(
-			items.map((i) => [i.product_id, i]),
-		);
+	if (!Array.isArray(indent.IndentItems) || indent.IndentItems.length === 0) {
+		throw new AppError('Indent has no items to approve', StatusCodes.BAD_REQUEST);
+	}
 
-		console.log('updatedIndentQuantityMap => ', updatedIndentQuantityMap);
-		// return
-		const updatedIndents = [];
+	const plainIndentItems = indent.IndentItems.map((i) => i.get({ plain: true }));
+	const modifiedIndentItems = plainIndentItems.map((item) => ({
+		...item,
+		qty: updatedIndentQuantityMap.get(item.product_id).issue_qty,
+	}));
 
-		if (Array.isArray(indent.IndentItems) && indent.IndentItems.length > 0) {
-			console.log('indent.IndentItems ', indent.IndentItems);
-			const plainIndentItems = indent.IndentItems.map((i) =>
-				i.get({ plain: true }),
+	// --- Phase 1: dry-run verify (no deduction) to get allocation data for validation ---
+	const { allocationResults: dryRunResults } =
+		await verifyIndentQuantityWithProductServices(req, modifiedIndentItems, false);
+
+	const dryRunMap = new Map(dryRunResults.map((i) => [i.product_id, i]));
+
+	if (indent.budgetType === 'value-wise') {
+		const errorMessage = await validateIndentBudgetAmount(indent, dryRunMap);
+		if (errorMessage) {
+			throw new AppError(errorMessage, StatusCodes.BAD_REQUEST);
+		}
+	}
+
+	// --- Phase 2: actual allocation (VCP deducts stock in its own committed transaction) ---
+	const { allocationResults } = await verifyIndentQuantityWithProductServices(
+		req,
+		modifiedIndentItems,
+		true,
+	);
+
+	const allocationMap = new Map(allocationResults.map((i) => [i.product_id, i]));
+
+	// --- Phase 3: persist in SCM — compensate VCP if this fails ---
+	const transaction = await sequelize.transaction();
+	try {
+		for (const i of indent.IndentItems) {
+			const allocation = allocationMap.get(i.product_id);
+			const issuedQty = allocation?.issued_qty || 0;
+			const purchaseQty = allocation?.qty_for_purchase_order || 0;
+			const updatedIssueQty = updatedIndentQuantityMap.get(i.product_id)?.issue_qty || 0;
+
+			await i.update(
+				{
+					qty_issued: issuedQty,
+					qty_for_purchase_order: purchaseQty,
+					minimum_stock_quantity: allocation?.minimum_stock_quantity || 0,
+					checkMinimumStock: allocation?.checkMinimumStock || false,
+					qty_updated_by_verifier: updatedIssueQty,
+				},
+				{ transaction },
 			);
-			const modifiedIndentItems = plainIndentItems.map((indent) => ({
-				...indent,
-				qty: updatedIndentQuantityMap.get(indent.product_id).issue_qty,
-			}));
-			console.log('modifiedIndentItems ', modifiedIndentItems);
-			const { allocationResults } =
-				await verifyIndentQuantityWithProductServices(
-					req,
-					modifiedIndentItems,
-					true,
-				);
 
-			console.log(
-				'Approved Indent verifyIndentQuantityWithProductServices Response ',
-				allocationResults,
-			);
-			const allocationMap = new Map(
-				allocationResults.map((i) => [i.product_id, i]),
-			);
-			console.log('new allocationMap ', allocationMap);
-
-			if (indent.budgetType === 'value-wise') {
-				const errorMessage = await validateIndentBudgetAmount(
-					indent,
-					allocationMap,
-				);
-
-				if (errorMessage) {
-					throw new AppError(errorMessage, StatusCodes.BAD_REQUEST);
-				}
-			}
-
-			// return;
-			for (const i of indent.IndentItems) {
-				const allocation = allocationMap.get(i.product_id);
-
-				const issuedQty = allocation?.issued_qty || 0;
-				const purchaseQty = allocation?.qty_for_purchase_order || 0;
-
-				const updatedIssueQty =
-					updatedIndentQuantityMap.get(i.product_id)?.issue_qty || 0;
-
-				await i.update(
+			if (i.stock_type === 'serial' && allocation?.issuedSerials?.length > 0) {
+				await IndentSerialRepository.update(
+					{ is_issued: 1 },
 					{
-						qty_issued: issuedQty,
-						qty_for_purchase_order: purchaseQty,
-						minimum_stock_quantity: allocation?.minimum_stock_quantity || 0,
-						checkMinimumStock: allocation?.checkMinimumStock || false,
-						qty_updated_by_verifier: updatedIssueQty,
+						where: { serial_no: { [Op.in]: allocation.issuedSerials } },
+						transaction,
 					},
-					{ transaction },
 				);
-
-				if (i.stock_type === 'serial') {
-					if (allocation.issuedSerials.length > 0) {
-						await IndentSerialRepository.update(
-							{ is_issued: 1 },
-							{
-								where: { serial_no: { [Op.in]: allocation.issuedSerials } },
-								transaction,
-							},
-						);
-					}
-				}
 			}
 		}
 
-		await indent.update(
-			{ isVerified: true, verifiedBy: verifiedBy },
-			transaction,
-		);
+		await indent.update({ isVerified: true, verifiedBy }, { transaction });
 
 		await transaction.commit();
-	} catch (error) {
+	} catch (scmError) {
 		await transaction.rollback();
-		console.log('error ', error);
-		throw error;
+		logger.error('SCM DB update failed after VCP stock deduction — attempting rollback', { scmError });
+
+		// Compensating transaction: restore stock in VCP
+		try {
+			await rollbackStockInProductService(req, allocationResults);
+		} catch (rollbackError) {
+			// Log prominently — manual intervention needed
+			logger.error('CRITICAL: VCP rollback-stock failed. Stock deducted but indent NOT approved. Manual correction required.', {
+				indent_id: id,
+				allocationResults,
+				rollbackError,
+			});
+		}
+
+		throw scmError;
 	}
+};
+
+exports.deleteIndent = async (req, id) => {
+	const indent = await IndentRepository.findById({
+		where: { id },
+		include: [
+			{
+				association: 'IndentItems',
+				include: [
+					{ model: IndentSerialItem, as: 'serial_items' },
+				],
+			},
+		],
+	});
+
+	if (!indent) {
+		throw new AppError(`Indent with ID ${id} not found`, StatusCodes.NOT_FOUND);
+	}
+
+	// If already verified, stock was deducted in VCP — roll it back first
+	if (indent.isVerified && Array.isArray(indent.IndentItems) && indent.IndentItems.length > 0) {
+		const allocationResults = indent.IndentItems.map((item) => ({
+			product_id: item.product_id,
+			stock_type: item.stock_type,
+			base_issued_qty: item.qty_issued,
+			batch_id: item.batch_id,
+			issuedSerials: item.serial_items
+				.filter((s) => s.is_issued)
+				.map((s) => s.serial_no),
+		}));
+
+		await rollbackStockInProductService(req, allocationResults);
+	}
+
+	await indent.destroy();
 };
 
 exports.checkProductQuantity = async (req, productId, uomId) => {
@@ -541,6 +571,29 @@ const getPhaseQuantityDateWise = (budget, date) => {
 
 	return null;
 };
+
+async function rollbackStockInProductService(req, allocationResults) {
+	const URL = `${VCP_SERVICE_API_BASE_URL}${VCP_SERVICE_PRODUCT_ENDPOINT}/rollback-stock`;
+	const token = req.cookies.accessToken;
+
+	const response = await fetch(URL, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${token}`,
+			'x-s2s-comm-key': S2S_COMM_KEY,
+		},
+		body: JSON.stringify({ allocationResults }),
+	});
+
+	const data = await response.json();
+
+	if (!response.ok) {
+		throw new AppError(data?.message || 'Rollback stock API failed', response.status);
+	}
+
+	return data;
+}
 
 async function verifyIndentQuantityWithProductServices(
 	req,

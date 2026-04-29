@@ -94,6 +94,15 @@ exports.verifyAndApproveIndent = catchAsync(async (req, res) => {
 	});
 });
 
+exports.deleteIndent = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	await indentService.deleteIndent(req, id);
+
+	res.status(StatusCodes.OK).json({
+		message: 'Indent deleted successfully',
+	});
+});
+
 exports.downloadIndentReport = catchAsync(async (req, res) => {
 	const data = await indentService.getAllIndents(req);
 

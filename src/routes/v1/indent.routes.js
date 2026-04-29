@@ -57,6 +57,12 @@ router.get(
 	indentController.getNextIndentId,
 );
 
+router.delete(
+	'/:id',
+	checkPermission('indent', 'delete'),
+	indentController.deleteIndent,
+);
+
 // router.get(
 // 	'/',
 // 	checkPermission('indent', 'view'),

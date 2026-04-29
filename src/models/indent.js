@@ -28,6 +28,15 @@ module.exports = (sequelize, DataTypes) => {
 	}
 	Indent.init(
 		{
+			org_id: {
+				type: DataTypes.INTEGER,
+				references: {
+					model: 'organizations',
+					key: 'id',
+				},
+				onUpdate: 'CASCADE',
+				onDelete: 'CASCADE',
+			},
 			period_id: {
 				type: DataTypes.INTEGER,
 			},
