@@ -61,8 +61,7 @@ exports.deleteSubHeadAmount = catchAsync(async (req, res) => {
 
 exports.getAmountByMajorHeadAndPeriod = catchAsync(async (req, res) => {
 	const { id, major_head_id, period_id } = req.params;
-	console.log("{ major_head_id, period_id }", { id, major_head_id, period_id });
-	
+
 	const data = await masterSubHeadAmountService.getAmountByMajorHeadAndPeriod(id, major_head_id, period_id);
 
 	res.status(StatusCodes.OK).json({

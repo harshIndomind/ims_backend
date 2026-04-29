@@ -5,42 +5,43 @@ const bcrypt = require('bcrypt');
 
 module.exports = {
 	async up(queryInterface, Sequelize) {
-		const hashedPassword = await bcrypt.hash('12345678', 10);
+		// const hashedPassword = await bcrypt.hash('12345678', 10);
 
-		await queryInterface.bulkInsert('organizations', [
-			{
-				id: 1,
-				org_name: 'UrbanBuild Constructions',
-				org_code: 'UBC05',
-				org_gst_number: '09AAACH7409R1ZZ',
-				pan: 'DNJPB2328P',
-				org_email: 'urban@gmail.com',
-				org_person_name: 'Vikrant Singh',
-				org_person_contact: '9871209876',
-				org_address: 'Sector 45, Industrial Area, Noida, Uttar Pradesh',
-				pincode: 201010,
-				city: 'Roorkee',
-				state: 'Uttar Pradesh',
-				createdBy: 1,
-				swayamm_org_id: 1,
-				createdAt: new Date(),
-				updatedAt: new Date(),
-			},
-		]);
+		// await queryInterface.bulkInsert('organizations', [
+		// 	{
+		// 		id: 1,
+		// 		org_name: 'UrbanBuild Constructions',
+		// 		org_code: 'UBC05',
+		// 		org_gst_number: '09AAACH7409R1ZZ',
+		// 		pan: 'DNJPB2328P',
+		// 		org_email: 'urban@gmail.com',
+		// 		org_person_name: 'Vikrant Singh',
+		// 		org_person_contact: '9871209876',
+		// 		org_address: 'Sector 45, Industrial Area, Noida, Uttar Pradesh',
+		// 		pincode: 201010,
+		// 		city: 'Roorkee',
+		// 		state: 'Uttar Pradesh',
+		// 		state_id: 9,
+		// 		createdBy: 1,
+		// 		swayamm_org_id: 1,
+		// 		createdAt: new Date(),
+		// 		updatedAt: new Date(),
+		// 	},
+		// ]);
 
-		await queryInterface.bulkInsert('Users', [
-			{
-				org_id: 1,
-				name: 'Vikrant Singh',
-				email: 'urban@gmail.com',
-				password: hashedPassword,
-				roleId: 2,
-				is_active: 1,
-				swayamm_user_id: 2,
-				createdAt: new Date(),
-				updatedAt: new Date(),
-			},
-		]);
+		// await queryInterface.bulkInsert('Users', [
+		// 	{
+		// 		org_id: 1,
+		// 		name: 'Vikrant Singh',
+		// 		email: 'urban@gmail.com',
+		// 		password: hashedPassword,
+		// 		roleId: 2,
+		// 		is_active: 1,
+		// 		swayamm_user_id: 2,
+		// 		createdAt: new Date(),
+		// 		updatedAt: new Date(),
+		// 	},
+		// ]);
 
 		// await queryInterface.bulkInsert('organizations', [
 		// 	{
@@ -103,7 +104,7 @@ module.exports = {
 
 	async down(queryInterface, Sequelize) {
 		// await queryInterface.bulkDelete('organizations', null, {});
-		await queryInterface.bulkDelete('Users', { email: 'urban@gmail.com' });
-		await queryInterface.bulkDelete('organizations', { id: 1 });
+		// await queryInterface.bulkDelete('Users', { email: 'urban@gmail.com' });
+		// await queryInterface.bulkDelete('organizations', { id: 1 });
 	},
 };

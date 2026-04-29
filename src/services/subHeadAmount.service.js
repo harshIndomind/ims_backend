@@ -2,7 +2,6 @@ const AppError = require('../utils/AppError');
 const { StatusCodes } = require('http-status-codes');
 const { masterSubHeadAmountRepo } = require('../repository/index');
 const logger = require('../utils/logger');
-const { off } = require('pdfkit');
 const {
 	MasterMajorHead,
 	MasterPeriod,
@@ -21,12 +20,19 @@ const { fn, col } = require('sequelize');
 exports.createSubHeadAmount = async (req, payload) => {
 	const { org_id } = req.user;
 	const {
-		major_head_amount_id,
 		major_head_id,
 		period_id,
 		sub_head_id,
 		amount,
 	} = payload;
+
+	if (!major_head_id || !period_id || !sub_head_id || !amount) {
+		logger.warn('Validation failed while creating Sub head amount', payload);
+		throw new AppError(
+			'Major head id, period id, sub head id and amount are required',
+			StatusCodes.BAD_REQUEST,
+		);
+	}
 
 	const majorHeadAmount = await getAmountByMajorHeadAndPeriod(
 		org_id,
@@ -37,16 +43,14 @@ exports.createSubHeadAmount = async (req, payload) => {
 	if (!majorHeadAmount) {
 		throw new AppError('Major head amount not found', StatusCodes.NOT_FOUND);
 	}
-	console.log('majorHeadAmount ', majorHeadAmount);
 
 	const subHeadAmount = await getSubAmountByMajorHeadAndPeriod(
 		major_head_id,
 		period_id,
 	);
-	logger.info('Sub head amount fetched for major head and period', {
+	logger.info('Sub head amount for major head and period fetched', {
 		major_head_id,
 		period_id,
-		subHeadAmount,
 	});
 
 	let totalAmountLeftForUse = parseFloat(majorHeadAmount.amount);
@@ -60,14 +64,6 @@ exports.createSubHeadAmount = async (req, payload) => {
 		throw new AppError(
 			`Sub head amount is greater than the left amount for use ${totalAmountLeftForUse}`,
 			400,
-		);
-	}
-
-	if (!major_head_id || !period_id || !amount) {
-		logger.warn('Validation failed while creating Sub head amount', payload);
-		throw new AppError(
-			'Major head id, period id and amount are required',
-			StatusCodes.BAD_REQUEST,
 		);
 	}
 
@@ -114,6 +110,7 @@ exports.updateSubHeadAmount = async (req, payload) => {
 	}
 
 	const majorHeadAmount = await getAmountByMajorHeadAndPeriod(
+		org_id,
 		major_head_id,
 		period_id,
 	);
@@ -121,7 +118,6 @@ exports.updateSubHeadAmount = async (req, payload) => {
 	if (!majorHeadAmount) {
 		throw new AppError('Major head amount not found', StatusCodes.NOT_FOUND);
 	}
-	console.log('majorHeadAmount ', majorHeadAmount);
 
 	const subHeadAmount = await getSubAmountByMajorHeadAndPeriod(
 		major_head_id,

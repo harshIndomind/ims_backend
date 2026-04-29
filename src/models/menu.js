@@ -57,6 +57,7 @@ module.exports = (sequelize, DataTypes) => {
 			},
 			icon: { type: DataTypes.STRING, allowNull: true },
 			url: DataTypes.STRING,
+			showInSidebar: { type: DataTypes.TINYINT, defaultValue: 1 },
 			isActive: { type: DataTypes.BOOLEAN, defaultValue: true },
 		},
 		{

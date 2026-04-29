@@ -9,6 +9,15 @@ module.exports = {
 				primaryKey: true,
 				type: Sequelize.INTEGER,
 			},
+			org_id: {
+				type: Sequelize.INTEGER,
+				references: {
+					model: 'organizations',
+					key: 'id',
+				},
+				onUpdate: 'CASCADE',
+				onDelete: 'CASCADE',
+			},
 			terms_type: {
 				type: Sequelize.TEXT,
 			},

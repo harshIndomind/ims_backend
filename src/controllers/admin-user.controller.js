@@ -15,12 +15,12 @@ exports.createUserByOrganization = catchAsync(async (req, res) => {
 });
 
 exports.getAllOrgAdminUsers = catchAsync(async (req, res) => {
-	const org_id = req.user.org_id;
-	const limit = parseInt(req.query.limit) || 10;
-	const offset = parseInt(req.query.offset) || 0;
-	const role_id = parseInt(req.query.selectedRoleId) || 0;
+	// const org_id = req.user.org_id;
+	// const limit = parseInt(req.query.limit) || 10;
+	// const offset = parseInt(req.query.offset) || 0;
+	// const role_id = parseInt(req.query.selectedRoleId) || 0;
 
-	const users = await userService.getAllOrgAdminUsers(org_id, limit, offset, role_id);
+	const users = await userService.getAllOrgAdminUsers(req);
 
 	res.status(200).json({
 		status: 'success',

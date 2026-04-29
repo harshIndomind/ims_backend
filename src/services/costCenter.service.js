@@ -37,7 +37,7 @@ exports.updateCostCenter = async (id, payload) => {
 
 	if (!costCenter) {
 		logger.warn('Cost center not found for update', { id });
-		throw new AppError('Master Major Head not found', StatusCodes.NOT_FOUND);
+		throw new AppError('Cost Center not found', StatusCodes.NOT_FOUND);
 	}
 
 	await costCenterRepository.update(costCenter, {

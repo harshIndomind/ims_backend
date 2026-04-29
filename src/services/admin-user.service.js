@@ -1,7 +1,18 @@
 const bcrypt = require('bcrypt');
 const AppError = require('../utils/AppError');
 const { AdminUserRepository } = require('../repository/index');
-const {sequelize} = require('../models/index');
+const {
+	User,
+	organization,
+	Department,
+	Designation,
+	sequelize,
+	UserApp,
+	App,
+	Role
+} = require('../models/index');
+const logger = require('../utils/logger');
+const {Op} = require('sequelize');
 
 const createUserByOrganization = async (data, loggedInUser) => {
 	const t = await sequelize.transaction();
@@ -41,16 +52,75 @@ const createUserByOrganization = async (data, loggedInUser) => {
 		await t.commit();
 
 		return user;
-
 	} catch (error) {
 		await t.rollback();
 		throw error;
 	}
 };
 
+const getAllOrgAdminUsers = async (req) => {
+	logger.debug('getAllOrgAdminUsers user payload: ', {user: req.user});
 
-const getAllOrgAdminUsers = async (org_id, limit, offset, role_id) => {
-	return await AdminUserRepository.findAll(org_id, limit, offset, role_id);
+	const {org_id, role} = req.user;
+	const limit = parseInt(req.query.limit) || 10;
+	const offset = parseInt(req.query.offset) || 0;
+	const role_id = parseInt(req.query.selectedRoleId) || 0;
+	
+	const where = {org_id};
+	if(role === 'Super Admin'){
+		delete where.org_id;
+	}
+
+	where['roleId'] = role_id;
+	if (!role_id) {
+		where['roleId'] = { [Op.notIn]: [1, 2] };
+	}
+	logger.debug('getAllOrgAdminUsers where payload: ', {where});
+	options = {
+		where,
+		include: [
+			{ model: Department, attributes: ['id', 'name', 'description'], required: false },
+			{ model: Designation, attributes: ['id', 'title'], required: false },
+			{
+				model: organization,
+				as: 'organization',
+				attributes: ['id', 'org_name'],
+			},
+			{
+				model: Role,
+				attributes: ['id', 'name'],
+			},
+		],
+		attributes: { exclude: ['password'] },
+		limit,
+		offset,
+	};
+	return await AdminUserRepository.findAll(options);
+	// let whereClauseForRoleId = { roleId: role_id };
+	// if (!role_id) {
+	// 	whereClauseForRoleId.roleId = { [Op.notIn]: [1, 2] };
+	// }
+	// console.log('whereClauseForRoleId ', whereClauseForRoleId);
+
+	// return await User.findAndCountAll({
+	// 	where: { org_id, ...whereClauseForRoleId },
+	// 	include: [
+	// 		{ model: Department, attributes: ['id', 'name', 'description'] },
+	// 		{ model: Designation, attributes: ['id', 'title'] },
+	// 		{
+	// 			model: organization,
+	// 			as: 'organization',
+	// 			attributes: ['id', 'org_name'],
+	// 		},
+	// 		{
+	// 			model: Role,
+	// 			attributes: ['id', 'name'],
+	// 		},
+	// 	],
+	// 	attributes: { exclude: ['password'] },
+	// 	limit,
+	// 	offset,
+	// });
 };
 
 const findOne = async (userId) => {

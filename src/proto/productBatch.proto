@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package productUom;
+
+service ProductBatchService {
+  rpc GetProductBatchByBatchId (ProductBatchRequest) returns (ProductBatchResponse);
+}
+
+message ProductBatchRequest {
+  int32 batchId = 1;
+}
+
+message ProductBatchResponse {
+  int32 id = 1;
+  int32 product_id = 2;
+  string batch_no = 3; 
+  double qty = 4;
+  double sell_price = 5;
+  double sell_price_incl_tax = 6;
+  double purchase_price = 7;
+  double purchase_price_incl_tax = 8;
+  string barcode_no = 9;
+}

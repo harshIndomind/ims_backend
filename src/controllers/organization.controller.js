@@ -15,6 +15,12 @@ const ExcelJS = require('exceljs');
 const { format } = require('date-fns');
 const moment = require('moment');
 const path = require('node:path');
+const logger = require('../utils/logger');
+const { publishEvent } = require('../events/publisher');
+const {
+	buildOrgCreatedEvent,
+	buildOrgUpdatedEvent,
+} = require('../events/schemas/orgEvents');
 
 exports.createOrganization = catchAsync(async (req, res) => {
 	const t = await sequelize.transaction();
@@ -95,7 +101,11 @@ exports.createOrganization = catchAsync(async (req, res) => {
 			{ transaction: t }
 		);
 
-		t.commit();
+		const event = buildOrgCreatedEvent(Organization, bankDetails, user);
+		await publishEvent('org.created', event);
+		logger.info('Published org.created event', { org_id: Organization.id });
+
+		await t.commit();
 		res.status(201).json(Organization);
 	} catch (err) {
 		t.rollback();
@@ -206,7 +216,7 @@ exports.updateOrganization = catchAsync(async (req, res) => {
 			}
 		}
 
-		t.commit();
+		await t.commit();
 
 		if (updatedCount === 0) {
 			return res
@@ -214,8 +224,15 @@ exports.updateOrganization = catchAsync(async (req, res) => {
 				.json({ message: 'Organization not found or no changes' });
 		}
 
+		const updatedOrg = await organization.findByPk(id);
+		if (updatedOrg) {
+			const event = buildOrgUpdatedEvent(updatedOrg);
+			await publishEvent('org.updated', event);
+			logger.info('Published org.updated event', { org_id: id });
+		}
+
 		res.json({ message: 'Organization updated successfully' });
-	} catch (err) {		
+	} catch (err) {
 		t.rollback();
 		res.status(err.statusCode || 500).json({ message: err.message || 'Something went wrong while updating the organization'});
 	}

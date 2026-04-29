@@ -10,7 +10,7 @@ if (!fs.existsSync(logDir)) {
 }
 
 const logger = createLogger({
-	level: process.env.LOG_LEVEL || 'info',
+	level: process.env.LOG_LEVEL || 'debug',
 	defaultMeta: {
 		serviceName: 'SCM Service'
 	},

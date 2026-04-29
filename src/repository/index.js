@@ -26,5 +26,7 @@ module.exports = {
     organizationRepository: require('./organization.repository'),
     organizationBankRepository: require('./organizationBank.repository'),
     purchaseOrderRepository: require('./purchase-order.repository'),
+    purchaseOrderItemsRepository: require('./purchase-order-items.repository'),
+    purchaseOrderSerialItemsRepository: require('./purchase-order-serial-items.repository'),
 
 }

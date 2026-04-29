@@ -30,7 +30,9 @@ const createUser = async (payload, app_ids, transaction) => {
 };
 
 
-const findAll = async (org_id, limit, offset, role_id) => {
+// const findAll = async (org_id, limit, offset, role_id) => {
+const findAll = async (options = {}) => {
+	return await User.findAndCountAll(options);
 	let whereClauseForRoleId = {roleId: role_id};
 	if(!role_id){
 		whereClauseForRoleId.roleId = {[Op.notIn]: [1,2]};

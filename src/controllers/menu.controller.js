@@ -4,6 +4,7 @@ const catchAsync = require('../utils/catchAsync');
 const { Op } = require('sequelize');
 const { Console } = require('console');
 const fetchPermissions = require('../helpers/fetchPermissions');
+const logger = require('../utils/logger');
 const menuService = new MenuService();
 
 exports.create = catchAsync(async (req, res) => {
@@ -109,9 +110,9 @@ exports.getMenusWithPermissions = async (req, res) => {
 					],
 				},
 				{
-				  model: Permission,
-				  as: 'permissions',
-				  attributes: ['id', 'action'],
+					model: Permission,
+					as: 'permissions',
+					attributes: ['id', 'action'],
 				},
 			],
 			order: [
@@ -133,12 +134,15 @@ exports.getMenusWithPermissions = async (req, res) => {
 
 exports.getMenus = catchAsync(async (req, res) => {
 	// async function getMenusForUser(req, res) {
-	const {role} = req.user;
+	const { roles } = req.user;
 	const permissions = await fetchPermissions(req);
-	const allowedSlugs = new Set(
-		permissions.map((p) => p.split(':')[0]),
-	);
 
+	const allowedSlugs = new Set(
+		(permissions ?? [])
+			.map((p) => String(p))
+			.filter((p) => p.split(':')[1] !== 'api_read')
+			.map((p) => p.split(':')[0]),
+	);
 	const menus = await Menu.findAll({
 		where: { isActive: 1, showInSidebar: true },
 		attributes: [
@@ -154,8 +158,8 @@ exports.getMenus = catchAsync(async (req, res) => {
 		order: [['id', 'ASC']],
 	});
 
-	const tree = buildMenuTree(menus, allowedSlugs, role);
-	
+	const tree = buildMenuTree(menus, allowedSlugs, roles);
+
 	res.status(200).json({
 		status: true,
 		message: 'Menu fetched successfully',
@@ -164,10 +168,10 @@ exports.getMenus = catchAsync(async (req, res) => {
 	// }
 });
 
-function buildMenuTree(menus, allowedSlugs, role) {
+function buildMenuTree(menus, allowedSlugs, roles) {
 	const map = {};
 	const roots = [];
-	
+
 	// 1️⃣ Create map
 	menus.forEach((menu) => {
 		map[menu.id] = {
@@ -191,7 +195,7 @@ function buildMenuTree(menus, allowedSlugs, role) {
 			return null;
 		}
 
-		if(role === 'Super Admin') {
+		if (roles.includes('super_admin')) {
 			return menu;
 		}
 

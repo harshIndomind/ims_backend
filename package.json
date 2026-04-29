@@ -5,7 +5,7 @@
 	"type": "commonjs",
 	"scripts": {
 		"test": "echo \"Error: no test specified\" && exit 1",
-		"dev": "nodemon --env-file=.env src/index.js",
+		"dev": "nodemon --env-file=.env src/index.js -- -p 4300",
 		"start": "node --env-file=.env.production src/index.js",
 		"reset:db": "cd src && npx sequelize-cli db:drop && npx sequelize-cli db:create && npx sequelize-cli db:migrate && npx sequelize-cli db:seed:all && cd .. && npm run dev"
 	},
@@ -16,6 +16,8 @@
 	"dependencies": {
 		"@aws-sdk/client-s3": "^3.844.0",
 		"@aws-sdk/s3-request-presigner": "^3.848.0",
+		"@grpc/grpc-js": "^1.14.3",
+		"@grpc/proto-loader": "^0.8.0",
 		"amqplib": "^0.10.9",
 		"axios": "^1.13.2",
 		"bcrypt": "^6.0.0",

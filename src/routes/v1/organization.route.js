@@ -7,47 +7,48 @@ const {
 	validationCreateOrganization,
 	validationUpdateOrganization,
 } = require('../../validations/Organization.validator');
+const checkPermission = require('../../middlewares/checkPermission');
 
 router.use(verifyToken); // all routes protected
 
 router.post(
 	'/',
-	checkRole(['Super Admin']),
+	checkPermission('organization', 'create'),
 	validationCreateOrganization,
 	validate,
-	OrganizationController.createOrganization
+	OrganizationController.createOrganization,
 );
 router.put(
 	'/:id',
-	checkRole(['Super Admin', 'Admin']),
+	checkPermission('organization', 'edit'),
 	validationUpdateOrganization,
 	validate,
-	OrganizationController.updateOrganization
+	OrganizationController.updateOrganization,
 );
 router.delete(
 	'/:id',
-	checkRole(['Super Admin', 'Admin']),
-	OrganizationController.deleteOrganization
+	checkPermission('organization', 'delete'),
+	OrganizationController.deleteOrganization,
 );
 router.get(
 	'/',
-	checkRole(['Super Admin', 'Admin']),
-	OrganizationController.getAllOrganizations
+	checkPermission('organization', 'view'),
+	OrganizationController.getAllOrganizations,
 );
 router.get(
 	'/export',
-	checkRole(['Super Admin', 'Admin']),
-	OrganizationController.exportOrganizations
+	checkPermission('organization', 'export'),
+	OrganizationController.exportOrganizations,
 );
 router.get(
 	'/:id',
-	checkRole(['Super Admin', 'Admin']),
-	OrganizationController.getOrganization
+	checkPermission('organization', 'view'),
+	OrganizationController.getOrganization,
 );
 router.get(
 	'/organization/banks',
-	checkRole(['Super Admin', 'Admin']),
-	OrganizationController.getOrganizationBankDetails
+	checkPermission('organization', 'view'),
+	OrganizationController.getOrganizationBankDetails,
 );
 
 module.exports = router;

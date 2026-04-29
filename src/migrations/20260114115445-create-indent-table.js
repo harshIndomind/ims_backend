@@ -9,6 +9,15 @@ module.exports = {
 				primaryKey: true,
 				type: Sequelize.INTEGER,
 			},
+			org_id: {
+				type: Sequelize.INTEGER,
+				references: {
+					model: 'organizations',
+					key: 'id',
+				},
+				onUpdate: 'CASCADE',
+				onDelete: 'CASCADE',
+			},
 			period_id: {
 				type: Sequelize.INTEGER,
 				references: {
@@ -36,7 +45,7 @@ module.exports = {
 			},
 			department_id: {
 				type: Sequelize.INTEGER,
-				references: {model: 'departments', key: 'id'},
+				references: { model: 'departments', key: 'id' },
 			},
 			annexure: {
 				type: Sequelize.STRING(200),
