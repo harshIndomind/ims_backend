@@ -257,6 +257,30 @@ module.exports = {
 				isActive: 1,
 				createdAt: new Date(),
 				updatedAt: new Date(),
+			},
+			{
+				id: 22,
+				parentId: 2,
+				menuName: 'Terms Conditions',
+				icon: null,
+				url: '/masters/terms-conditions',
+				slug: 'terms-conditions',
+				showInSidebar: true,
+				isActive: 1,
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			}
+			{
+				id: 23,
+				parentId: 2,
+				menuName: 'Transporters',
+				icon: null,
+				url: '/masters/transporters',
+				slug: 'transporters',
+				showInSidebar: true,
+				isActive: 1,
+				createdAt: new Date(),
+				updatedAt: new Date(),
 			}
 		]);
 	},

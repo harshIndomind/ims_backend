@@ -1,23 +1,31 @@
 'use strict';
-const {
-  Model
-} = require('sequelize');
+const { Model } = require('sequelize');
 module.exports = (sequelize, DataTypes) => {
-  class MasterTermsCondition extends Model {
-    /**
-     * Helper method for defining associations.
-     * This method is not a part of Sequelize lifecycle.
-     * The `models/index` file will call this method automatically.
-     */
-    static associate(models) {
-      // define association here
-    }
-  }
-  MasterTermsCondition.init({
-    terms_type: DataTypes.TEXT
-  }, {
-    sequelize,
-    modelName: 'MasterTermsCondition',
-  });
-  return MasterTermsCondition;
+	class MasterTermsCondition extends Model {
+		static associate(models) {
+			MasterTermsCondition.belongsTo(models.organization, {
+				foreignKey: 'org_id',
+				as: 'organization',
+			});
+		}
+	}
+	MasterTermsCondition.init(
+		{
+			org_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+				references: { model: 'organizations', key: 'id' },
+			},
+			terms_type: {
+				type: DataTypes.TEXT,
+				allowNull: false,
+			},
+		},
+		{
+			sequelize,
+			timestamps: true,
+			modelName: 'MasterTermsCondition',
+		},
+	);
+	return MasterTermsCondition;
 };
