@@ -2,36 +2,34 @@ const AppError = require('../utils/AppError');
 const { StatusCodes } = require('http-status-codes');
 const { masterTermsRepository } = require('../repository/index');
 const logger = require('../utils/logger');
-const { organization } = require('../models/index');
-const {Op} = require("sequelize")
+const { Op } = require('sequelize');
+
 exports.createMasterTerms = async (req, payload) => {
 	const { org_id } = req.user;
-	const { m_code, m_name } = payload;
+	const { terms_type } = payload;
 
-	if (!m_code || !m_name) {
+	if (!terms_type) {
 		logger.warn('Validation failed while creating Master Terms', payload);
-		throw new AppError(
-			'Major head code and name are required',
-			StatusCodes.BAD_REQUEST,
-		);
+		throw new AppError('Terms type is required', StatusCodes.BAD_REQUEST);
 	}
 
 	const masterTerms = await masterTermsRepository.create({
 		org_id,
-		m_code,
-		m_name,
+		terms_type,
 	});
 
-	logger.info('Master Terms created', {
-		id: masterTerms.id,
-		m_code: masterTerms.m_code,
-	});
+	logger.info('Master Terms created', { id: masterTerms.id });
 
 	return masterTerms;
 };
 
 exports.updateMasterTerms = async (id, payload) => {
-	const { m_code, m_name } = payload;
+	const { terms_type } = payload;
+
+	if (!terms_type) {
+		logger.warn('Validation failed while updating Master Terms', payload);
+		throw new AppError('Terms type is required', StatusCodes.BAD_REQUEST);
+	}
 
 	const masterTerms = await masterTermsRepository.findById(id);
 
@@ -40,42 +38,32 @@ exports.updateMasterTerms = async (id, payload) => {
 		throw new AppError('Master Terms not found', StatusCodes.NOT_FOUND);
 	}
 
-	await masterTermsRepository.update(masterTerms, {
-		m_code,
-		m_name,
-	});
+	await masterTermsRepository.update(masterTerms, { terms_type });
 
-	logger.info('Master Terms updated', {
-		id,
-	});
+	logger.info('Master Terms updated', { id });
 
 	return masterTerms;
 };
 
 exports.getAllMasterTerms = async (req) => {
-	logger.info('Fetching all Master Major Heads');
-	const {
-		limit,
-		offset,
-		search
-	} = req.query;
+	const { org_id } = req.user;
+	const { limit, offset, search } = req.query;
 
-	
 	const where = {
+		org_id: Number(org_id),
 		terms_type: {
-        [Op.like]: `%${search || ''}%`,
-      },
-	}
-
-	const filterOptions = {
-		where,
-		include: [],
+			[Op.like]: `%${search || ''}%`,
+		},
 	};
+
+	const filterOptions = { where };
 
 	if (limit) {
 		filterOptions.limit = Number(limit);
 		filterOptions.offset = Number(offset || 0);
 	}
+
+	logger.info('Fetching all Master Terms', {filterOptions});
 	return await masterTermsRepository.findAll({}, filterOptions);
 };
 

@@ -2,101 +2,101 @@ const AppError = require('../utils/AppError');
 const { StatusCodes } = require('http-status-codes');
 const { masterTransporterRepository } = require('../repository/index');
 const logger = require('../utils/logger');
-const { organization } = require('../models/index');
-const {Op} = require('sequelize');
+const { Op } = require('sequelize');
 
 exports.createMasterTransporter = async (req, payload) => {
 	const { org_id } = req.user;
-	const { m_code, m_name } = payload;
+	const { name, address1, address2, contactNo } = payload;
 
-	if (!m_code || !m_name) {
+	if (!name || !address1) {
 		logger.warn('Validation failed while creating Master Transporter', payload);
-		throw new AppError(
-			'Major head code and name are required',
-			StatusCodes.BAD_REQUEST,
-		);
+		throw new AppError('Name and address are required', StatusCodes.BAD_REQUEST);
 	}
 
-	const masterMajorHead = await masterTransporterRepository.create({
+	const masterTransporter = await masterTransporterRepository.create({
 		org_id,
-		m_code,
-		m_name,
+		name,
+		address1,
+		address2: address2 || null,
+		contactNo: contactNo || null,
 	});
 
-	logger.info('Master Transporter created', {
-		id: masterMajorHead.id,
-		m_code: masterMajorHead.m_code,
-	});
+	logger.info('Master Transporter created', { id: masterTransporter.id });
 
-	return masterMajorHead;
+	return masterTransporter;
 };
 
 exports.updateMasterTransporter = async (id, payload) => {
-	const { m_code, m_name } = payload;
+	const { name, address1, address2, contactNo } = payload;
 
-	const masterMajorHead = await masterTransporterRepository.findById(id);
+	if (!name || !address1) {
+		logger.warn('Validation failed while updating Master Transporter', payload);
+		throw new AppError('Name and address are required', StatusCodes.BAD_REQUEST);
+	}
 
-	if (!masterMajorHead) {
+	const masterTransporter = await masterTransporterRepository.findById(id);
+
+	if (!masterTransporter) {
 		logger.warn('Master Transporter not found for update', { id });
 		throw new AppError('Master Transporter not found', StatusCodes.NOT_FOUND);
 	}
 
-	await masterTransporterRepository.update(masterMajorHead, {
-		m_code,
-		m_name,
+	await masterTransporterRepository.update(masterTransporter, {
+		name,
+		address1,
+		address2: address2 || null,
+		contactNo: contactNo || null,
 	});
 
-	logger.info('Master Transporter updated', {
-		id,
-	});
+	logger.info('Master Transporter updated', { id });
 
-	return masterMajorHead;
+	return masterTransporter;
 };
 
 exports.getAllMasterTransporter = async (req) => {
-	logger.info('Fetching all Master Transporters');
-
+	const { org_id } = req.user;
 	const { limit, offset, search } = req.query;
 
 	const where = {
+		org_id: Number(org_id),
 		name: {
 			[Op.like]: `%${search || ''}%`,
 		},
 	};
 
-	const filterOptions = {
-		where,
-	};
+	const filterOptions = { where };
 
 	if (limit) {
 		filterOptions.limit = Number(limit);
 		filterOptions.offset = Number(offset || 0);
 	}
+
+	logger.info('Fetching all Master Transporters');
 	return await masterTransporterRepository.findAll({}, filterOptions);
 };
 
 exports.getMasterTransporterById = async (id) => {
-	const masterMajorHead = await masterTransporterRepository.findById(id);
+	const masterTransporter = await masterTransporterRepository.findById(id);
 
-	if (!masterMajorHead) {
+	if (!masterTransporter) {
 		logger.warn('Master Transporter not found', { id });
 		throw new AppError('Master Transporter not found', StatusCodes.NOT_FOUND);
 	}
 
 	logger.info('Master Transporter fetched', { id });
 
-	return masterMajorHead;
+	return masterTransporter;
 };
 
 exports.deleteMasterTransporter = async (id) => {
-	const masterMajorHead = await masterTransporterRepository.findById(id);
+	const masterTransporter = await masterTransporterRepository.findById(id);
 
-	if (!masterMajorHead) {
+	if (!masterTransporter) {
 		logger.warn('Master Transporter not found for delete', { id });
 		throw new AppError('Master Transporter not found', StatusCodes.NOT_FOUND);
 	}
 
-	await masterTransporterRepository.delete(masterMajorHead);
+	await masterTransporterRepository.delete(masterTransporter);
 
 	logger.info('Master Transporter deleted', { id });
 

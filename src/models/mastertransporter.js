@@ -2,20 +2,27 @@
 const { Model } = require('sequelize');
 module.exports = (sequelize, DataTypes) => {
 	class MasterTransporter extends Model {
-		/**
-		 * Helper method for defining associations.
-		 * This method is not a part of Sequelize lifecycle.
-		 * The `models/index` file will call this method automatically.
-		 */
 		static associate(models) {
-			// define association here
+			MasterTransporter.belongsTo(models.organization, {
+				foreignKey: 'org_id',
+				as: 'organization',
+			});
 		}
 	}
 	MasterTransporter.init(
 		{
-			name: DataTypes.STRING,
+			org_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+				references: { model: 'organizations', key: 'id' },
+			},
+			name: {
+				type: DataTypes.STRING,
+				allowNull: false,
+			},
 			address1: {
 				type: DataTypes.TEXT,
+				allowNull: false,
 			},
 			address2: {
 				type: DataTypes.TEXT,
@@ -28,6 +35,7 @@ module.exports = (sequelize, DataTypes) => {
 		},
 		{
 			sequelize,
+			timestamps: true,
 			modelName: 'MasterTransporter',
 		},
 	);
