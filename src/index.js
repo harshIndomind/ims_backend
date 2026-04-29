@@ -42,12 +42,13 @@ async function prepareAndStartServer() {
 	app.use(cookieParser());
 	const whitelist = [
 		'http://localhost:3000',
-		'https://vctest.swayamm.com',
-		'https://vcdev.swayamm.com',
 		'https://auth.swayamm.test:3000',
 		'http://scm.swayamm.test:3003',
-		'https://scm.swayamm.com',
+		// Production
+		'https://vcdev.swayamm.com',
 		'https://auth.swayamm.com',
+		'https://scm.swayamm.com',
+		'https://vctest.swayamm.com',
 	];
 
 	app.use(
