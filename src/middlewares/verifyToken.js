@@ -18,19 +18,27 @@ const verifyToken = async (req, res, next) => {
 		let swayamm_org_id = decoded.swayamm_org_id;
 		let organization_name = decoded.organization_name;
 		let state_id = decoded.state_id;
+		let local_user_id = null;
 
 		if (org_uuid) {
-			// New tokens: resolve local org_id from the shared org UUID
-			const org = await organization.findOne({
-				where: { uuid: org_uuid },
-				attributes: ['id', 'swayamm_org_id', 'org_name', 'state_id'],
-			});
+			// New tokens: resolve local org_id from the shared org UUID,
+			// and local user id from the shared user UUID (sub)
+			const [org, localUser] = await Promise.all([
+				organization.findOne({
+					where: { uuid: org_uuid },
+					attributes: ['id', 'swayamm_org_id', 'org_name', 'state_id'],
+				}),
+				decoded.sub
+					? User.findOne({ where: { uuid: decoded.sub }, attributes: ['id'] })
+					: null,
+			]);
 			if (org) {
 				org_id = org.id;
 				swayamm_org_id = org.swayamm_org_id;
 				organization_name = org.org_name;
 				state_id = org.state_id;
 			}
+			if (localUser) local_user_id = localUser.id;
 		} else if (decoded.sub) {
 			// Old tokens without org_uuid: resolve via local user record using user UUID
 			const user = await User.findOne({
@@ -39,6 +47,7 @@ const verifyToken = async (req, res, next) => {
 				attributes: ['id', 'org_id'],
 			});
 			if (user) {
+				local_user_id = user.id;
 				org_id = user.org_id;
 				org_uuid = user.organization?.uuid ?? null;
 				swayamm_org_id = user.organization?.swayamm_org_id ?? null;
@@ -48,12 +57,13 @@ const verifyToken = async (req, res, next) => {
 		}
 
 		req.user = {
-			id: decoded.id,
+			sub: decoded.sub,
+			id: local_user_id ?? decoded.id,
 			name: decoded.name,
 			email: decoded.email,
 			roles: decoded.roles ?? [],
 			role: decoded.role ?? null,
-			roleId: decoded.roleId,
+			roleId: decoded?.roleId ?? null,
 			imageUrl: decoded.avatar,
 			org_id,
 			org_uuid,
