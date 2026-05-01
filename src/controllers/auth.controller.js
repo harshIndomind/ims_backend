@@ -42,10 +42,10 @@ exports.logout = catchAsync((req, res) => {
 });
 
 exports.getLoggedInUser = catchAsync(async (req, res) => {
-	const userId = req.user.id;
-	console.log('userId ', userId);
+	const uuid = req.user.sub;
+	console.log('uuid ', uuid);
 
-	const userData = await AuthService.getLoggedInUser(userId, res);
+	const userData = await AuthService.getLoggedInUser(uuid, res);
 	res.json({ message: 'User details fetched Successfully', data: userData });
 });
 

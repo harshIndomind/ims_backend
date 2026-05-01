@@ -224,9 +224,9 @@ exports.login = async ({ email, password }, res) => {
 	};
 };
 
-exports.getLoggedInUser = async (user_id, res) => {
+exports.getLoggedInUser = async (uuid, res) => {
 	const user = await User.findOne({
-		where: { id: user_id, is_active: 1 },
+		where: { uuid, is_active: 1 },
 		include: [
 			{
 				model: Role,

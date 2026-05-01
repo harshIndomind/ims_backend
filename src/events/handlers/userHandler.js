@@ -48,7 +48,7 @@ async function handleUserCreated(data) {
 		);
 
 		// Assign SCM-specific roles only
-		const scmRoles = data.roles?.SCM ?? [];
+		const scmRoles = data.roles?.[APP_CODE] ?? [];
 		logger.info('Event: User Created | Roles :', { roles: data.roles });
 		if (scmRoles.length) {
 			// Remove existing roles first — full replacement
@@ -88,7 +88,6 @@ async function handleUserUpdated(data) {
 	logger.info('Event: User Updated | data :', { data });
 	await User.update(
 		{
-			uuid: data.uuid,
 			email: data.email,
 			name: data.name,
 			is_active: data.is_active,
