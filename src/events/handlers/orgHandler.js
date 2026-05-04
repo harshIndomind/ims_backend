@@ -79,6 +79,7 @@ async function handleOrgCreated(data) {
 		if (data.admin_user) {
 			logger.debug('Creating Organization Admin User: ', {
 				id: data.admin_user.auth_user_id,
+				uuid: data.admin_user.uuid,
 				swayamm_user_id: data.admin_user.auth_user_id,
 				email: data.admin_user.email,
 				name: data.admin_user.name,
@@ -89,6 +90,7 @@ async function handleOrgCreated(data) {
 			await User.upsert(
 				{
 					id: data.admin_user.auth_user_id,
+					uuid: data.admin_user.uuid,
 					swayamm_user_id: data.admin_user.auth_user_id,
 					email: data.admin_user.email,
 					name: data.admin_user.name,
