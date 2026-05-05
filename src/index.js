@@ -17,6 +17,7 @@ const { init } = require('./utils/socket');
 // const {consumeAdminEvents} = require('./shared/consumeEvent');
 const { connect } = require('./config/rabbitmq');
 const { startConsumer } = require('./events/consumer');
+const helmet = require('helmet');
 
 const limiter = rateLimit({
 	windowMs: 1 * 60 * 1000,
@@ -39,6 +40,7 @@ async function prepareAndStartServer() {
 	console.log(`Server listening on ${BASE_URL}`);
 	console.log(`Date ${new Date().toString()}`);
 
+	app.use(helmet());
 	app.use(cookieParser());
 	const whitelist = [
 		'http://localhost:3000',
