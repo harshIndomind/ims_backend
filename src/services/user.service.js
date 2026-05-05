@@ -652,14 +652,12 @@ class UserService {
 	}
 
 	async resetPassword(token, newPassword) {
-		try {
-			const resetPass = await userRepo.resetPassword(token, newPassword);
+		const { user, hashedPassword } = await userRepo.resetPassword(token, newPassword);
 
-			return resetPass;
-		} catch (error) {
-			console.error('Something went wrong in the service layer');
-			throw error;
-		}
+		await publishEvent(
+			'user.password_changed',
+			buildPasswordChangedEvent(user.uuid, hashedPassword),
+		);
 	}
 
 	async _resolveAppRoles(appAccess) {

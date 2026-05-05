@@ -312,7 +312,7 @@ class UserRepository {
 
 			await ResetPassword.destroy({ where: { userId: resetRecord.userId } });
 
-			return true;
+			return { user, hashedPassword };
 		} catch (error) {
 			console.error('Something went wrong in the repository layer');
 			throw error;
