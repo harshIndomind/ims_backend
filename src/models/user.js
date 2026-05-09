@@ -37,6 +37,7 @@ module.exports = (sequelize, DataTypes) => {
 
 			User.belongsTo(models.Department, { foreignKey: 'department_id' });
 			User.belongsTo(models.Designation, { foreignKey: 'designation_id' });
+			User.belongsTo(models.MasterUnit, { foreignKey: 'unit_id', as: 'unit' });
 		}
 	}
 	User.init(
@@ -74,6 +75,16 @@ module.exports = (sequelize, DataTypes) => {
 				},
 				onUpdate: 'CASCADE',
 				onDelete: 'RESTRICT',
+			},
+			unit_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+				references: {
+					model: 'MasterUnits',
+					key: 'id',
+				},
+				onUpdate: 'CASCADE',
+				onDelete: 'SET NULL',
 			},
 			layer: {
 				type: DataTypes.INTEGER,

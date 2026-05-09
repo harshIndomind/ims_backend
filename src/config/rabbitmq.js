@@ -42,6 +42,7 @@ const ROUTING_KEYS = [
   'user.password_changed',
   'user.roles_updated',
   'user.profile_updated',
+  'master.synced',
 ];
 
 let connection = null;

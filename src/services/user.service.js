@@ -404,35 +404,28 @@ class UserService {
 	async getAllUsers(req) {
 		try {
 			const { org_id, roles } = req.user;
-			const { is_active = null } = req.query;
+			const { is_active = null, search = null, limit = 10, offset = 0 } = req.query;
 			const isSuperAdmin = roles.includes('super_admin');
 
 			const excludedCodes = isSuperAdmin
 				? ['super_admin']
 				: ['super_admin', 'org_admin'];
 
-			// Step 1 — get excluded role IDs from codes
 			const excludedRoles = await Role.findAll({
 				where: { code: { [Op.in]: excludedCodes } },
 				attributes: ['id'],
 			});
 			const excludedRoleIds = excludedRoles.map((r) => r.id);
 
-			if (!excludedRoleIds.length) {
-				return await userRepo.allUsers({});
-			}
-
-			// Step 2 — get user IDs to exclude
 			const excludedUsers = await sequelize.query(
 				`SELECT user_id FROM user_roles WHERE role_id IN (:roleIds)`,
 				{
-					replacements: { roleIds: excludedRoleIds },
+					replacements: { roleIds: excludedRoleIds.length ? excludedRoleIds : [0] },
 					type: sequelize.QueryTypes.SELECT,
 				},
 			);
 			const excludedUserIds = excludedUsers.map((u) => u.user_id);
 
-			// Step 3 — build clean where clause
 			const whereClause = {};
 
 			if (excludedUserIds.length) {
@@ -443,8 +436,21 @@ class UserService {
 				whereClause.org_id = org_id;
 			}
 
-			const options = {
+			if (is_active !== null && is_active !== '') {
+				whereClause.is_active = is_active;
+			}
+
+			if (search) {
+				whereClause[Op.or] = [
+					{ name: { [Op.like]: `%${search}%` } },
+					{ email: { [Op.like]: `%${search}%` } },
+					{ employee_code: { [Op.like]: `%${search}%` } },
+				];
+			}
+
+			const { count, rows } = await userRepo.findAndCountAll({
 				where: whereClause,
+				distinct: true,
 				attributes: { exclude: ['password'] },
 				include: [
 					{
@@ -467,11 +473,12 @@ class UserService {
 						attributes: ['id', 'title'],
 					},
 				],
-			};
+				order: [['createdAt', 'DESC']],
+				limit: parseInt(limit),
+				offset: parseInt(offset),
+			});
 
-			const users = await userRepo.findAll(options);
-
-			return users;
+			return { users: rows, total: count };
 		} catch (error) {
 			console.error('Something went wrong in the service layer');
 			throw error;

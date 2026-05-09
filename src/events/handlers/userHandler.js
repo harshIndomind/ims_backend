@@ -40,6 +40,7 @@ async function handleUserCreated(data) {
 				employee_code: data.employee_code,
 				department_id: data.department_id,
 				designation_id: data.designation_id,
+				unit_id: data.unit_id ?? null,
 				layer: data.layer,
 				image: data.image,
 				logo: data.logo,
