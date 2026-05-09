@@ -4,9 +4,10 @@ const { getChannel, QUEUE_CONFIG } = require('../config/rabbitmq');
 const { verifyEvent }              = require('../utils/eventSigner');
 const { isAlreadyProcessed, markAsProcessed } = require('../utils/idempotency');
 const { APP_CODE } = require('../config/serverConfig');
-const userHandler = require('./handlers/userHandler');
-const orgHandler  = require('./handlers/orgHandler');
-const logger      = require('../utils/logger');
+const userHandler   = require('./handlers/userHandler');
+const orgHandler    = require('./handlers/orgHandler');
+const masterHandler = require('./handlers/masterHandler');
+const logger        = require('../utils/logger');
 
 const QUEUE    = QUEUE_CONFIG[APP_CODE].queue;
 
@@ -140,6 +141,9 @@ async function routeEvent(event) {
     case 'org.bank.added':       return orgHandler.handleBankAdded(data);
     case 'org.bank.updated':     return orgHandler.handleBankUpdated(data);
     case 'org.bank.deleted':     return orgHandler.handleBankDeleted(data);
+
+    case 'master.synced':        return masterHandler.handleMasterSynced(data);
+    case 'employees.synced':     return masterHandler.handleEmployeesSynced(data);
 
     default:
       logger.warn('Unknown event type', { eventType });

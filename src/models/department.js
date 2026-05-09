@@ -20,8 +20,7 @@ module.exports = (sequelize, DataTypes) => {
 			},
 			name: {
 				type: DataTypes.STRING(100),
-				allowNull: false,
-				unique: true,
+				allowNull: true,
 			},
 			description: {
 				type: DataTypes.TEXT,
@@ -29,6 +28,22 @@ module.exports = (sequelize, DataTypes) => {
 			is_active: {
 				type: DataTypes.BOOLEAN,
 				defaultValue: true,
+			},
+			depCd: {
+				type: DataTypes.STRING(20),
+				allowNull: true,
+			},
+			depName: {
+				type: DataTypes.STRING(100),
+				allowNull: true,
+			},
+			unitCd: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
+			unit_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
 			},
 		},
 		{
@@ -44,6 +59,10 @@ module.exports = (sequelize, DataTypes) => {
 		Department.hasMany(models.SubDepartment, {
 			foreignKey: 'department_id',
 			as: 'sub_departments',
+		});
+		Department.belongsTo(models.MasterUnit, {
+			foreignKey: 'unit_id',
+			as: 'unit',
 		});
 	};
 

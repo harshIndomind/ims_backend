@@ -19,6 +19,24 @@ module.exports = (sequelize, DataTypes) => {
 			org_id: DataTypes.INTEGER,
 			unit_name: DataTypes.STRING,
 			unit_short_name: DataTypes.STRING,
+			unitCd: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+				defaultValue: 0,
+			},
+			unitName: {
+				type: DataTypes.STRING(100),
+				allowNull: true,
+			},
+			lock: {
+				type: DataTypes.BOOLEAN,
+				allowNull: true,
+				defaultValue: false,
+			},
+			masterUnitid: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
 		},
 		{
 			sequelize,

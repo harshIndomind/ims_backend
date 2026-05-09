@@ -126,13 +126,12 @@ exports.updateUserProfile = catchAsync(async (req, res) => {
 });
 
 exports.getAllUsers = catchAsync(async (req, res) => {
-	const { org_id, role } = req.user;
-
-	const vendors = await userService.getAllUsers(req);
-	res.status(201).json({
-		status: true,
+	const { users, total } = await userService.getAllUsers(req);
+	res.status(200).json({
+		success: true,
 		message: 'Users fetched successfully',
-		data: vendors,
+		data: users,
+		total,
 	});
 });
 

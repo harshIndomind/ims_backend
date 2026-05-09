@@ -333,6 +333,10 @@ class UserRepository {
 	async findAll(options = {}) {
 		return await User.findAll(options);
 	}
+
+	async findAndCountAll(options = {}) {
+		return await User.findAndCountAll(options);
+	}
 }
 
 module.exports = new UserRepository();
