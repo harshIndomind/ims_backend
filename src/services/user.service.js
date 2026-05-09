@@ -451,6 +451,7 @@ class UserService {
 			const { count, rows } = await userRepo.findAndCountAll({
 				where: whereClause,
 				distinct: true,
+				subQuery: false,
 				attributes: { exclude: ['password'] },
 				include: [
 					{
