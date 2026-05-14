@@ -59,12 +59,10 @@ exports.getAllMasterUnit = async (req) => {
 	const { limit, offset } = req.query;
 
 	const where = {
-		org_id,
+		org_id: org_id ?? null
 	};
 
-	const filterOptions = {
-		where,
-	};
+	const filterOptions = {};
 
 	if (limit) {
 		filterOptions.limit = Number(limit);

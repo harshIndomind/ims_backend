@@ -404,7 +404,7 @@ class UserService {
 	async getAllUsers(req) {
 		try {
 			const { org_id, roles } = req.user;
-			const { is_active = null, search = null, limit = 10, offset = 0 } = req.query;
+			const { is_active = null, search = null, limit, offset } = req.query;
 			const isSuperAdmin = roles.includes('super_admin');
 
 			const excludedCodes = isSuperAdmin
@@ -475,8 +475,8 @@ class UserService {
 					},
 				],
 				order: [['createdAt', 'DESC']],
-				limit: parseInt(limit),
-				offset: parseInt(offset),
+				...(limit !== undefined && { limit: parseInt(limit) }),
+				...(offset !== undefined && { offset: parseInt(offset) }),
 			});
 
 			return { users: rows, total: count };

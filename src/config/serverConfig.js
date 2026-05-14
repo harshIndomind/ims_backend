@@ -43,4 +43,5 @@ module.exports = {
 	},
 	defaultPassword: process.env.DEFAULT_USER_PASSWORD || 123456,
 	EVENT_SECRET: process.env.EVENT_SECRET,
+	SHOULD_SYNC_HRMS: process.env.SHOULD_SYNC_HRMS === 'true'
 };

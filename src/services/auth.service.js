@@ -14,6 +14,7 @@ const {
 	COOKIE_SECURE,
 	APP_CODE,
 	JWT_REFRESH_SECRET,
+	SHOULD_SYNC_HRMS,
 } = require('../config/serverConfig');
 const {
 	generateAccessToken,
@@ -269,6 +270,7 @@ exports.getLoggedInUser = async (uuid, res) => {
 		state_id: user.organization?.state_id ?? null,
 		permissions,
 		organization_name: user?.organization?.org_name ?? null,
+		shouldSyncHrms: SHOULD_SYNC_HRMS
 	};
 };
 

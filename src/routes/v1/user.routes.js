@@ -5,6 +5,7 @@ const checkRole = require('../../middlewares/checkRole');
 const verifyToken = require('../../middlewares/verifyToken');
 const { uploadTo } = require('../../middlewares/multer');
 const checkPermission = require('../../middlewares/checkPermission');
+const checkSyncHrms = require('../../middlewares/checkSyncHrms');
 
 router.post('/forgot-password', UserController.sendForgotPasswordMail);
 router.post('/reset-password', UserController.resetPassword);
@@ -13,7 +14,7 @@ router.use(verifyToken);
 
 router.get('/', checkPermission('users', 'view'), UserController.getAllUsers);
 
-router.post('/', checkPermission('users', 'create'), UserController.createUser);
+router.post('/', checkSyncHrms, checkPermission('users', 'create'), UserController.createUser);
 
 router.get(
 	'/profile',
