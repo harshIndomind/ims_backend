@@ -78,7 +78,9 @@ async function handleUserCreated(data) {
 		}
 
 		await t.commit();
-		logger.info(`User synced to ${APP_CODE}`, { auth_user_id: data.auth_user_id });
+		logger.info(`User synced to ${APP_CODE}`, {
+			auth_user_id: data.auth_user_id,
+		});
 	} catch (err) {
 		await t.rollback();
 		throw err; // rethrow — consumer will nack
@@ -86,17 +88,66 @@ async function handleUserCreated(data) {
 }
 
 async function handleUserUpdated(data) {
-	logger.info('Event: User Updated | data :', { data });
-	await User.update(
-		{
-			email: data.email,
-			name: data.name,
-			is_active: data.is_active,
-			employee_code: data.employee_code,
-		},
-		{ where: { uuid: data.uuid } },
-	);
-	logger.info(`User updated in ${APP_CODE}`, { uuid: data.uuid });
+	const t = await sequelize.transaction();
+	try {
+		logger.info('Event: User Updated | data :', { data });
+
+		const user = await User.findOne({
+			where: { uuid: data.uuid },
+			transaction: t,
+		});
+
+		if (!user) {
+			logger.warn(`User not found in ${APP_CODE} for update`, { uuid: data.uuid });
+			await t.rollback();
+			return;
+		}
+
+		await User.update(
+			{
+				email: data.email,
+				name: data.name,
+				is_active: data.is_active,
+				employee_code: data.employee_code,
+			},
+			{ where: { uuid: data.uuid }, transaction: t },
+		);
+
+		// Assign SCM-specific roles only
+		const scmRoles = data.roles?.[APP_CODE] ?? [];
+		logger.info('Event: User Updated | Roles :', { roles: data.roles });
+		if (scmRoles.length) {
+			// Remove existing roles first — full replacement
+			// await UserRole.destroy({
+			//   where:       { user_id: user.id },
+			//   transaction: t,
+			// });
+
+			for (const roleCode of scmRoles) {
+				const role = await Role.findOne({
+					where: { code: roleCode },
+				});
+				if (role) {
+					await UserRole.create(
+						{
+							user_id: user.id,
+							role_id: role.id,
+							assigned_at: new Date(),
+						},
+						{ transaction: t },
+					);
+				} else {
+					logger.warn(`Role not found in ${APP_CODE}: ${roleCode}`);
+				}
+			}
+		}
+
+		await t.commit();
+		logger.info(`User updated in ${APP_CODE}`, { uuid: data.uuid });
+	} catch (err) {
+		await t.rollback();
+		throw err;
+	}
 }
 
 async function handlePasswordChanged(data) {
@@ -158,18 +209,12 @@ async function handleUserRolesUpdated(data) {
 }
 
 async function handleUserDeactivated(data) {
-	await User.update(
-		{ is_active: 0 },
-		{ where: { uuid: data.uuid } },
-	);
+	await User.update({ is_active: 0 }, { where: { uuid: data.uuid } });
 	logger.info(`User deactivated in ${APP_CODE}`, { uuid: data.uuid });
 }
 
 async function handleUserActivated(data) {
-	await User.update(
-		{ is_active: 1 },
-		{ where: { uuid: data.uuid } },
-	);
+	await User.update({ is_active: 1 }, { where: { uuid: data.uuid } });
 }
 
 const VCP_ONLY_ROLES = ['vendor', 'vendor_customer', 'customer'];
@@ -181,7 +226,7 @@ async function handleUserProfileUpdated(data) {
 		});
 		return;
 	}
-	logger.info("handleUserProfileUpdated ", {data})
+	logger.info('handleUserProfileUpdated ', { data });
 	const updateFields = { name: data.name, password: data.password };
 	if (data.image !== undefined) updateFields.image = data.image;
 	if (data.logo !== undefined) updateFields.logo = data.logo;

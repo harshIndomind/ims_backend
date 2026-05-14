@@ -64,6 +64,7 @@ jobs:
             --exclude='.env*' \
             --exclude='src/uploads' \
             --exclude='storage' \
+            --exclude='logs' \
             . ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:${{ secrets.APP_DIR }}
 
   deploy-to-ec2:
