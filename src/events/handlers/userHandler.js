@@ -109,6 +109,8 @@ async function handleUserUpdated(data) {
 				name: data.name,
 				is_active: data.is_active,
 				employee_code: data.employee_code,
+				department_id: data.department_id,
+				designation_id: data.designation_id,
 			},
 			{ where: { uuid: data.uuid }, transaction: t },
 		);

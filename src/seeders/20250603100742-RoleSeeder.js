@@ -22,6 +22,13 @@ module.exports = {
 				createdAt: new Date(),
 				updatedAt: new Date(),
 			},
+						{
+				name: 'App User',
+				code: 'app_user',
+				description: 'Basic dashboard details view.',
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			},
 			{
 				name: 'Budget Entry',
 				code: 'budget_entry',
