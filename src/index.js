@@ -83,7 +83,7 @@ async function prepareAndStartServer() {
 		require('./routes/v1/user-roles.routes'),
 	);
 
-	// app.use(`${apiPrefix}/v1/dashboard`, require('./routes/v1/dashboard.routes'));
+	app.use(`${apiPrefix}/v1/dashboard`, require('./routes/v1/dashboard.routes'));
 	app.use(
 		`${apiPrefix}/v1/organizations`,
 		require('./routes/v1/organization.route'),

@@ -4,6 +4,10 @@ const {
 	Role,
 	organization,
 	BusinessPartner,
+	MasterMajorHead,
+	MasterMajorHeadAmount,
+	MasterSubHead,
+	MasterSubHeadAmount,
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const { Op, fn, col } = require('sequelize');
@@ -93,6 +97,29 @@ exports.getDashboardCounts = catchAsync(async (req, res) => {
 		status: true,
 		message: 'Dashboard counts fetched successfully',
 		data: counts,
+	});
+});
+
+exports.getMasterHeadCounts = catchAsync(async (req, res) => {
+	const { org_id } = req.user;
+
+	const [masterHeadCount, masterHeadTotalAmount, subHeadCount, subHeadTotalAmount] =
+		await Promise.all([
+			MasterMajorHead.count({ where: { org_id } }),
+			MasterMajorHeadAmount.sum('amount', { where: { org_id } }),
+			MasterSubHead.count({ where: { org_id } }),
+			MasterSubHeadAmount.sum('amount', { where: { org_id } }),
+		]);
+
+	res.status(200).json({
+		status: true,
+		message: 'Master head counts fetched successfully',
+		data: {
+			masterHeadCount,
+			masterHeadTotalAmount: masterHeadTotalAmount || 0,
+			subHeadCount,
+			subHeadTotalAmount: subHeadTotalAmount || 0,
+		},
 	});
 });
 
