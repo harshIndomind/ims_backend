@@ -40,7 +40,7 @@
 		"morgan": "^1.10.0",
 		"multer": "^2.0.1",
 		"mysql2": "^3.14.1",
-		"nodemailer": "^7.0.3",
+		"nodemailer": "^8.0.7",
 		"numeral": "^2.0.6",
 		"pdfkit": "^0.17.2",
 		"puppeteer": "^24.26.1",
