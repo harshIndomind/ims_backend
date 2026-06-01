@@ -12,6 +12,14 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'org_id',
 				as: 'organization',
 			});
+			MasterUnit.hasMany(models.Budget, {
+				foreignKey: 'unit_id',
+				as: 'budgets',
+			});
+			MasterUnit.hasMany(models.Indent, {
+				foreignKey: 'unit_id',
+				as: 'indents',
+			});
 		}
 	}
 	MasterUnit.init(

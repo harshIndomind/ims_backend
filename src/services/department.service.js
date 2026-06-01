@@ -4,8 +4,8 @@ const createDepartment = async (data) => {
   return await DepartmentRepository.createDepartment(data);
 };
 
-const getDepartments = async () => {
-  return await DepartmentRepository.findAllDepartments();
+const getDepartments = async (filters = {}) => {
+  return await DepartmentRepository.findAllDepartments(filters);
 };
 
 const getDepartmentById = async (id) => {

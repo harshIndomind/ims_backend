@@ -66,8 +66,8 @@ async function prepareAndStartServer() {
 			credentials: true,
 		}),
 	);
-	app.use(express.json());
-	app.use(express.urlencoded({ extended: true }));
+	app.use(express.json({ limit: '10mb' }));
+	app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 	// app.use(limiter);
 
@@ -203,6 +203,14 @@ async function prepareAndStartServer() {
 	app.use(
 		`${apiPrefix}/v1/purchase-orders`,
 		require('./routes/v1/purchase-order.routes'),
+	);
+	app.use(
+		`${apiPrefix}/v1/work-orders`,
+		require('./routes/v1/work-order.routes'),
+	);
+	app.use(
+		`${apiPrefix}/v1/payment-requisitions`,
+		require('./routes/v1/payment-requisition.routes'),
 	);
 
 	app.get('/', (req, res) => {

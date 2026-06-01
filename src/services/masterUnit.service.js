@@ -8,18 +8,17 @@ exports.createMasterUnit = async (req, payload) => {
 	const { org_id } = req.user;
 	const { unit_name, unit_short_name } = payload;
 
-	if (!m_code || !m_name) {
+	if (!unit_name) {
 		logger.warn('Validation failed while creating Master Unit', payload);
-		throw new AppError(
-			'Major head code and name are required',
-			StatusCodes.BAD_REQUEST,
-		);
+		throw new AppError('Unit name is required', StatusCodes.BAD_REQUEST);
 	}
 
 	const masterUnit = await masterUnitsRepositoy.create({
 		org_id,
 		unit_name,
-		unit_short_name,
+		unit_short_name: unit_short_name || null,
+		unitName: unit_name,
+		unitCd: unit_short_name,
 	});
 
 	logger.info('Master Unit created', {
@@ -44,6 +43,8 @@ exports.updateMasterUnit = async (id, payload) => {
 	await masterUnitsRepositoy.update(masterUnit, {
 		unit_name,
 		unit_short_name,
+		unitName: unit_name,
+		unitCd: unit_short_name,
 	});
 
 	logger.info('Master Unit updated', {
@@ -59,23 +60,16 @@ exports.getAllMasterUnit = async (req) => {
 	const { limit, offset } = req.query;
 
 	const where = {
-		org_id: org_id ?? null
+		org_id: Number(org_id),
 	};
 
-	const filterOptions = {};
+	const filterOptions = { where };
 
 	if (limit) {
 		filterOptions.limit = Number(limit);
 		filterOptions.offset = Number(offset || 0);
 	}
 
-	filterOptions.include = [
-		{
-			model: organization,
-			as: 'organization',
-			attributes: ['org_code', 'org_name'],
-		},
-	];
 	return await masterUnitsRepositoy.findAll({}, filterOptions);
 };
 

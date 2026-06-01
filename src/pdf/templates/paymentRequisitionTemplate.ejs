@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Payment Requisition - <%= invoice.requisition_no %></title>
+    <style>
+        html, body {
+            font-family: 'Arial', sans-serif;
+            color: #333;
+            background-color: #ffffff;
+            margin: 0;
+            padding: 0;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 15px 20px;
+            background: #f1f1f1;
+            color: #333;
+            border-radius: 6px;
+        }
+
+        .logo {
+            width: 180px;
+            min-width: 100px;
+            height: auto;
+            border-radius: 4px;
+            padding: 4px;
+        }
+
+        .header-left { min-width: 33.3%; }
+
+        .header-center {
+            min-width: 33.3%;
+            text-align: center;
+            flex: 1;
+        }
+
+        .header-center h2 {
+            margin: 0;
+            font-size: 20px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+
+        .header-center p {
+            margin-top: 4px;
+            font-size: 12px;
+            color: #555;
+        }
+
+        .header-right {
+            min-width: 33.3%;
+            text-align: right;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .header-right h4 {
+            margin: 0 0 4px;
+            font-size: 14px;
+            color: #2c3e50;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        /* Status badge */
+        .status-badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+            margin-top: 4px;
+        }
+        .status-PENDING  { background: #fff3cd; color: #856404; border: 1px solid #ffc107; }
+        .status-APPROVED { background: #d1e7dd; color: #0a3622; border: 1px solid #198754; }
+        .status-REJECTED { background: #f8d7da; color: #58151c; border: 1px solid #dc3545; }
+
+        /* Info section */
+        .info-section {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 10px;
+            margin-bottom: 16px;
+            padding: 12px 14px;
+            border: 1px dotted #ccc;
+            border-radius: 6px;
+            background-color: #fafafa;
+        }
+
+        .info-block {
+            width: 48%;
+            font-size: 11px;
+            line-height: 1.5;
+        }
+
+        .info-block h4 {
+            margin: 0 0 8px 0;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: #2c3e50;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 4px;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 2px 0;
+        }
+
+        .info-row strong {
+            color: #555;
+            width: 45%;
+            font-weight: 600;
+        }
+
+        .info-row span {
+            width: 55%;
+            text-align: right;
+            color: #333;
+            word-break: break-word;
+        }
+
+        /* Financial table */
+        .financials-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 16px 0;
+            font-size: 11px;
+            box-shadow: 0 0 5px rgba(0,0,0,0.05);
+        }
+
+        .financials-table th {
+            background-color: #2980b9;
+            color: #fff;
+            text-align: center;
+            padding: 8px 10px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+
+        .financials-table td {
+            padding: 7px 10px;
+            border: 0.5px solid #dcdcdc;
+            vertical-align: middle;
+        }
+
+        .financials-table tr:nth-child(even) { background-color: #f9fbfc; }
+
+        .financials-table .label { font-weight: 600; color: #555; }
+        .financials-table .value { text-align: right; color: #222; font-weight: 600; }
+
+        .financials-table tfoot td {
+            background-color: #2980b9;
+            color: #fff;
+            font-weight: bold;
+            font-size: 12px;
+        }
+
+        /* Section heading */
+        .section-heading {
+            font-size: 12px;
+            font-weight: 700;
+            color: #2980b9;
+            text-transform: uppercase;
+            border-bottom: 2px solid #2980b9;
+            padding-bottom: 3px;
+            margin: 16px 0 8px 0;
+        }
+
+        /* Remarks box */
+        .remarks-box {
+            background-color: #ecf0f1;
+            border-radius: 5px;
+            padding: 10px 14px;
+            font-size: 11px;
+            margin-top: 10px;
+            line-height: 1.5;
+        }
+
+        .remarks-box p { margin: 0 0 4px 0; }
+
+        /* Signature row */
+        .signature-row {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 40px;
+            font-size: 11px;
+        }
+
+        .signature-block {
+            text-align: center;
+            width: 30%;
+        }
+
+        .signature-block .sig-line {
+            border-top: 1px solid #333;
+            padding-top: 5px;
+            margin-top: 30px;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        .signature-block .sig-name { color: #555; font-size: 10px; }
+
+        /* Preview wrapper */
+        .preview-page {
+            background: white;
+            margin-bottom: 40px;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+
+        @media print {
+            body {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                background-color: #fff !important;
+                margin: 0;
+            }
+            .header { background: #f1f1f1 !important; }
+            .financials-table th, .financials-table tfoot td { background-color: #2980b9 !important; color: #fff !important; }
+            .preview-page {
+                background: none;
+                margin: 0;
+                padding: 0;
+                border-radius: 0;
+                box-shadow: none;
+                page-break-after: always;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <div class="header">
+        <div class="header-left">
+            <% if (invoice.businessLogo) { %>
+                <img src="<%= invoice.businessLogo %>" alt="Logo" class="logo" />
+            <% } else { %>
+                <img src="https://placehold.co/150x60" alt="Logo" class="logo" />
+            <% } %>
+        </div>
+
+        <div class="header-center">
+            <h2>Payment Requisition</h2>
+            <p><%= invoice.requisition_no %></p>
+            <div class="status-badge status-<%= invoice.status %>"><%= invoice.status %></div>
+        </div>
+
+        <div class="header-right">
+            <% if (invoice.business) { %>
+                <h4><%= invoice.business.org_name || '' %></h4>
+                <p>
+                    <% if (invoice.business.address) { %>
+                        <%- invoice.business.address %><br>
+                    <% } %>
+                    <% if (invoice.business.org_gst_number) { %>
+                        <strong>GSTIN:</strong> <%= invoice.business.org_gst_number %><br>
+                    <% } %>
+                    <% if (invoice.business.org_email) { %>
+                        <strong>Email:</strong> <%= invoice.business.org_email %>
+                    <% } %>
+                </p>
+            <% } %>
+        </div>
+    </div>
+
+    <!-- Requisition Details + Supplier -->
+    <div class="info-section">
+        <!-- Left: Requisition Info -->
+        <div class="info-block">
+            <h4>Requisition Details</h4>
+            <div class="info-row">
+                <strong>Requisition No:</strong>
+                <span><%= invoice.requisition_no || '—' %></span>
+            </div>
+            <div class="info-row">
+                <strong>Requisition Date:</strong>
+                <span><%= invoice.requisition_date ? new Date(invoice.requisition_date).toLocaleDateString('en-IN') : '—' %></span>
+            </div>
+            <div class="info-row">
+                <strong>Against:</strong>
+                <span><%= invoice.requisition_against %></span>
+            </div>
+            <div class="info-row">
+                <strong><%= invoice.requisition_against %> No:</strong>
+                <span><%= invoice.wo_no || '—' %></span>
+            </div>
+            <div class="info-row">
+                <strong><%= invoice.requisition_against %> Date:</strong>
+                <span><%= invoice.po_wo_date ? new Date(invoice.po_wo_date).toLocaleDateString('en-IN') : '—' %></span>
+            </div>
+            <% if (invoice.payment_date) { %>
+            <div class="info-row">
+                <strong>Payment Date:</strong>
+                <span><%= new Date(invoice.payment_date).toLocaleDateString('en-IN') %></span>
+            </div>
+            <% } %>
+            <% if (invoice.payment_type) { %>
+            <div class="info-row">
+                <strong>Payment Mode:</strong>
+                <span><%= invoice.payment_type %></span>
+            </div>
+            <% } %>
+        </div>
+
+        <!-- Right: Supplier Info -->
+        <div class="info-block">
+            <h4>Supplier Details</h4>
+            <% if (invoice.supplier_snapshot) { %>
+            <div class="info-row">
+                <strong>Name:</strong>
+                <span><%= invoice.supplier_snapshot.vendor_name || '—' %></span>
+            </div>
+            <div class="info-row">
+                <strong>Contact Person:</strong>
+                <span><%= invoice.supplier_snapshot.contactPerson || '—' %></span>
+            </div>
+            <div class="info-row">
+                <strong>Phone:</strong>
+                <span><%= invoice.supplier_snapshot.contactNo || '—' %></span>
+            </div>
+            <div class="info-row">
+                <strong>GSTIN:</strong>
+                <span><%= invoice.supplier_snapshot.gstin || '—' %></span>
+            </div>
+            <div class="info-row">
+                <strong>Address:</strong>
+                <span><%= invoice.supplier_snapshot.address || '—' %></span>
+            </div>
+            <% } %>
+        </div>
+    </div>
+
+    <!-- Bank Details -->
+    <% if (invoice.bank_details_snapshot) { %>
+    <div class="section-heading">Bank Details</div>
+    <div class="info-section">
+        <div class="info-block">
+            <div class="info-row">
+                <strong>Account Holder:</strong>
+                <span><%= invoice.bank_details_snapshot.account_holder_name || '—' %></span>
+            </div>
+            <div class="info-row">
+                <strong>Bank Name:</strong>
+                <span><%= invoice.bank_details_snapshot.bank_name || '—' %></span>
+            </div>
+            <div class="info-row">
+                <strong>Branch:</strong>
+                <span><%= invoice.bank_details_snapshot.branch_name || '—' %></span>
+            </div>
+        </div>
+        <div class="info-block">
+            <div class="info-row">
+                <strong>Account No.:</strong>
+                <span><%= invoice.bank_details_snapshot.account_no || '—' %></span>
+            </div>
+            <div class="info-row">
+                <strong>IFSC Code:</strong>
+                <span><%= invoice.bank_details_snapshot.ifsc_code || '—' %></span>
+            </div>
+        </div>
+    </div>
+    <% } %>
+
+    <!-- Project Info -->
+    <% if (invoice.project_code || invoice.project_name || invoice.activity_id || invoice.budget_id || invoice.cost_center_name) { %>
+    <div class="section-heading">Project Information</div>
+    <div class="info-section">
+        <div class="info-block">
+            <% if (invoice.project_code) { %>
+            <div class="info-row">
+                <strong>Project Code:</strong>
+                <span><%= invoice.project_code %></span>
+            </div>
+            <% } %>
+            <% if (invoice.project_name) { %>
+            <div class="info-row">
+                <strong>Project Name:</strong>
+                <span><%= invoice.project_name %></span>
+            </div>
+            <% } %>
+            <% if (invoice.cost_center_name) { %>
+            <div class="info-row">
+                <strong>Cost Center:</strong>
+                <span><%= invoice.cost_center_name %></span>
+            </div>
+            <% } %>
+        </div>
+        <div class="info-block">
+            <% if (invoice.activity_id) { %>
+            <div class="info-row">
+                <strong>Activity ID:</strong>
+                <span><%= invoice.activity_id %></span>
+            </div>
+            <% } %>
+            <% if (invoice.budget_id) { %>
+            <div class="info-row">
+                <strong>Budget ID:</strong>
+                <span><%= invoice.budget_id %></span>
+            </div>
+            <% } %>
+        </div>
+    </div>
+    <% } %>
+
+    <!-- Financial Summary -->
+    <div class="section-heading">Financial Summary</div>
+    <table class="financials-table">
+        <thead>
+            <tr>
+                <th style="text-align:left; width:60%">Description</th>
+                <th style="width:20%">%</th>
+                <th style="width:20%">Amount (₹)</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td class="label"><%= invoice.requisition_against %> / WO Basic Amount</td>
+                <td class="value">—</td>
+                <td class="value"><%= Number(invoice.wo_po_amount || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+            </tr>
+            <tr>
+                <td class="label">Requisition Value</td>
+                <td class="value"><%= Number(invoice.requisition_value_percent || 0).toFixed(2) %>%</td>
+                <td class="value"><%= Number(invoice.requisition_amount || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+            </tr>
+            <tr>
+                <td class="label">TDS Deduction</td>
+                <td class="value"><%= Number(invoice.tds_percent || 0).toFixed(2) %>%</td>
+                <td class="value"><%= Number(invoice.tds_amount || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+            </tr>
+        </tbody>
+        <tfoot>
+            <tr>
+                <td colspan="2" style="text-align:right; padding-right:12px;">Total Payable Amount</td>
+                <td class="value">₹ <%= Number(invoice.total_amount || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+            </tr>
+        </tfoot>
+    </table>
+
+    <!-- Remarks & Terms -->
+    <% if (invoice.remark || invoice.term_condition) { %>
+    <div class="section-heading">Remarks & Terms</div>
+    <div class="remarks-box">
+        <% if (invoice.remark) { %>
+            <p><strong>Remark:</strong> <%= invoice.remark %></p>
+        <% } %>
+        <% if (invoice.term_condition) { %>
+            <p><strong>Terms &amp; Conditions:</strong> <%= invoice?.terms?.terms_type || 'N/A' %></p>
+        <% } %>
+    </div>
+    <% } %>
+
+    <!-- Signatures -->
+    <div class="signature-row">
+        <div class="signature-block">
+            <div class="sig-line">Prepared By</div>
+            <div class="sig-name"><%= invoice.fed_by?.name || '—' %></div>
+        </div>
+        <div class="signature-block">
+            <div class="sig-line">Authorized By</div>
+            <div class="sig-name"><%= invoice.authorized_by?.name || '—' %></div>
+        </div>
+        <div class="signature-block">
+            <div class="sig-line">For <%= invoice.business?.org_name || 'Organisation' %></div>
+            <div class="sig-name">Authorised Signatory</div>
+        </div>
+    </div>
+</body>
+</html>

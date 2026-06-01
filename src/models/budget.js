@@ -40,6 +40,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'department_id',
 				as: 'department',
 			});
+			Budget.belongsTo(models.MasterUnit, {
+				foreignKey: 'unit_id',
+				as: 'unit',
+			});
 		}
 	}
 	Budget.init(
@@ -60,8 +64,8 @@ module.exports = (sequelize, DataTypes) => {
 				allowNull: true,
 			},
 			unit_id: {
-				type: DataTypes.STRING(50),
-				allowNull: false,
+				type: DataTypes.INTEGER,
+				allowNull: true,
 			},
 			department_id: {
 				type: DataTypes.INTEGER,

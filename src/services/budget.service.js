@@ -14,6 +14,7 @@ const {
 	Department,
 	CostCenter,
 	MasterAccount,
+	MasterUnit
 } = require('../models/index');
 const {
 	getAmountByMajorHeadAndPeriod,
@@ -119,6 +120,11 @@ exports.getAllBudgets = async (req) => {
 				model: Department,
 				as: 'department',
 				attributes: ['id', 'name'],
+			},
+			{
+				model: MasterUnit,
+				as: 'unit',
+				attributes: ['id', 'unitName', 'unitCd'],
 			},
 			{
 				model: CostCenter,

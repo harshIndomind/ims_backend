@@ -20,7 +20,8 @@ const {
 	organization,
 	PurchaseOrderItem,
 	Indent,
-	Role
+	Role,
+	PaymentRequisition,
 } = require('../models/index');
 const {
 	generateInvoiceHTMLPDF,
@@ -46,6 +47,7 @@ exports.createPurchaseOrder = async (req, payload) => {
 			bank_id,
 			additionalRemarks,
 			state_same,
+			orderType,
 			// Objects
 			vendorInfo,
 			purchaseOrderDetail,
@@ -61,6 +63,8 @@ exports.createPurchaseOrder = async (req, payload) => {
 			pf_term_id,
 			ld_clause_term_id,
 			dispatch_id,
+			payment_term_value,
+			payment_term_amount
 		} = req.body;
 
 		for (const item of productItems) {
@@ -85,6 +89,7 @@ exports.createPurchaseOrder = async (req, payload) => {
 		const poObject = {
 			org_id,
 			indent_id,
+			orderType: orderType || 'purchase_order',
 			vendorId: vendorInfo.vendor_id || null,
 			dueDate,
 			poPrefix: purchaseOrderDetail.poPrefix || null,
@@ -111,6 +116,14 @@ exports.createPurchaseOrder = async (req, payload) => {
 			pf_term_id,
 			ld_clause_term_id,
 			dispatch_id,
+			payment_term_value,
+			payment_term_amount,
+			start_date: purchaseOrderDetail.start_date || null,
+			end_date: purchaseOrderDetail.end_date || null,
+			retention: purchaseOrderDetail.retention != null ? parseFloat(purchaseOrderDetail.retention) : null,
+			retention_amount: purchaseOrderDetail.retention != null
+				? parseFloat(((parseFloat(purchaseOrderDetail.retention) / 100) * parseFloat(grandTotal || 0)).toFixed(2))
+				: null,
 		};
 
 		const purchaseOrder = await purchaseOrderRepository.create(poObject, {
@@ -187,6 +200,7 @@ exports.updatePurchaseOrder = async (req) => {
 			bank_id,
 			additionalRemarks,
 			state_same,
+			orderType,
 			// Objects
 			vendorInfo,
 			purchaseOrderDetail,
@@ -202,6 +216,8 @@ exports.updatePurchaseOrder = async (req) => {
 			pf_term_id,
 			ld_clause_term_id,
 			dispatch_id,
+			payment_term_value,
+			payment_term_amount
 		} = req.body;
 
 		for (const item of productItems) {
@@ -226,6 +242,7 @@ exports.updatePurchaseOrder = async (req) => {
 		const poObject = {
 			org_id,
 			indent_id,
+			orderType: orderType || 'purchase_order',
 			vendorId: vendorInfo.vendor_id || null,
 			dueDate,
 			poPrefix: purchaseOrderDetail.poPrefix || null,
@@ -252,6 +269,14 @@ exports.updatePurchaseOrder = async (req) => {
 			pf_term_id,
 			ld_clause_term_id,
 			dispatch_id,
+			payment_term_value,
+			payment_term_amount,
+			start_date: purchaseOrderDetail.start_date || null,
+			end_date: purchaseOrderDetail.end_date || null,
+			retention: purchaseOrderDetail.retention != null ? parseFloat(purchaseOrderDetail.retention) : null,
+			retention_amount: purchaseOrderDetail.retention != null
+				? parseFloat(((parseFloat(purchaseOrderDetail.retention) / 100) * parseFloat(grandTotal || 0)).toFixed(2))
+				: null,
 		};
 
 		const purchaseOrder = await purchaseOrderRepository.findById(id, {
@@ -344,45 +369,27 @@ exports.getAllPurchaseOrders = async (req) => {
 	const { org_id, role } = req.user;
 
 	const { from_date, to_date } = req.query;
-	const fromDate = new Date(from_date);
-	const toDate = new Date(to_date);
-	const limit = parseInt(req.query.limit) || 10;
-	const offset = parseInt(req.query.offset) || 0;
-	// Validate that both dates are valid
-	if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
-		throw new AppError('Invalid date range');
+	const limit = req.query.limit ? parseInt(req.query.limit) : undefined;
+	const offset = req.query.offset ? parseInt(req.query.offset) : undefined;
+
+	const whereClause = { org_id };
+
+	if (from_date || to_date) {
+		const fromDate = new Date(from_date);
+		const toDate = new Date(to_date);
+		if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+			throw new AppError('Invalid date range');
+		}
+		toDate.setHours(23, 59, 59, 999);
+		whereClause.createdAt = { [Op.between]: [fromDate, toDate] };
 	}
 
-	// Adjust the end date to include the full day (23:59:59)
-	toDate.setHours(23, 59, 59, 999);
 	if (!org_id && role !== 'Admin') {
 		throw new AppError(`You don't authorize to access this api.`);
 	}
 
-	const purchaseOrders = await purchaseOrderRepository.findAll({
-		where: {
-			org_id: org_id,
-			createdAt: {
-				[Op.between]: [fromDate, toDate],
-			},
-		},
-		// include: [
-		// 	{
-		// 		model: BusinessPartner,
-		// 		as: 'partner',
-		// 		attributes: ['name'],
-		// 	},
-		// 	{
-		// 		model: PaymentInvoice,
-		// 		as: 'payments',
-		// 		include: {
-		// 			model: Payment,
-		// 			as: 'receipt',
-		// 		},
-		// 		separate: true,
-		// 		order: [['createdAt', 'ASC']],
-		// 	},
-		// ],
+	const findOptions = {
+		where: whereClause,
 		attributes: [
 			'id',
 			'poPrefix',
@@ -398,10 +405,22 @@ exports.getAllPurchaseOrders = async (req) => {
 			'paymentStatus',
 			'vendorInfo',
 		],
-		offset,
-		limit,
+		include: [
+			{
+				model: PaymentRequisition,
+				as: 'paymentRequisitions',
+				attributes: ['id', 'requisition_no', 'requisition_amount', 'status'],
+				where: { status: 'APPROVED' },
+				required: false,
+			},
+		],
 		order: [['createdAt', 'DESC']],
-	});
+	};
+
+	if (limit !== undefined) findOptions.limit = limit;
+	if (offset !== undefined) findOptions.offset = offset;
+
+	const purchaseOrders = await purchaseOrderRepository.findAll(findOptions);
 
 	let response = purchaseOrders.rows.map((inv) => inv.get({ plain: true }));
 	console.log('response ', response);
@@ -573,6 +592,8 @@ exports.deletePurchaseOrder = async (req) => {
 				},
 			);
 		}
+
+		await PaymentRequisition.destroy({ where: { po_id: id }, transaction });
 
 		await purchaseOrderRepository.delete(purchaseOrder);
 

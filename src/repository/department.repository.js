@@ -4,10 +4,10 @@ const createDepartment = (data) => {
   return Department.create(data);
 };
 
-const findAllDepartments = () => {
-  return Department.findAll({
-    where: { is_active: true },
-  });
+const findAllDepartments = (filters = {}) => {
+  const where = { is_active: true };
+  if (filters.unit_id) where.unit_id = filters.unit_id;
+  return Department.findAll({ where });
 };
 
 const findDepartmentById = (id) => {

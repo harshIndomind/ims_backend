@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>
+        <%= invoice.copyTitle %>
+    </title>
+    <style>
+        /* General Body */
+        html,
+        body {
+            font-family: 'Arial', sans-serif;
+            color: #333;
+            background-color: #ffffff;
+        }
+
+
+
+
+        /* Header */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+            padding: 15px 20px;
+            /*background: linear-gradient(90deg, #2980b9 0%, #3498db 100%);*/
+            background: #f1f1f1;
+            color: #333;
+            border-radius: 6px;
+        }
+
+        .logo {
+            width: 200px;
+            min-width: 125px;
+            height: auto;
+            border-radius: 4px;
+            /*background-color: white;*/
+            padding: 4px;
+        }
+
+        .header-left {
+            min-width: 33.3%;
+        }
+
+        .header-center {
+            min-width: 33.3%;
+            text-align: center;
+            flex: 1;
+        }
+
+        .header-center h2 {
+            margin: 0;
+            font-size: 22px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: bold;
+        }
+
+        .header-center p {
+            margin-top: 5px;
+            font-size: 13px;
+            color: #f0f0f0;
+        }
+
+        .header-right {
+            min-width: 33.3%;
+            text-align: right;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
+        .header-right h4 {
+            margin: 0 0 4px;
+            font-size: 15px;
+            color: #333;
+            text-transform: uppercase;
+        }
+
+        invoice-info-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .info-section {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 5px;
+            margin-bottom: 15px;
+            padding: 10px;
+            background-color: #fff;
+            border: 1px dotted #ccc;
+            border-radius: 6px;
+        }
+
+        .customer-info {
+            width: 70%;
+        }
+
+        .invoice-info {
+            width: 30%;
+            /* background-color: #fafafa; */
+            padding: 10px 14px;
+            /* border: 1px solid #e0e0e0; */
+            border-radius: 4px;
+            font-size: 10px;
+            line-height: 1.4;
+        }
+
+        .invoice-info h4 {
+            margin: 0 0 8px 0;
+            color: #2c3e50;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 3px;
+        }
+
+        .info-detail {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5px;
+        }
+
+        .invoice-info .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 2px 0;
+        }
+
+        .invoice-info strong {
+            color: #555;
+            width: 45%;
+            font-weight: 500;
+        }
+
+        .invoice-info span {
+            width: 55%;
+            text-align: right;
+            color: #333;
+            word-break: break-word;
+        }
+
+        /* Customer Info */
+        .customer-info {
+            width: 40%;
+            /* background-color: #fafafa; */
+            padding: 10px 14px;
+            /*border: 1px solid #e0e0e0; */
+            border-radius: 4px;
+            margin-bottom: 15px;
+            font-size: 10px;
+            line-height: 1.4;
+        }
+
+        .customer-info h4 {
+            margin: 0 0 8px 0;
+            color: #2c3e50;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 3px;
+        }
+
+        .customer-detail {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5px;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 2px 0;
+        }
+
+        .info-row strong {
+            color: #555;
+            width: 45%;
+            font-weight: 500;
+        }
+
+        .info-row span {
+            width: 55%;
+            text-align: right;
+            color: #333;
+            word-break: break-word;
+        }
+
+
+        /* Table */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            background-color: #fff;
+            box-shadow: 0 0 5px rgba(0, 0, 0, 0.05);
+        }
+
+        th,
+        td {
+            padding: 6px 8px;
+            font-size: 10px;
+            vertical-align: middle;
+            border: 0.2px solid #dcdcdc;
+        }
+
+        th {
+            background-color: #2980b9;
+            color: #fff;
+            text-align: center;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f9fbfc;
+        }
+
+        tfoot th {
+            background-color: #2980b9;
+            font-weight: 600;
+        }
+
+
+        /* Totals */
+        .totals {
+            margin-top: 15px;
+            width: 100%;
+        }
+
+        .totals h4,
+        .totals h3 {
+            text-align: right;
+            margin: 5px 0;
+            padding-right: 10px;
+        }
+
+        .totals h3 {
+            color: #e74c3c;
+        }
+
+        /* Additional Notes */
+        .notes {
+            margin-top: 25px;
+            background-color: #ecf0f1;
+            padding: 15px;
+            border-radius: 5px;
+        }
+
+        .notes h4 {
+            margin: 0 0 5px 0;
+            color: #2c3e50;
+        }
+
+        .notes p {
+            margin: 0 0 10px 0;
+            line-height: 1.4;
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            font-size: 12px;
+            color: #7f8c8d;
+        }
+
+        th {
+            text-align: center;
+            font-weight: bold;
+            background-color: #2980b9;
+            color: #fff;
+            padding: 10px;
+        }
+
+        .preview-page {
+            background: white;
+            margin-bottom: 40px;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        @media print {
+            body {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                color-adjust: exact !important;
+                background-color: #fff !important;
+                margin: 0;
+            }
+
+            .header {
+                /* background: linear-gradient(90deg, #2980b9 0%, #3498db 100%) !important; */
+                background: #f1f1f1 !important;
+                color: #333 !important;
+                -webkit-print-color-adjust: exact !important;
+            }
+
+            th {
+                background-color: #2980b9 !important;
+                color: #fff !important;
+            }
+
+            .preview-page {
+                background: none;
+                margin: 0;
+                padding: 0;
+                border-radius: 0;
+                box-shadow: none;
+                page-break-after: always;
+                page-break-inside: auto;
+                break-inside: auto;
+            }
+
+            .invoice-section,
+            .table-scroll,
+            .footer-cols,
+            .footer-col-left,
+            .footer-col-right {
+                page-break-inside: auto;
+                break-inside: auto;
+            }
+
+            .table-scroll {
+                overflow: visible;
+            }
+
+            tr {
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
+        }
+
+        .table-scroll {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .table-scroll table {
+            min-width: 620px;
+        }
+
+        .footer-cols {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 20px;
+            font-size: 8px;
+            gap: 20px;
+        }
+
+        .footer-col-left {
+            width: 50%;
+            border: 1px dotted #ccc;
+            border-radius: 4px;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+
+        .footer-col-right {
+            width: 40%;
+            border: 1px dotted #ccc;
+            border-radius: 4px;
+            padding: 10px;
+            box-sizing: border-box;
+            position: relative;
+        }
+
+        @media screen and (max-width: 620px) {
+            .header {
+                flex-direction: column;
+                gap: 8px;
+                padding: 10px;
+            }
+
+            .header-left,
+            .header-center,
+            .header-right {
+                min-width: unset;
+                width: 100%;
+                text-align: left;
+            }
+
+            .logo {
+                width: 120px;
+                min-width: 80px;
+            }
+
+            .info-section {
+                flex-direction: column;
+            }
+
+            .customer-info {
+                width: 100% !important;
+                margin-bottom: 0;
+                padding: 0;
+            }
+
+            .invoice-info {
+                width: 100% !important;
+                padding: 0;
+            }
+
+            .footer-cols {
+                flex-direction: column;
+                gap: 12px;
+            }
+
+            .footer-col-left,
+            .footer-col-right {
+                width: 100% !important;
+            }
+        }
+
+        .invoice-section {
+            position: relative;
+            /* parent for absolute child */
+        }
+
+        .watermark {
+            position: absolute;
+            top: 40%;
+            left: 50%;
+            transform: translate(-50%, -50%) rotate(-30deg);
+            font-size: 120px;
+            color: rgba(255, 0, 0, 0.12);
+            font-weight: 900;
+            pointer-events: none;
+            user-select: none;
+            z-index: 0;
+            /* stays behind content */
+        }
+    </style>
+</head>
+
+<body>
+    <div class="invoice-section">
+        <% if (invoice.paymentStatus==='CANCELLED' ) { %>
+            <div class="watermark">CANCELLED</div>
+            <% } %>
+                <div class="header">
+                    <div class="header-left">
+                        <% if(invoice.businessLogo){ %>
+                            <img src="<%= invoice.businessLogo %>" alt="Company Logo" class="logo" />
+                            <% }else { %>
+                                <img src="https://placehold.co/100x60" alt="Company Logo" class="logo" />
+                                <% } %>
+                    </div>
+
+                    <div class="header-center">
+                        <h2>Work Order</h2>
+                    </div>
+
+                    <div class="header-right">
+                        <h4>
+                            <%= invoice?.business?.org_name ?? '' %>
+                        </h4>
+                        <p>
+                            <% if(invoice?.business?.address) {%>
+                                <%- invoice?.business?.address %><br>
+                                    <% } %>
+                                        <% if(invoice?.business?.org_gst_number) {%>
+                                            <strong>GSTIN:</strong> <%- invoice?.business?.org_gst_number %><br>
+                                                <% } %>
+                                                    <% if(invoice?.business?.org_email) {%>
+                                                        <strong>Email:</strong> <%- invoice?.business?.org_email %><br>
+                                                            <% } %>
+                        </p>
+                        <h5><strong>
+                                <%= invoice?.copyTitle %>
+                            </strong></h5>
+                    </div>
+                </div>
+
+
+                <div class="info-section">
+                    <div class="customer-info">
+                        <h4>Vendor Details</h4>
+                        <div class="customer-detail">
+                            <div class="info-row">
+                                <strong>Name:</strong>
+                                <span>
+                                    <%= invoice.vendorInfo?.vendor_name || '' %>
+                                </span>
+                            </div>
+                            <div class="info-row">
+                                <strong>Address:</strong>
+                                <span>
+                                    <%= invoice.vendorInfo?.address || '' %>
+                                </span>
+                            </div>
+                            <div class="info-row">
+                                <strong>Contact Person:</strong>
+                                <span>
+                                    <%= invoice.vendorInfo?.contactPerson || '' %>
+                                </span>
+                            </div>
+                            <div class="info-row">
+                                <strong>Phone:</strong>
+                                <span>
+                                    <%= invoice.vendorInfo?.contactNo || '' %>
+                                </span>
+                            </div>
+                            <div class="info-row">
+                                <strong>GSTIN:</strong>
+                                <span>
+                                    <%= invoice.vendorInfo?.gstin || '' %>
+                                </span>
+                            </div>
+                            <div class="info-row">
+                                <strong>Place of Supply:</strong>
+                                <span>
+                                    <%= invoice.vendorInfo?.state_name || '' %>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+
+                    <div class="invoice-info">
+                        <h4>Purchase Order Details</h4>
+                        <div class="info-detail">
+                            <div class="info-row">
+                                <strong>Invoice No:</strong>
+                                <span>
+                                    <%= invoice?.combineInvoiceNumber || '' %>
+                                </span>
+                            </div>
+                            <div class="info-row">
+                                <strong>Invoice Date:</strong>
+                                <span>
+                                    <%= new Date(invoice?.poDetail?.date).toLocaleDateString() || '' %>
+                                </span>
+                            </div>
+                            <div class="info-row">
+                                <strong>Due Date:</strong>
+                                <span>
+                                    <%= new Date(invoice.dueDate).toLocaleDateString() || '' %>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+
+
+
+
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th rowspan="2">Sr. No.</th>
+                                <th rowspan="2">Name of Product / Service</th>
+                                <th rowspan="2">HSN / SAC</th>
+                                <th rowspan="2">Qty</th>
+                                <th rowspan="2">Rate</th>
+                                <th rowspan="2">Disc. (%)</th>
+                                <th rowspan="2">Taxable Value</th>
+                                <% if (!invoice.same_state) { %>
+                                    <th rowspan="2">IGST %</th>
+                                    <th rowspan="2">IGST Amount</th>
+                                    <% } else { %>
+                                        <th colspan="2">CGST</th>
+                                        <th colspan="2">SGST</th>
+                                        <% } %>
+                                            <th rowspan="2">Amount</th>
+                            </tr>
+                            <% if (invoice.state_same) { %>
+                                <tr>
+                                    <th>%</th>
+                                    <th>Amount</th>
+                                    <th>%</th>
+                                    <th>Amount</th>
+                                </tr>
+                                <% } %>
+                        </thead>
+
+                        <tbody>
+                            <% invoice.productItems.forEach((item, index)=> { %>
+                                <tr>
+                                    <td style="text-align:center;">
+                                        <%= index + 1 %>
+                                    </td>
+
+                                    <td>
+                                        <%= item.product?.name || 'N/A' %>
+                                            <% if (item?.selectedSerials?.length) { %>
+                                                <br><small><strong>Serials:</strong></small><br>
+                                                <small><%- item.selectedSerials.join(', ') %></small>
+          <% } %>
+          <% if (item?.note) { %>
+            <br><small><strong>Description:</strong></small><br>
+            <small><%= item.note %></small>
+          <% } %>
+        </td>
+
+        <td style="text-align:center;"><%= item.hsn_sac_code || '' %></td>
+        <td style="text-align:center;"><%= item.qty %></td>
+        <td style="text-align:right;"><%= parseFloat(item.price).toFixed(2) %></td>
+        <td style="text-align:right;"><%= parseFloat(item.itemDiscountPercentage).toFixed(2) %></td>
+        <td style="text-align:right;"><%= parseFloat(item.totalTaxable).toFixed(2) %></td>
+        <% if (!invoice.same_state) { %>
+            <td style="text-align:right;"><%= parseFloat(item.taxRate).toFixed(2) %></td>
+            <td style="text-align:right;"><%= parseFloat(item.igst).toFixed(2) %></td>
+        <% } else { %>
+            <td style="text-align:right;"><%= parseFloat(item.taxRate).toFixed(2) %></td>
+            <td style="text-align:right;"><%= parseFloat(item.cgst).toFixed(2) %></td>
+            <td style="text-align:right;"><%= parseFloat(item.taxRate).toFixed(2) %></td>
+            <td style="text-align:right;"><%= parseFloat(item.sgst).toFixed(2) %></td>
+        <% } %>
+        <td style="text-align:right;"><%= parseFloat(item.total).toFixed(2) %></td>
+      </tr>
+    <% }) %>
+    <!-- 👇 Move total row here -->
+  <tr class="total-row">
+    <th colspan="2" style="text-align:right;">Total</th>
+    <th></th>
+    <th style="text-align:right;"><%= parseFloat(invoice.totalQuantity).toFixed(2) %></th>
+    <th></th>
+    <th style="text-align:right;"><%= parseFloat(invoice.totalDiscountAmount).toFixed(2) %></th>
+    <th style="text-align:right;"><%= parseFloat(invoice.total_taxable).toFixed(2) %></th>
+    <% if (!invoice.same_state) { %>
+      <th></th>
+      <th style="text-align:right;"><%= parseFloat(invoice.totalIgst).toFixed(2) %></th>
+    <% } else { %>
+      <th></th>
+      <th style="text-align:right;"><%= parseFloat(invoice.totalCgst).toFixed(2) %></th>
+      <th></th>
+      <th style="text-align:right;"><%= parseFloat(invoice.totalSgst).toFixed(2) %></th>
+    <% } %>
+    <% if (!invoice.same_state) { %>
+      <th style="text-align:right;"><%= parseFloat(invoice.totalTaxableAmount+invoice.totalIgst).toFixed(2) %></th>
+    <% } else { %>
+      <th style="text-align:right;"><%= parseFloat(invoice.totalTaxableAmount+invoice.totalCgst+invoice.totalSgst).toFixed(2) %></th>
+    <% } %>
+  </tr>
+  </tbody>
+</table>
+</div>
+
+    <div class="footer-cols">
+    <!-- Left Column -->
+    <div class="footer-col-left">
+        <!-- Bank Details -->
+        <div style="border-bottom:1px dotted #ccc; padding-bottom:6px; margin-bottom:8px; font-weight:bold;">
+            Bank Details
+        </div>
+        <div style="margin-bottom:4px;"><strong>Bank Name:</strong> <%= invoice?.bankDetails?.bank_name || ' N/A' %>
+                </div>
+                <div style="margin-bottom:4px;"><strong>Account Holder Name:</strong>
+                    <%= invoice?.bankDetails?.account_name || 'N/A' %>
+                </div>
+                <div style="margin-bottom:4px;"><strong>Account No:</strong>
+                    <%= invoice?.bankDetails?.account_no || 'N/A' %>
+                </div>
+                <div style="margin-bottom:8px;"><strong>IFSC:</strong>
+                    <%= invoice?.bankDetails?.bank_ifsc || 'N/A' %>
+                </div>
+    </div>
+
+    <!-- Right Column -->
+    <div class="footer-col-right">
+        <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+            <span><strong>Taxable Amount</strong></span>
+            <span>
+                <%= parseFloat(invoice.totalTaxableAmount).toFixed(2) %>
+            </span>
+        </div>
+
+        <% if (!invoice.same_state) { %>
+            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                <span><strong>Add : IGST</strong></span>
+                <span>
+                    <%= parseFloat(invoice.totalIgst).toFixed(2) %>
+                </span>
+            </div>
+            <% } else { %>
+                <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                    <span><strong>Add : CGST</strong></span>
+                    <span>
+                        <%= parseFloat(invoice.totalCgst).toFixed(2) %>
+                    </span>
+                </div>
+                <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                    <span><strong>Add : SGST</strong></span>
+                    <span>
+                        <%= parseFloat(invoice.totalSgst).toFixed(2) %>
+                    </span>
+                </div>
+                <% } %>
+
+                    <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                        <span><strong>Total Tax</strong></span>
+                        <span>
+                            <%= parseFloat(invoice.total_tax).toFixed(2) %>
+                        </span>
+                    </div>
+
+                    <% if (invoice.customField1 && invoice.customField1.calculatedValue) { %>
+                        <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                            <span><strong>
+                                    <%= invoice.customField1.label || ' Additional Charge / Discount' %>
+                                        <%= invoice.customField1.valueType==='percentage' ?
+                                            `(${invoice.customField1.value}%)` : '' %>
+                                </strong></span>
+                            <span>
+                                <% if (invoice.customField1.operationType=='-' ) { %>-<% } %>
+                                        <%= parseFloat(invoice.customField1.calculatedValue).toFixed(2) %>
+                            </span>
+                        </div>
+                        <% } %>
+
+                            <% if (invoice.customField2 && invoice.customField2.calculatedValue) { %>
+                                <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                                    <span><strong>
+                                            <%= invoice.customField2.label || 'Additional Charge / Discount' %>
+                                                <%= invoice.customField2.valueType==='percentage' ?
+                                                    `(${invoice.customField2.value}%)` : '' %>
+                                        </strong></span>
+                                    <span>
+                                        <% if (invoice.customField2.operationType=='-' &&
+                                            parseFloat(invoice.customField2.calculatedValue).toFixed(2)>
+                                            0) { %>-<% } %>
+                                                <%= parseFloat(invoice.customField2.calculatedValue).toFixed(2) %>
+                                    </span>
+                                </div>
+                                <% } %>
+
+                                    <div
+                                        style="border-top:1px dotted #ccc; margin-top:6px; padding-top:6px; display:flex; justify-content:space-between; color:#e74c3c;">
+                                        <strong>Total Amount After Tax</strong>
+                                        <strong>₹ <%= parseFloat(invoice.grandTotal).toFixed(2) %>
+                                        </strong>
+                                    </div>
+                                    <!-- Footer Note -->
+                                    <div
+                                        style="border-top:1px dotted #ccc; margin-top:15px; padding-top:8px; color:#555; font-size:8px;">
+                                        <!-- (E & O.E.) -->
+                                        <div style="text-align:right; margin-bottom:6px;">
+                                            <em>(E & O.E.)</em>
+                                        </div>
+
+                                        <!-- Certification + Company Name -->
+                                        <div style="border-top:1px dotted #ccc; margin-top:8px; padding-top:8px;">
+                                            <div style="text-align:center; line-height:1.4;">
+                                                <div>Certified that the particulars given above are
+                                                    true and correct.</div>
+                                                <div style="margin-top:4px; font-weight:bold;">For
+                                                    <%= invoice?.business?.org_name ?? '' %>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Signature Space -->
+                                        <div
+                                            style="border-top:1px dotted #ccc; margin-top:20px; padding-top:25px; min-height:80px; text-align:center;">
+                                            <strong>Authorised Signatory</strong>
+                                        </div>
+                                    </div>
+
+    </div>
+    </div>
+
+    <!-- Additional Notes (full-width, below both columns) -->
+    <% if (invoice.additionalNotes && invoice.additionalNotes.length > 0) { %>
+        <div style="margin-top:12px; font-size:10px; border:1px dotted #ccc; border-radius:4px; padding:10px; box-sizing:border-box; margin-right:1px;">
+            <% invoice.additionalNotes.forEach((item) => { %>
+                <div style="border-top:1px dotted #ccc; margin-top:8px; padding-top:6px;">
+                    <div style="font-weight:bold;"><%= item.title %></div>
+                    <div style="margin-top:4px; white-space:pre-line;"><%= item.detail %></div>
+                </div>
+            <% }) %>
+        </div>
+    <% } %>
+
+    <!-- <div class="footer">
+                    <p>Thank you for your business!</p>
+                </div> -->
+    </div>
+
+</body>
+
+</html>

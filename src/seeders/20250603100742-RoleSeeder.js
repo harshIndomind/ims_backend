@@ -47,6 +47,24 @@ module.exports = {
 				createdAt: new Date(),
 				updatedAt: new Date(),
 			},
+			{
+				name: 'App User',
+				code: 'app_user',
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			},
+			{
+				name: 'PR Creator',
+				code: 'payment_requisition_creator',
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			},
+			{
+				name: 'PR Approver',
+				code: 'payment_requisition_approver',
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			},
 		]);
 	},
 
