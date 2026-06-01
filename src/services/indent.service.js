@@ -641,34 +641,41 @@ async function verifyIndentQuantityWithProductServices(
 }
 
 async function validateIndentBudgetAmount(indent, allocationMap) {
-	const budget = indent.IndentItems?.[0]?.budget;
+	const budgetGroups = new Map();
+	for (const item of indent.IndentItems) {
+		const budgetId = item.budget_id;
+		if (!budgetGroups.has(budgetId)) {
+			budgetGroups.set(budgetId, { budget: item.budget, items: [] });
+		}
+		budgetGroups.get(budgetId).items.push(item);
+	}
 
-	if (!budget) return null;
+	for (const [budgetId, { budget, items }] of budgetGroups) {
+		if (!budget) continue;
 
-	const totalIndentAmount = indent.IndentItems.reduce((total, item) => {
-		const allocation = allocationMap.get(item.product_id);
+		const totalIndentAmount = items.reduce((total, item) => {
+			const allocation = allocationMap.get(item.product_id);
+			const issuedQty = allocation?.issued_qty ?? 0;
+			const avgRate = Number(item.avg_rate) || 0;
+			return total + avgRate * issuedQty;
+		}, 0);
 
-		const issuedQty = allocation?.issued_qty ?? 0;
-		const avgRate = Number(item.avg_rate) || 0;
+		const phaseResult = getPhaseQuantityDateWise(budget, new Date());
+		if (!phaseResult) continue;
 
-		return total + avgRate * issuedQty;
-	}, 0);
+		const { value: phaseAmount, phaseDate, phasePeriod } = phaseResult;
 
-	const {
-		value: phaseAmount,
-		phaseDate,
-		phasePeriod,
-	} = getPhaseQuantityDateWise(budget, new Date());
+		logger.info('Budget validation', {
+			budgetId,
+			phaseAmount,
+			totalIndentAmount,
+			phasePeriod,
+			phaseDate,
+		});
 
-	logger.info('Budget validation', {
-		phaseAmount,
-		totalIndentAmount,
-		phasePeriod,
-		phaseDate,
-	});
-
-	if (totalIndentAmount > phaseAmount) {
-		return `Total amount ${totalIndentAmount} cannot be greater than the phase amount ${phaseAmount}.`;
+		if (totalIndentAmount > phaseAmount) {
+			return `Total amount ${totalIndentAmount} for budget ${budget.budget_id} cannot be greater than the phase amount ${phaseAmount}.`;
+		}
 	}
 
 	return null;

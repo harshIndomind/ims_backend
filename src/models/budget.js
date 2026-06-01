@@ -28,7 +28,7 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'major_head_amount_id',
 				as: 'majorHeadAmount',
 			});
-			Budget.belongsTo(models.MasterMajorHeadAmount, {
+			Budget.belongsTo(models.MasterSubHeadAmount, {
 				foreignKey: 'sub_head_amount_id',
 				as: 'subHeadAmount',
 			});
