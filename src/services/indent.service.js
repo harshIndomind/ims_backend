@@ -610,6 +610,8 @@ async function verifyIndentQuantityWithProductServices(
 	const URL = `${VCP_SERVICE_API_BASE_URL}${VCP_SERVICE_PRODUCT_ENDPOINT}/verify-stock`;
 	const token = req.cookies.accessToken;
 
+	logger.info('verifyIndentQuantityWithProductServices URL', { URL, allocateQuantity });
+
 	let response;
 	try {
 		response = await fetch(URL, {
@@ -628,11 +630,20 @@ async function verifyIndentQuantityWithProductServices(
 		);
 	}
 
-	const data = await response.json();
+	let data;
+	try {
+		data = await response.json();
+	} catch (_) {
+		throw new AppError(
+			`Verify stock API failed with HTTP ${response.status}: non-JSON response from ${URL}`,
+			response.status,
+		);
+	}
 
 	if (!response.ok) {
+		logger.error('verifyIndentQuantityWithProductServices error response', { URL, status: response.status, data });
 		throw new AppError(
-			data?.message || 'Verify stock API failed',
+			data?.message || `Verify stock API failed with HTTP ${response.status}`,
 			response.status,
 		);
 	}
