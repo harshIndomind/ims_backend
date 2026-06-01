@@ -20,6 +20,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'purchase_order_id',
 				as: 'items',
 			});
+			PurchaseOrder.hasMany(models.PaymentRequisition, {
+				foreignKey: 'po_id',
+				as: 'paymentRequisitions',
+			});
 		}
 	}
 	PurchaseOrder.init(
@@ -147,6 +151,16 @@ module.exports = (sequelize, DataTypes) => {
 			payment_term_id: {
 				type: DataTypes.INTEGER,
 			},
+			payment_term_value: {
+				type: DataTypes.DECIMAL(5, 2),
+				allowNull: true,
+				defaultValue: null,
+			},
+			payment_term_amount: {
+				type: DataTypes.DECIMAL(15, 2),
+				allowNull: true,
+				defaultValue: null,
+			},
 			delivery_term_id: {
 				type: DataTypes.INTEGER,
 			},
@@ -158,6 +172,27 @@ module.exports = (sequelize, DataTypes) => {
 			},
 			dispatch_id: {
 				type: DataTypes.INTEGER,
+			},
+			orderType: {
+				type: DataTypes.ENUM('purchase_order', 'work_order'),
+				allowNull: false,
+				defaultValue: 'purchase_order',
+			},
+			start_date: {
+				type: DataTypes.DATEONLY,
+				allowNull: true,
+			},
+			end_date: {
+				type: DataTypes.DATEONLY,
+				allowNull: true,
+			},
+			retention: {
+				type: DataTypes.DECIMAL(5, 2),
+				allowNull: true,
+			},
+			retention_amount: {
+				type: DataTypes.DECIMAL(15, 2),
+				allowNull: true,
 			},
 			createdAt: {
 				allowNull: false,

@@ -7,7 +7,8 @@ const create = catchAsync(async (req, res) => {
 });
 
 const findAll = catchAsync(async (req, res) => {
-	const departments = await departmentService.getDepartments();
+	const { unit_id } = req.query;
+	const departments = await departmentService.getDepartments({ unit_id });
 	res.json(departments);
 });
 

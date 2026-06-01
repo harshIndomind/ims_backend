@@ -16,6 +16,7 @@ const {
 	Budget,
 	IndentSerialItem,
 	IndentItem,
+	MasterUnit
 } = require('../models/index');
 const AppError = require('../utils/AppError');
 const { Op } = require('sequelize');
@@ -37,12 +38,13 @@ exports.createIndent = async (req, payload) => {
 		const {
 			selectedIndents,
 			item, // optional single item
+			unit,
 			...indentPayload
 		} = payload;
 
 		// 🔹 Create Indent
 		const indent = await IndentRepository.create(
-			{ ...indentPayload, department_id: 1, createdBy, org_id: user.org_id },
+			{ ...indentPayload, unit_id: unit, department_id: 1, createdBy, org_id: user.org_id },
 			{ transaction },
 		);
 
@@ -238,6 +240,11 @@ exports.getAllIndents = async (req) => {
 					},
 				],
 			},
+			{
+				model: MasterUnit,
+				as: 'unit',
+				attributes: ['id', 'unitName', 'unitCd']
+			}
 		],
 		order: [['createdAt', 'DESC']],
 	};
@@ -603,18 +610,25 @@ async function verifyIndentQuantityWithProductServices(
 	const URL = `${VCP_SERVICE_API_BASE_URL}${VCP_SERVICE_PRODUCT_ENDPOINT}/verify-stock`;
 	const token = req.cookies.accessToken;
 
-	const response = await fetch(URL, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${token}`,
-			'x-s2s-comm-key': S2S_COMM_KEY,
-		},
-		body: JSON.stringify({ allocateQuantity, indents: selectedIndents }),
-	});
+	let response;
+	try {
+		response = await fetch(URL, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${token}`,
+				'x-s2s-comm-key': S2S_COMM_KEY,
+			},
+			body: JSON.stringify({ allocateQuantity, indents: selectedIndents }),
+		});
+	} catch (err) {
+		throw new AppError(
+			'Product service is currently unavailable. Please try again later.',
+			503,
+		);
+	}
 
 	const data = await response.json();
-	console.log('data ', data);
 
 	if (!response.ok) {
 		throw new AppError(

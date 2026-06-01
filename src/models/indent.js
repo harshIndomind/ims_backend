@@ -24,6 +24,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'indent_id',
 				as: 'IndentItems',
 			});
+			Indent.belongsTo(models.MasterUnit, {
+				foreignKey: 'unit_id',
+				as: 'unit',
+			});
 		}
 	}
 	Indent.init(

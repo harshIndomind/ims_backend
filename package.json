@@ -9,6 +9,7 @@
 		"start": "node --env-file=.env.production src/index.js",
 		"migrate:status": "cd src && npx sequelize-cli db:migrate:status",
 		"migrate": "cd src && npx sequelize-cli db:migrate",
+		"migrate:undo": "cd src && npx sequelize-cli db:migrate:undo",
 		"migration:create": "cd src && npx sequelize-cli migration:create --name",
 		"seed:all": "cd src && npx sequelize-cli db:seed:all",
 		"seed:undo:all": "cd src && npx sequelize-cli db:seed:undo:all",
