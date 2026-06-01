@@ -50,13 +50,13 @@ exports.createWorkOrder = async (req) => {
 			delivery_term_days
 		} = req.body;
 
-		// for (const item of productItems) {
-		// 	if (Number(item.qty) > Number(item.qty_for_purchase_order)) {
-		// 		throw new AppError(
-		// 			`${item.productSnapshot.name} qty ${item.qty} should not be greater than W.O Order qty ${item.qty_for_purchase_order}`,
-		// 		);
-		// 	}
-		// }
+		for (const item of productItems) {
+			if (Number(item.qty) > Number(item.qty_for_purchase_order)) {
+				throw new AppError(
+					`${item.productSnapshot.name} qty ${item.qty} should not be greater than W.O Order qty ${item.qty_for_purchase_order}`,
+				);
+			}
+		}
 
 		const woObject = {
 			org_id,
@@ -190,13 +190,13 @@ exports.updateWorkOrder = async (req) => {
 			delivery_term_days
 		} = req.body;
 
-		// for (const item of productItems) {
-		// 	if (Number(item.qty) > Number(item.qty_for_purchase_order)) {
-		// 		throw new AppError(
-		// 			`${item.productSnapshot.name} qty ${item.qty} should not be greater than W.O Order qty ${item.qty_for_purchase_order}`,
-		// 		);
-		// 	}
-		// }
+		for (const item of productItems) {
+			if (Number(item.qty) > Number(item.qty_for_purchase_order)) {
+				throw new AppError(
+					`${item.productSnapshot.name} qty ${item.qty} should not be greater than W.O Order qty ${item.qty_for_purchase_order}`,
+				);
+			}
+		}
 
 		const workOrder = await workOrderRepository.findById(id, { transaction });
 		if (!workOrder) {

@@ -31,7 +31,7 @@ exports.getAllSubHeadAmount = catchAsync(async (req, res) => {
 exports.getSubHeadAmountById = catchAsync(async (req, res) => {
 	const { id } = req.params;
 
-	const data = await masterSubHeadAmountService.getSubHeadAmountById(id);
+	const data = await masterSubHeadAmountService.getSubHeadAmountById(req, id);
 
 	res.status(StatusCodes.OK).json({
 		message: 'Sub head amount fetched successfully',

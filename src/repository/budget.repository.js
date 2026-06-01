@@ -89,7 +89,7 @@ exports.getAmountByMajorHeadAndPeriodAndSubHead = async ({
       // TOTAL BUDGET USED
       [
         literal(`
-          COALESCE(SUM(budgets.amount), 0)
+          COALESCE(SUM(budgets.amount + budgets.tax_duty_amount), 0)
         `),
         'total_budget_used',
       ],
@@ -99,7 +99,7 @@ exports.getAmountByMajorHeadAndPeriodAndSubHead = async ({
         literal(`
           MasterSubHeadAmount.amount
           -
-          COALESCE(SUM(budgets.amount), 0)
+          COALESCE(SUM(budgets.amount + budgets.tax_duty_amount), 0)
         `),
         'final_amount',
       ],

@@ -45,6 +45,7 @@ exports.createSubHeadAmount = async (req, payload) => {
 	}
 
 	const subHeadAmount = await getSubAmountByMajorHeadAndPeriod(
+		org_id,
 		major_head_id,
 		period_id,
 	);
@@ -120,6 +121,7 @@ exports.updateSubHeadAmount = async (req, payload) => {
 	}
 
 	const subHeadAmount = await getSubAmountByMajorHeadAndPeriod(
+		org_id,
 		major_head_id,
 		period_id,
 	);
@@ -198,7 +200,8 @@ exports.getAllSubHeadAmount = async (req) => {
 /**
  * Get By ID
  */
-exports.getSubHeadAmountById = async (id) => {
+exports.getSubHeadAmountById = async (req, id) => {
+	const { org_id } = req.user;
 	const masterMajorHeadAmount = await masterSubHeadAmountRepo.findById(id, {
 		include: [
 			{
@@ -232,6 +235,7 @@ exports.getSubHeadAmountById = async (id) => {
 	logger.info('Sub head amount fetched', { id });
 
 	const subHeadAmount = await getSubAmountByMajorHeadAndPeriod(
+		org_id,
 		masterMajorHeadAmount.major_head_id,
 		masterMajorHeadAmount.period_id,
 	);
@@ -259,11 +263,11 @@ exports.deleteSubHeadAmount = async (id) => {
 	return true;
 };
 
-const getSubAmountByMajorHeadAndPeriod = async (major_head_id, period_id) => {
+const getSubAmountByMajorHeadAndPeriod = async (org_id, major_head_id, period_id) => {
 	return await masterSubHeadAmountRepo.getSubAmountByMajorHeadAndPeriod(
 		'amount',
 		{
-			where: { major_head_id, period_id },
+			where: { org_id, major_head_id, period_id },
 		},
 	);
 };
