@@ -392,22 +392,25 @@ exports.deletePaymentRequisition = async (req, id) => {
 exports.getPoWoSummary = async (req, type, id) => {
 	const { org_id } = req.user;
 
-	// Fetch the PO/WO to get its basic amount
+	// Fetch the PO/WO amounts: basic (pre-tax taxable) and total (incl. tax)
 	let basicAmount = 0;
+	let totalAmount = 0;
 	if (type === 'PO') {
 		const po = await PurchaseOrder.findOne({
 			where: { id, org_id },
-			attributes: ['grandTotal'],
+			attributes: ['total_taxable', 'grandTotal'],
 		});
 		if (!po) throw new AppError('Purchase order not found', StatusCodes.NOT_FOUND);
-		basicAmount = parseFloat(po.grandTotal) || 0;
+		basicAmount = parseFloat(po.total_taxable) || 0;
+		totalAmount = parseFloat(po.grandTotal) || 0;
 	} else {
 		const wo = await WorkOrder.findOne({
 			where: { id, org_id },
-			attributes: ['grandTotal'],
+			attributes: ['total_taxable', 'grandTotal'],
 		});
 		if (!wo) throw new AppError('Work order not found', StatusCodes.NOT_FOUND);
-		basicAmount = parseFloat(wo.grandTotal) || 0;
+		basicAmount = parseFloat(wo.total_taxable) || 0;
+		totalAmount = parseFloat(wo.grandTotal) || 0;
 	}
 
 	// Aggregate all non-rejected requisitions for this PO/WO
@@ -430,12 +433,13 @@ exports.getPoWoSummary = async (req, type, id) => {
 	const totalReqCount = parseInt(result?.totalReqCount || 0);
 	const reqFedAmount = parseFloat(result?.reqFedAmount || 0);
 	const pendingCount = parseInt(result?.pendingCount || 0);
-	const remainingAmount = Math.max(0, basicAmount - reqFedAmount);
+	const remainingAmount = Math.max(0, totalAmount - reqFedAmount);
 
 	logger.debug('PO/WO summary computed', {
 		type,
 		id,
 		basicAmount,
+		totalAmount,
 		reqFedAmount,
 		remainingAmount,
 		totalReqCount,
@@ -445,7 +449,7 @@ exports.getPoWoSummary = async (req, type, id) => {
 	return {
 		totalReqCount,
 		poWoBasicAmount: basicAmount,
-		poWoExpInvAmount: basicAmount,
+		poWoExpInvAmount: totalAmount,
 		invoiceAmount: 0,
 		reqFedAmount,
 		remainingAmount,
