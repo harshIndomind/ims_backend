@@ -524,18 +524,18 @@
 
 
                     <div class="invoice-info">
-                        <h4>Purchase Order Details</h4>
+                        <h4>Work Order Details</h4>
                         <div class="info-detail">
                             <div class="info-row">
-                                <strong>Invoice No:</strong>
+                                <strong>WO No:</strong>
                                 <span>
                                     <%= invoice?.combineInvoiceNumber || '' %>
                                 </span>
                             </div>
                             <div class="info-row">
-                                <strong>Invoice Date:</strong>
+                                <strong>WO Date:</strong>
                                 <span>
-                                    <%= new Date(invoice?.poDetail?.date).toLocaleDateString() || '' %>
+                                    <%= new Date(invoice?.woDetail?.date).toLocaleDateString() || '' %>
                                 </span>
                             </div>
                             <div class="info-row">
@@ -583,17 +583,17 @@
                         </thead>
 
                         <tbody>
-                            <% invoice.productItems.forEach((item, index)=> { %>
-                                <tr>
-                                    <td style="text-align:center;">
-                                        <%= index + 1 %>
-                                    </td>
+                             <% invoice.productItems.forEach((item, index)=> { %>
+                            <tr>
+                                <td style="text-align:center;">
+                                    <%= index + 1 %>
+                                </td>
 
-                                    <td>
-                                        <%= item.product?.name || 'N/A' %>
-                                            <% if (item?.selectedSerials?.length) { %>
-                                                <br><small><strong>Serials:</strong></small><br>
-                                                <small><%- item.selectedSerials.join(', ') %></small>
+                                <td>
+                                    <%= item.product_name || 'N/A' %>
+                                        <% if (item?.selectedSerials?.length) { %>
+                                            <br><small><strong>Serials:</strong></small><br>
+                                            <small><%- item.selectedSerials.join(', ') %></small>
           <% } %>
           <% if (item?.note) { %>
             <br><small><strong>Description:</strong></small><br>
@@ -652,16 +652,16 @@
         <div style="border-bottom:1px dotted #ccc; padding-bottom:6px; margin-bottom:8px; font-weight:bold;">
             Bank Details
         </div>
-        <div style="margin-bottom:4px;"><strong>Bank Name:</strong> <%= invoice?.bankDetails?.bank_name || ' N/A' %>
+        <div style="margin-bottom:4px;"><strong>Bank Name:</strong> <%= invoice?.bankSnapshot?.bank_name || ' N/A' %>
                 </div>
                 <div style="margin-bottom:4px;"><strong>Account Holder Name:</strong>
-                    <%= invoice?.bankDetails?.account_name || 'N/A' %>
+                    <%= invoice?.bankSnapshot?.account_name || 'N/A' %>
                 </div>
                 <div style="margin-bottom:4px;"><strong>Account No:</strong>
-                    <%= invoice?.bankDetails?.account_no || 'N/A' %>
+                    <%= invoice?.bankSnapshot?.account_no || 'N/A' %>
                 </div>
                 <div style="margin-bottom:8px;"><strong>IFSC:</strong>
-                    <%= invoice?.bankDetails?.bank_ifsc || 'N/A' %>
+                    <%= invoice?.bankSnapshot?.bank_ifsc || 'N/A' %>
                 </div>
     </div>
 

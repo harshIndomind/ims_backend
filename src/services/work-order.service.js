@@ -47,7 +47,8 @@ exports.createWorkOrder = async (req) => {
 			dispatch_id,
 			payment_term_value,
 			payment_term_amount,
-			delivery_term_days
+			delivery_term_days,
+			bankSnapshot
 		} = req.body;
 
 		for (const item of productItems) {
@@ -69,6 +70,7 @@ exports.createWorkOrder = async (req) => {
 			total_taxable: parseFloat(total_taxable || 0),
 			total_tax: parseFloat(total_tax || 0),
 			grandTotal: parseFloat(grandTotal || 0),
+			bankSnapshot,
 			isRoundOff,
 			paymentType: payment_type,
 			vendorInfo,
@@ -187,7 +189,8 @@ exports.updateWorkOrder = async (req) => {
 			dispatch_id,
 			payment_term_value,
 			payment_term_amount,
-			delivery_term_days
+			delivery_term_days,
+			bankSnapshot
 		} = req.body;
 
 		for (const item of productItems) {
@@ -207,6 +210,7 @@ exports.updateWorkOrder = async (req) => {
 			indent_id,
 			vendorId: vendorInfo.vendor_id || null,
 			dueDate,
+			bankSnapshot,
 			woPrefix: workOrderDetail.woPrefix || null,
 			woNo: workOrderDetail.woNumber || null,
 			woPostfix: workOrderDetail.woPostfix || null,
@@ -524,7 +528,7 @@ exports.downloadInvoicePdf = async (req) => {
 
 async function calculateWorkOrderInvoice(workOrder) {
 	const invoiceData = workOrder.get({ plain: true });
-
+	console.log("invoiceData ", invoiceData);
 	const totalTaxableAmount = invoiceData.items.reduce((sum, item) => {
 		const priceAfterDiscount =
 			item.discount_price_type === 'percentage'
@@ -584,6 +588,8 @@ async function calculateWorkOrderInvoice(workOrder) {
 		},
 		productItems: invoiceData.items.map((item) => {
 			const snapshot = item.productSnapshot;
+			console.log("snapshot ", snapshot);
+			
 			return {
 				...item,
 				item_type: snapshot?.item_type,
