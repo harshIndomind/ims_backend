@@ -7,7 +7,7 @@ module.exports = {
 			type: Sequelize.INTEGER,
 			allowNull: true,
 			references: {
-				model: 'MasterTransporters',
+				model: 'MasterTermsConditions',
 				key: 'id',
 			},
 			onUpdate: 'CASCADE',
