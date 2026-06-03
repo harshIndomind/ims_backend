@@ -17,6 +17,12 @@ const { fetch } = require('undici');
 const { VCP_SERVICE_API_BASE_URL } = require('../config/serverConfig');
 const { generateSignedUrl } = require('../utils/s3Bucket');
 
+// Services have no stock and carry qty_for_purchase_order = 0 on the indent,
+// so they must be excluded from the purchase-order qty ledger (otherwise the
+// decrement drives the indent item negative).
+const isServiceItem = (item) =>
+	(item?.productSnapshot?.item_type ?? item?.item_type) === 'service';
+
 exports.createWorkOrder = async (req) => {
 	const transaction = await sequelize.transaction();
 	try {
@@ -52,6 +58,7 @@ exports.createWorkOrder = async (req) => {
 		} = req.body;
 
 		for (const item of productItems) {
+			if (isServiceItem(item)) continue;
 			if (Number(item.qty) > Number(item.qty_for_purchase_order)) {
 				throw new AppError(
 					`${item.productSnapshot.name} qty ${item.qty} should not be greater than W.O Order qty ${item.qty_for_purchase_order}`,
@@ -140,13 +147,15 @@ exports.createWorkOrder = async (req) => {
 
 			await workOrderItemsRepository.create(woItemObject, { transaction });
 
-			await IndentItemRepository.increment(
-				{ qty_for_purchase_order: -parseFloat(item.qty) },
-				{
-					where: { indent_id, product_id: item.product_id },
-					transaction,
-				},
-			);
+			if (!isServiceItem(item)) {
+				await IndentItemRepository.increment(
+					{ qty_for_purchase_order: -parseFloat(item.qty) },
+					{
+						where: { indent_id, product_id: item.product_id },
+						transaction,
+					},
+				);
+			}
 		}
 
 		await transaction.commit();
@@ -194,6 +203,7 @@ exports.updateWorkOrder = async (req) => {
 		} = req.body;
 
 		for (const item of productItems) {
+			if (isServiceItem(item)) continue;
 			if (Number(item.qty) > Number(item.qty_for_purchase_order)) {
 				throw new AppError(
 					`${item.productSnapshot.name} qty ${item.qty} should not be greater than W.O Order qty ${item.qty_for_purchase_order}`,
@@ -295,25 +305,29 @@ exports.updateWorkOrder = async (req) => {
 				throw new AppError('Work order item not found.');
 			}
 
-			await IndentItemRepository.increment(
-				{ qty_for_purchase_order: parseFloat(existingItem.qty) },
-				{
-					where: { indent_id, product_id: item.product_id },
-					transaction,
-				},
-			);
+			if (!isServiceItem(item)) {
+				await IndentItemRepository.increment(
+					{ qty_for_purchase_order: parseFloat(existingItem.qty) },
+					{
+						where: { indent_id, product_id: item.product_id },
+						transaction,
+					},
+				);
+			}
 
 			await workOrderItemsRepository.update(existingItem, woItemObject, {
 				transaction,
 			});
 
-			await IndentItemRepository.increment(
-				{ qty_for_purchase_order: -parseFloat(item.qty) },
-				{
-					where: { indent_id, product_id: item.product_id },
-					transaction,
-				},
-			);
+			if (!isServiceItem(item)) {
+				await IndentItemRepository.increment(
+					{ qty_for_purchase_order: -parseFloat(item.qty) },
+					{
+						where: { indent_id, product_id: item.product_id },
+						transaction,
+					},
+				);
+			}
 		}
 
 		await transaction.commit();
@@ -451,6 +465,7 @@ exports.deleteWorkOrder = async (req) => {
 		}
 
 		for (const item of workOrder.items) {
+			if (isServiceItem(item)) continue;
 			await IndentItemRepository.increment(
 				{ qty_for_purchase_order: parseFloat(item.qty) },
 				{
