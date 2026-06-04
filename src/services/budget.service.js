@@ -20,14 +20,27 @@ const {
 const {
 	getAmountByMajorHeadAndPeriod,
 } = require('./masterMajorHeadAmount.service');
-const { fn, col, Op } = require('sequelize');
+const { fn, col, Op, literal } = require('sequelize');
 const parseDate = require('../utils/parse-date');
 
+const validateBudgetPayload = (payload) => {
+	if (payload.budgetType === 'item-wise') {
+		if (!payload.product_id) {
+			throw new AppError('Product is required for item-wise budget', StatusCodes.BAD_REQUEST);
+		}
+		if (!payload.qty_for_purchase || Number(payload.qty_for_purchase) < 1) {
+			throw new AppError('Qty for purchase must be at least 1 for item-wise budget', StatusCodes.BAD_REQUEST);
+		}
+	}
+	if (payload.budgetType === 'value-wise') {
+		if (!payload.amount || Number(payload.amount) < 1) {
+			throw new AppError('Amount must be at least 1 for value-wise budget', StatusCodes.BAD_REQUEST);
+		}
+	}
+};
+
 exports.createBudget = async (req, payload) => {
-	// 🔒 Example business rule
-	// if (!payload.budgetid) {
-	//   throw new AppError('Budget ID is required', StatusCodes.BAD_REQUEST);
-	// }
+	validateBudgetPayload(payload);
 	const { org_id } = req.user;
 	const budget = await budgetRepo.create({ ...payload, org_id });
 
@@ -45,6 +58,9 @@ exports.updateBudget = async (id, payload) => {
 	if (!budget) {
 		throw new AppError('Budget not found', StatusCodes.NOT_FOUND);
 	}
+
+	const mergedType = payload.budgetType ?? budget.budgetType;
+	validateBudgetPayload({ ...budget.dataValues, ...payload, budgetType: mergedType });
 
 	return budgetRepo.updateById(id, payload);
 };
@@ -100,6 +116,14 @@ exports.getAllBudgets = async (req) => {
 	logger.debug("where ", {where})
 	const filterOptions = {
 		where,
+		attributes: {
+			include: [
+				[
+					literal('(SELECT COUNT(DISTINCT `indent_id`) FROM `IndentItems` WHERE `budget_id` = `Budget`.`id`)'),
+					'indent_count',
+				],
+			],
+		},
 		include: [
 			{
 				model: MasterMajorHead,

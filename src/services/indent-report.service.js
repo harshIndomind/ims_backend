@@ -2,7 +2,7 @@ const ExcelJS = require('exceljs');
 const AppError = require('../utils/AppError');
 const logger = require('../utils/logger');
 
-exports.generateExcel = async (data) => {
+exports.generateExcel = async (data, filePath) => {
 	const result = data.rows.map((d) => d.get({ plain: true }));
 
 	const workbook = new ExcelJS.Workbook();
@@ -28,6 +28,8 @@ exports.generateExcel = async (data) => {
 			'Indenter',
 			'',
 			'Verified By',
+			'No. of POs',
+			'No. of WOs',
 		]);
 
 		// 👉 Merge like colSpan
@@ -51,7 +53,7 @@ exports.generateExcel = async (data) => {
 		// 🔷 DATA ROW
 		const row2 = worksheet.addRow([
 			index + 1,
-			'MANSURPUR',
+			indent.unit?.unitName || '-',
 			'',
 			indent.indent_no,
 			'',
@@ -66,6 +68,8 @@ exports.generateExcel = async (data) => {
 			indent.createdBy?.name || '-',
 			'',
 			indent.isVerified ? indent.verifiedBy?.name : 'Pending',
+			Number(indent.po_count ?? 0),
+			Number(indent.wo_count ?? 0),
 		]);
 
 		// same merge
@@ -151,7 +155,7 @@ exports.generateExcel = async (data) => {
 		autoFitColumns(worksheet)
 	});
 
-	return workbook;
+	await workbook.xlsx.writeFile(filePath);
 };
 
 function autoFitColumns(worksheet) {

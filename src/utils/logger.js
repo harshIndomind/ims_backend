@@ -12,7 +12,8 @@ if (!fs.existsSync(logDir)) {
 const logger = createLogger({
 	level: process.env.LOG_LEVEL || 'debug',
 	defaultMeta: {
-		serviceName: 'SCM Service'
+		service: 'scm-api',
+    	environment: process.env.APP_ENV || 'local'
 	},
 	format: format.combine(
 		format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),

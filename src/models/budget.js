@@ -48,6 +48,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'approved_by',
 				as: 'approver',
 			});
+			Budget.hasMany(models.IndentItem, {
+				foreignKey: 'budget_id',
+				as: 'indentItems',
+			});
 		}
 	}
 	Budget.init(
