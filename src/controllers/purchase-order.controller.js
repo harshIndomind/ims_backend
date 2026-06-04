@@ -62,6 +62,14 @@ exports.getAllPurchaseOrders = catchAsync(async (req, res) => {
 	);
 });
 
+exports.exportPurchaseOrders = catchAsync(async (req, res) => {
+	const result = await purchaseOrderService.exportPurchaseOrders(req);
+	res.status(200).json({
+		message: 'Purchase orders exported successfully',
+		path: result.path,
+	});
+});
+
 exports.getPurchaseOrderById = catchAsync(async (req, res) => {
 	const purchaseOrder = await purchaseOrderService.getPurchaseOrderById(req);
 	ApiResponse.send(

@@ -44,6 +44,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'unit_id',
 				as: 'unit',
 			});
+			Budget.belongsTo(models.User, {
+				foreignKey: 'approved_by',
+				as: 'approver',
+			});
 		}
 	}
 	Budget.init(
@@ -157,6 +161,14 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.ENUM('yes', 'no'),
 				allowNull: true,
 				defaultValue: 'no',
+			},
+			approved_by: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
+			approved_at: {
+				type: DataTypes.DATE,
+				allowNull: true,
 			},
 			category: {
 				type: DataTypes.STRING(50),

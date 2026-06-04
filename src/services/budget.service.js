@@ -14,7 +14,8 @@ const {
 	Department,
 	CostCenter,
 	MasterAccount,
-	MasterUnit
+	MasterUnit,
+	User,
 } = require('../models/index');
 const {
 	getAmountByMajorHeadAndPeriod,
@@ -60,6 +61,7 @@ exports.getAllBudgets = async (req) => {
 		selectedStatusId,
 		selectedCostCenterId,
 		selectedBudgetTypeId,
+		selectedCategoryId,
 		budgetId,
 	} = req.query;
 
@@ -92,8 +94,10 @@ exports.getAllBudgets = async (req) => {
 	if (periodId > 0) where.period_id = periodId;
 	if (departmentId > 0) where.department_id = departmentId;
 	if (costCenterId > 0) where.cost_center_id = costCenterId;
-	if (budgetId) where.budget_id = budgetId;
-
+	if (budgetId) where.budget_id = budgetId; 
+	if (selectedCategoryId != 'all') where.category = selectedCategoryId; 
+	
+	logger.debug("where ", {where})
 	const filterOptions = {
 		where,
 		include: [
@@ -135,6 +139,12 @@ exports.getAllBudgets = async (req) => {
 					as: 'account',
 					attributes: ['id', 'A_NAME', 'A_CODE'],
 				},
+			},
+			{
+				model: User,
+				as: 'approver',
+				attributes: ['id', 'name', 'email'],
+				required: false,
 			},
 		],
 	};
@@ -238,7 +248,7 @@ exports.getAmountByMajorHeadAndPeriodAndSubHead = async (
 	});
 };
 
-exports.approveBudget = async (budget_ids) => {
+exports.approveBudget = async (budget_ids, approved_by) => {
 	if (!budget_ids || !Array.isArray(budget_ids) || budget_ids.length === 0) {
 		throw new AppError(
 			'budget_ids must be a non-empty array',
@@ -246,12 +256,18 @@ exports.approveBudget = async (budget_ids) => {
 		);
 	}
 
+	logger.info('Approving budgets', { budget_ids, approved_by });
+
 	const updatedBudgets = [];
+	const approved_at = new Date();
 
 	for (const id of budget_ids) {
+		logger.debug('Processing budget approval', { id, approved_by });
+
 		const budget = await budgetRepo.findById(id);
 
 		if (!budget) {
+			logger.warn('Budget not found during approval', { id, approved_by });
 			throw new AppError(
 				`Budget with ID ${id} not found`,
 				StatusCodes.NOT_FOUND,
@@ -261,8 +277,11 @@ exports.approveBudget = async (budget_ids) => {
 		const updatedBudget = await budgetRepo.updateById(id, {
 			sanc_by: 'yes',
 			is_lock: 0,
+			approved_by,
+			approved_at,
 		});
 
+		logger.info('Budget approved successfully', { id, approved_by, approved_at });
 		updatedBudgets.push(updatedBudget);
 	}
 
@@ -305,6 +324,12 @@ exports.getAllApprovedBudgets = async (req) => {
 				},
 				{ model: organization, as: 'organization' },
 				{ model: Department, as: 'department', attributes: ['id', 'name'] },
+				{
+					model: User,
+					as: 'approver',
+					attributes: ['id', 'name', 'email'],
+					required: false,
+				},
 			],
 		},
 	);

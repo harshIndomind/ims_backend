@@ -42,6 +42,25 @@ exports.createIndent = async (req, payload) => {
 			...indentPayload
 		} = payload;
 
+		// [2026-06-03] Validate budget phase limits BEFORE writing any DB records.
+		// WHY: Frontend validation can be bypassed (commented out, API called directly, etc).
+		// Without this, over-budget indents can be saved and only get caught at approval time,
+		// which is too late — the approver would have to reject and the user would need to
+		// re-create the indent. Failing fast at creation is cheaper and clearer.
+		if (Array.isArray(selectedIndents) && selectedIndents.length > 0) {
+			const indentDate = indentPayload.indent_date
+				? new Date(indentPayload.indent_date)
+				: new Date();
+			const errorMessage = await validateBudgetPhaseOnCreate(
+				selectedIndents,
+				indentDate,
+				indentPayload.budgetType,
+			);
+			if (errorMessage) {
+				throw new AppError(errorMessage, StatusCodes.BAD_REQUEST);
+			}
+		}
+
 		// 🔹 Create Indent
 		const indent = await IndentRepository.create(
 			{ ...indentPayload, unit_id: unit, department_id: 1, createdBy, org_id: user.org_id },
@@ -178,7 +197,7 @@ exports.getAllIndents = async (req) => {
 
 	if (selectedStatusId === 'yes') where.isVerified = 1;
 	if (selectedStatusId === 'no') where.isVerified = 0;
-	if (selectedBudgetTypeId > 0) where.budgetType = selectedBudgetTypeId;
+	if (selectedBudgetTypeId != 'all') where.budgetType = selectedBudgetTypeId;
 
 	if (fromDate && toDate) {
 		const from_date = parseDate(fromDate);
@@ -203,7 +222,8 @@ exports.getAllIndents = async (req) => {
 	if (departmentId > 0) where.department_id = departmentId;
 	if (indentNo) where.indent_no = indentNo;
 
-	logger.info("hasPurchaseQuantityIssue ", {hasPurchaseQuantityIssue});
+	logger.debug("hasPurchaseQuantityIssue ", {hasPurchaseQuantityIssue});
+	logger.debug("Get All Indents Where ", {where});
 	
 	const indentItemsWhere = {};
 	if (hasPurchaseQuantityIssue == true) {
@@ -542,6 +562,57 @@ exports.lastIndentByBudgetId = async (req, budgetId) => {
 	);
 };
 
+/**
+ * [2026-06-03] getConsumedBudgetByBudgetId
+ *
+ * WHY: The old endpoint (lastIndentByBudgetId) returned only the single most-recent
+ * IndentItem for a budget. This meant the frontend had no way to know how much of
+ * the current phase budget was already consumed by previously saved indents, so users
+ * could keep creating indents beyond the phase limit indefinitely.
+ *
+ * Phases are isolated (Option A decided 2026-06-03): unspent budget from Phase 1 does
+ * NOT carry forward to Phase 2. Each phase is enforced independently against its own
+ * amount. Therefore consumed_amount only sums IndentItems whose createdAt falls within
+ * the current phase's date window — items from earlier phases are excluded.
+ */
+exports.getConsumedBudgetByBudgetId = async (req, budgetId) => {
+	const budget = await Budget.findByPk(budgetId);
+	if (!budget) return null;
+
+	// [2026-06-03] Use the date passed by the frontend (indent_date) so phase detection
+	// matches the date the user selected, not the server's current time. This matters when
+	// the indent_date is changed to test a different phase — without it the backend always
+	// resolves the phase from new Date() and returns the wrong phase's consumed amount.
+	const referenceDate = req.query.date ? new Date(req.query.date) : new Date();
+	const phaseResult = getPhaseQuantityDateWise(budget, referenceDate);
+	if (!phaseResult) return null;
+
+	const { value: phase_amount, phaseDate, phasePeriod } = phaseResult;
+
+	// [2026-06-03] Scope to current phase only — Phase-isolated rule.
+	// startDate is null for Phase 1 (no lower bound), otherwise it's the previous phase's end date.
+	const { startDate, endDate } = getPhaseRange(budget, phasePeriod);
+	const createdAtFilter = startDate
+		? { [Op.gt]: startDate, [Op.lte]: endDate }
+		: { [Op.lte]: endDate };
+
+	const existingItems = await IndentItem.findAll({
+		where: { budget_id: budgetId, createdAt: createdAtFilter },
+	});
+
+	const consumed_amount = existingItems.reduce((sum, i) => sum + Number(i.amount || 0), 0);
+	const consumed_qty = existingItems.reduce((sum, i) => sum + Number(i.qty || 0), 0);
+
+	return {
+		consumed_amount,
+		consumed_qty,
+		phase_amount,
+		available_amount: phase_amount - consumed_amount,
+		phase_period: phasePeriod,
+		phase_date: phaseDate,
+	};
+};
+
 const getPhaseQuantityDateWise = (budget, date) => {
 	if (!budget?.id) return 0;
 
@@ -577,6 +648,32 @@ const getPhaseQuantityDateWise = (budget, date) => {
 	}
 
 	return null;
+};
+
+/**
+ * [2026-06-03] getPhaseRange — returns the start/end date boundary for a phase period.
+ *
+ * WHY: Phases are isolated (Option A). Unspent budget from Phase 1 does NOT roll into
+ * Phase 2. To enforce this we must scope IndentItem queries to only the rows created
+ * within the current phase's date window. Without this, consumed_amount would include
+ * items from previous phases and incorrectly reduce the available budget for the
+ * current phase.
+ *
+ * Phase boundaries (phasePeriod is 1-indexed):
+ *   Phase 1 → no lower bound  … first_phase_date
+ *   Phase 2 → first_phase_date … second_phase_date
+ *   Phase 3 → second_phase_date … third_phase_date
+ */
+const getPhaseRange = (budget, phasePeriod) => {
+	const phaseDates = [
+		budget.first_phase_date,
+		budget.second_phase_date,
+		budget.third_phase_date,
+	];
+	return {
+		startDate: phasePeriod > 1 ? new Date(phaseDates[phasePeriod - 2]) : null,
+		endDate: new Date(phaseDates[phasePeriod - 1]),
+	};
 };
 
 async function rollbackStockInProductService(req, allocationResults) {
@@ -651,6 +748,86 @@ async function verifyIndentQuantityWithProductServices(
 	return data;
 }
 
+/**
+ * [2026-06-03] validateBudgetPhaseOnCreate — budget phase check at indent creation time.
+ *
+ * WHY: Frontend validation can be bypassed (commented out, direct API call, etc).
+ * validateIndentBudgetAmount only runs at approval time, which is too late — by then the
+ * indent is already saved and the approver must reject it. This function runs BEFORE any
+ * DB record is written so the user gets an immediate error and nothing is persisted.
+ *
+ * Uses indent_date (not new Date()) for phase detection so the phase matches what the
+ * frontend determined, not the server's clock at creation time.
+ */
+async function validateBudgetPhaseOnCreate(selectedIndents, indentDate, budgetType) {
+	const budgetGroups = new Map();
+	for (const item of selectedIndents) {
+		const budgetId = item.budget_id;
+		if (!budgetGroups.has(budgetId)) budgetGroups.set(budgetId, []);
+		budgetGroups.get(budgetId).push(item);
+	}
+
+	for (const [budgetId, items] of budgetGroups) {
+		const budget = await Budget.findByPk(budgetId);
+		if (!budget) continue;
+
+		const phaseResult = getPhaseQuantityDateWise(budget, indentDate);
+		if (!phaseResult) continue;
+
+		const { value: phaseAmount, phasePeriod } = phaseResult;
+
+		// Scope consumed query to the current phase's date window (phase-isolated rule)
+		const { startDate, endDate } = getPhaseRange(budget, phasePeriod);
+		const createdAtFilter = startDate
+			? { [Op.gt]: startDate, [Op.lte]: endDate }
+			: { [Op.lte]: endDate };
+
+		const previousItems = await IndentItem.findAll({
+			where: { budget_id: budgetId, createdAt: createdAtFilter },
+		});
+		const previouslyConsumedAmount = previousItems.reduce(
+			(sum, i) => sum + Number(i.amount || 0), 0,
+		);
+		const previouslyConsumedQty = previousItems.reduce(
+			(sum, i) => sum + Number(i.qty || 0), 0,
+		);
+
+		const newAmount = items.reduce((sum, i) => sum + Number(i.total || 0), 0);
+		const newQty = items.reduce((sum, i) => sum + Number(i.qty || 0), 0);
+
+		const totalAmount = previouslyConsumedAmount + newAmount;
+		const totalQty = previouslyConsumedQty + newQty;
+
+		if (budgetType === 'value-wise') {
+			if (phaseAmount > 0 && totalAmount > phaseAmount) {
+				return `Budget ${budget.budget_id} Phase ${phasePeriod}: total amount ${totalAmount} (including ${previouslyConsumedAmount} already indented) exceeds phase limit of ${phaseAmount}. Available: ${phaseAmount - previouslyConsumedAmount}.`;
+			}
+		} else if (budgetType === 'item-wise') {
+			if (phaseAmount > 0 && totalQty > phaseAmount) {
+				return `Budget ${budget.budget_id} Phase ${phasePeriod}: total quantity ${totalQty} (including ${previouslyConsumedQty} already indented) exceeds phase quantity limit of ${phaseAmount}. Available: ${phaseAmount - previouslyConsumedQty}.`;
+			}
+			if (Number(budget.amount) > 0 && totalAmount > Number(budget.amount)) {
+				return `Budget ${budget.budget_id}: total amount ${totalAmount} (including ${previouslyConsumedAmount} already indented) exceeds total budget amount of ${budget.amount}.`;
+			}
+		}
+	}
+
+	return null;
+}
+
+/**
+ * [2026-06-03] validateIndentBudgetAmount — fixed cross-indent budget enforcement
+ *
+ * WHY (old bug): The original code only summed the items inside the indent currently
+ * being approved. It never queried previously saved IndentItems for the same budget_id,
+ * so a user could create unlimited indents against the same budget phase and each one
+ * would pass validation individually even though the cumulative total exceeded the phase
+ * limit.
+ *
+ * FIX: After computing the current indent's total, we query IndentItem for all OTHER
+ * indents (indent_id != indent.id) on the same budget_id to get the previously consumed
+ * amount, then validate the combined total against the phase limit.
+ */
 async function validateIndentBudgetAmount(indent, allocationMap) {
 	const budgetGroups = new Map();
 	for (const item of indent.IndentItems) {
@@ -664,28 +841,54 @@ async function validateIndentBudgetAmount(indent, allocationMap) {
 	for (const [budgetId, { budget, items }] of budgetGroups) {
 		if (!budget) continue;
 
-		const totalIndentAmount = items.reduce((total, item) => {
+		// Amount from the indent currently being approved
+		const currentIndentAmount = items.reduce((total, item) => {
 			const allocation = allocationMap.get(item.product_id);
 			const issuedQty = allocation?.issued_qty ?? 0;
 			const avgRate = Number(item.avg_rate) || 0;
 			return total + avgRate * issuedQty;
 		}, 0);
 
-		const phaseResult = getPhaseQuantityDateWise(budget, new Date());
+		const phaseResult = getPhaseQuantityDateWise(budget, indent.indent_date);
 		if (!phaseResult) continue;
 
 		const { value: phaseAmount, phaseDate, phasePeriod } = phaseResult;
 
+		// [2026-06-03] Phase-isolated rule: only count items from OTHER indents that were
+		// created within the same phase window as the indent being approved.
+		// We exclude the current indent (indent_id != indent.id) to avoid double-counting
+		// its items, which are already summed in currentIndentAmount above.
+		const { startDate, endDate } = getPhaseRange(budget, phasePeriod);
+		const createdAtFilter = startDate
+			? { [Op.gt]: startDate, [Op.lte]: endDate }
+			: { [Op.lte]: endDate };
+
+		const previousItems = await IndentItem.findAll({
+			where: {
+				budget_id: budgetId,
+				indent_id: { [Op.ne]: indent.id },
+				createdAt: createdAtFilter,
+			},
+		});
+		const previouslyConsumedAmount = previousItems.reduce(
+			(sum, i) => sum + Number(i.amount || 0),
+			0,
+		);
+
+		const totalIndentAmount = currentIndentAmount + previouslyConsumedAmount;
+
 		logger.info('Budget validation', {
 			budgetId,
 			phaseAmount,
+			currentIndentAmount,
+			previouslyConsumedAmount,
 			totalIndentAmount,
 			phasePeriod,
 			phaseDate,
 		});
 
 		if (totalIndentAmount > phaseAmount) {
-			return `Total amount ${totalIndentAmount} for budget ${budget.budget_id} cannot be greater than the phase amount ${phaseAmount}.`;
+			return `Total amount ${totalIndentAmount} for budget ${budget.budget_id} cannot be greater than the phase amount ${phaseAmount}. Previously consumed: ${previouslyConsumedAmount}, current indent: ${currentIndentAmount}.`;
 		}
 	}
 

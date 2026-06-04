@@ -18,6 +18,7 @@ const { Op, where } = require('sequelize');
 const {
 	User,
 	organization,
+	PurchaseOrder,
 	PurchaseOrderItem,
 	Indent,
 	Role,
@@ -28,8 +29,10 @@ const {
 	generateInvoiceHTML,
 } = require('../pdf/htmlPdfGenerator');
 const { fetch } = require('undici');
-const { VCP_SERVICE_API_BASE_URL } = require('../config/serverConfig');
+const { VCP_SERVICE_API_BASE_URL, BASE_URL } = require('../config/serverConfig');
 const { generateSignedUrl } = require('../utils/s3Bucket');
+const ExcelJS = require('exceljs');
+const path = require('path');
 
 exports.createPurchaseOrder = async (req, payload) => {
 	const transaction = await sequelize.transaction();
@@ -967,3 +970,297 @@ async function getState(id) {
 
 	return data || [];
 }
+
+const EXPORT_BATCH_SIZE = 200;
+
+const safeFloat = (val, fallback = 0) => {
+	const n = parseFloat(val);
+	return isNaN(n) ? fallback : n;
+};
+
+const safeStr = (val) => (val == null ? '' : String(val));
+
+const formatExportDate = (val) => {
+	if (!val) return '';
+	try {
+		return new Date(val).toLocaleDateString('en-IN', {
+			day: '2-digit',
+			month: '2-digit',
+			year: 'numeric',
+		});
+	} catch {
+		return '';
+	}
+};
+
+const formatExportDateTime = (val) => {
+	if (!val) return '';
+	try {
+		return new Date(val).toLocaleString('en-IN', {
+			day: '2-digit',
+			month: '2-digit',
+			year: 'numeric',
+			hour: '2-digit',
+			minute: '2-digit',
+		});
+	} catch {
+		return '';
+	}
+};
+
+const resolveDiscountValue = (discount) => {
+	if (discount == null) return 0;
+	if (typeof discount === 'object') {
+		return safeFloat(
+			discount.discount_amount ?? discount.value ?? discount.amount ?? 0,
+		);
+	}
+	return safeFloat(discount);
+};
+
+exports.exportPurchaseOrders = async (req) => {
+	const { org_id, role } = req.user;
+
+	if (!org_id && role !== 'Admin') {
+		throw new AppError("You don't have access to this API.", 403);
+	}
+
+	const { from_date, to_date } = req.query;
+	const whereClause = { org_id };
+
+	if (from_date || to_date) {
+		const fromDate = new Date(from_date);
+		const toDate = new Date(to_date);
+		if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+			throw new AppError('Invalid date range');
+		}
+		toDate.setHours(23, 59, 59, 999);
+		whereClause.createdAt = { [Op.between]: [fromDate, toDate] };
+	}
+
+	const now = new Date();
+	const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
+	const fileName = `purchase_order_report_${ts}.xlsx`;
+	const filePath = path.join(__dirname, `../../storage/purchase-orders/${fileName}`);
+
+	// Standard workbook (not streaming) — full styling support including fills/fonts
+	const workbook = new ExcelJS.Workbook();
+
+	const YELLOW = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFBF00' } };
+	const HEADER_FONT = { bold: true, color: { argb: 'FF000000' } };
+	const HEADER_ALIGN = { vertical: 'middle', horizontal: 'center', wrapText: true };
+	const THIN_BORDER = {
+		top: { style: 'thin', color: { argb: 'FF000000' } },
+		left: { style: 'thin', color: { argb: 'FF000000' } },
+		bottom: { style: 'thin', color: { argb: 'FF000000' } },
+		right: { style: 'thin', color: { argb: 'FF000000' } },
+	};
+
+	const borderRow = (row, numCols) => {
+		for (let c = 1; c <= numCols; c++) {
+			row.getCell(c).border = THIN_BORDER;
+		}
+	};
+
+	const styleHeaderRow = (sheet) => {
+		const row = sheet.getRow(1);
+		const numCols = sheet.columns.length;
+		for (let c = 1; c <= numCols; c++) {
+			const cell = row.getCell(c);
+			cell.font = HEADER_FONT;
+			cell.fill = YELLOW;
+			cell.alignment = HEADER_ALIGN;
+			cell.border = THIN_BORDER;
+		}
+		row.height = 22;
+	};
+
+	// ── Sheet 1: PO headers ──────────────────────────────────────────────────
+	const poSheet = workbook.addWorksheet('Purchase Orders');
+	poSheet.columns = [
+		{ header: 'Sr. No.', key: 'sr', width: 8 },
+		{ header: 'PO No.', key: 'poNo', width: 20 },
+		{ header: 'Order Type', key: 'orderType', width: 16 },
+		{ header: 'Vendor Name', key: 'vendorName', width: 32 },
+		{ header: 'Vendor GSTIN', key: 'vendorGstin', width: 20 },
+		// { header: 'Vendor Email', key: 'vendorEmail', width: 28 },
+		{ header: 'Vendor Mobile', key: 'vendorMobile', width: 16 },
+		{ header: 'PO Date', key: 'poDate', width: 14 },
+		{ header: 'Due Date', key: 'dueDate', width: 14 },
+		{ header: 'Taxable Amount (₹)', key: 'totalTaxable', width: 20 },
+		{ header: 'Total Tax (₹)', key: 'totalTax', width: 16 },
+		{ header: 'Discount (₹)', key: 'discount', width: 14 },
+		{ header: 'Other Tax (₹)', key: 'otherTax', width: 14 },
+		{ header: 'Grand Total (₹)', key: 'grandTotal', width: 18 },
+		{ header: 'Total Paid (₹)', key: 'totalPaid', width: 16 },
+		{ header: 'Outstanding (₹)', key: 'remaining', width: 16 },
+		{ header: 'Payment Status', key: 'paymentStatus', width: 16 },
+		{ header: 'Order Status', key: 'status', width: 14 },
+		{ header: 'Same State (GST)', key: 'sameState', width: 18 },
+		{ header: 'QC Required', key: 'qcCheck', width: 14 },
+		{ header: 'Remarks', key: 'remarks', width: 35 },
+		{ header: 'Payment Term (%)', key: 'paymentTermValue', width: 20 },
+		{ header: 'Payment Term Amount (₹)', key: 'paymentTermAmount', width: 24 },
+		{ header: 'Start Date', key: 'startDate', width: 14 },
+		{ header: 'End Date', key: 'endDate', width: 14 },
+		{ header: 'Retention (%)', key: 'retention', width: 14 },
+		{ header: 'Retention Amount (₹)', key: 'retentionAmount', width: 22 },
+		{ header: 'Created At', key: 'createdAt', width: 20 },
+	];
+	styleHeaderRow(poSheet);
+
+	// ── Sheet 2: Line items ──────────────────────────────────────────────────
+	const itemSheet = workbook.addWorksheet('Line Items');
+	itemSheet.columns = [
+		{ header: 'Sr. No.', key: 'sr', width: 8 },
+		{ header: 'PO No.', key: 'poNo', width: 20 },
+		{ header: 'Order Type', key: 'orderType', width: 16 },
+		{ header: 'Vendor Name', key: 'vendorName', width: 32 },
+		{ header: 'Product Name', key: 'productName', width: 38 },
+		{ header: 'Product Code', key: 'productCode', width: 18 },
+		{ header: 'HSN / SAC Code', key: 'hsnCode', width: 18 },
+		{ header: 'UOM', key: 'uom', width: 12 },
+		{ header: 'Qty', key: 'qty', width: 10 },
+		{ header: 'Rate (₹)', key: 'price', width: 14 },
+		{ header: 'Discount', key: 'discount', width: 12 },
+		{ header: 'Discount Type', key: 'discountType', width: 14 },
+		{ header: 'IGST (%)', key: 'igst', width: 12 },
+		{ header: 'CGST (%)', key: 'cgst', width: 12 },
+		{ header: 'SGST (%)', key: 'sgst', width: 12 },
+		{ header: 'CESS (%)', key: 'cess', width: 12 },
+		{ header: 'Line Total (₹)', key: 'total', width: 16 },
+		{ header: 'Budget No.', key: 'budgetNo', width: 16 },
+		{ header: 'Note', key: 'note', width: 28 },
+		{ header: 'Specification', key: 'specification', width: 28 },
+	];
+	styleHeaderRow(itemSheet);
+
+	const poColCount = poSheet.columns.length;
+	const itemColCount = itemSheet.columns.length;
+
+	// ── Paginated DB fetch ───────────────────────────────────────────────────
+	let offset = 0;
+	let poSrNo = 1;
+	let itemSrNo = 1;
+
+	for (;;) {
+		const batch = await PurchaseOrder.findAll({
+			where: whereClause,
+			attributes: [
+				'id', 'poPrefix', 'poNo', 'poPostfix', 'poDetail', 'vendorInfo',
+				'dueDate', 'grandTotal', 'total_taxable', 'total_tax', 'discount',
+				'otherTax', 'totalPaid', 'remainingAmount', 'paymentStatus', 'status',
+				'same_state', 'po_qc_check', 'orderType', 'start_date', 'end_date',
+				'retention', 'retention_amount', 'remarks',
+				'payment_term_value', 'payment_term_amount', 'createdAt',
+			],
+			include: [
+				{
+					model: PurchaseOrderItem,
+					as: 'items',
+					attributes: [
+						'productSnapshot', 'uomSnapshot', 'hsn_sac_code',
+						'qty', 'price', 'discount', 'discount_price_type',
+						'igst', 'cgst', 'sgst', 'cess', 'total',
+						'note', 'specification', 'budget_no',
+					],
+				},
+			],
+			order: [['createdAt', 'DESC']],
+			limit: EXPORT_BATCH_SIZE,
+			offset,
+		});
+
+		if (!batch || batch.length === 0) break;
+
+		for (const poInstance of batch) {
+			const po = poInstance.get({ plain: true });
+
+			const poNumber = `${safeStr(po.poPrefix)}${safeStr(po.poNo)}${safeStr(po.poPostfix)}`;
+			const vendorInfo = po.vendorInfo ?? {};
+			const vendorName = safeStr(vendorInfo.vendor_name ?? vendorInfo.name ?? '');
+			const vendorGstin = safeStr(vendorInfo.gstin ?? vendorInfo.gst_no ?? '');
+			// const vendorEmail = safeStr(vendorInfo.email ?? '');
+			const vendorMobile = safeStr(vendorInfo.contactNo ?? vendorInfo.phone ?? '');
+			const poDetail = po.poDetail ?? {};
+			const poDate = formatExportDate(poDetail.date ?? po.createdAt);
+			const orderTypeLabel = safeStr(po.orderType ?? '').replace(/_/g, ' ').toUpperCase();
+			const discountAmt = resolveDiscountValue(po.discount);
+			const otherTaxAmt = resolveDiscountValue(po.otherTax);
+
+			borderRow(poSheet.addRow({
+				sr: poSrNo++,
+				poNo: poNumber,
+				orderType: orderTypeLabel,
+				vendorName,
+				vendorGstin,
+				// vendorEmail,
+				vendorMobile,
+				poDate,
+				dueDate: formatExportDate(po.dueDate),
+				totalTaxable: safeFloat(po.total_taxable),
+				totalTax: safeFloat(po.total_tax),
+				discount: discountAmt,
+				otherTax: otherTaxAmt,
+				grandTotal: safeFloat(po.grandTotal),
+				totalPaid: safeFloat(po.totalPaid),
+				remaining: safeFloat(po.remainingAmount),
+				paymentStatus: safeStr(po.paymentStatus),
+				status: safeStr(po.status).toUpperCase(),
+				sameState: po.same_state ? 'Yes' : 'No',
+				qcCheck: po.po_qc_check ? 'Yes' : 'No',
+				remarks: safeStr(po.remarks),
+				paymentTermValue: po.payment_term_value != null ? safeFloat(po.payment_term_value) : '',
+				paymentTermAmount: po.payment_term_amount != null ? safeFloat(po.payment_term_amount) : '',
+				startDate: formatExportDate(po.start_date),
+				endDate: formatExportDate(po.end_date),
+				retention: po.retention != null ? safeFloat(po.retention) : '',
+				retentionAmount: po.retention_amount != null ? safeFloat(po.retention_amount) : '',
+				createdAt: formatExportDateTime(po.createdAt),
+			}), poColCount);
+
+			for (const item of (po.items ?? [])) {
+				const snap = item.productSnapshot ?? {};
+				const uomSnap = item.uomSnapshot ?? {};
+				const productName = safeStr(snap.name ?? '');
+				const productCode = safeStr(snap.uniqueProductId ?? snap.product_code ?? snap.sku ?? '');
+				const hsnCode = safeStr(item.hsn_sac_code ?? snap.hsn_code ?? snap.hsn_sac_code ?? '');
+				const uomCode = safeStr(uomSnap.code ?? uomSnap.name ?? uomSnap.short_name ?? '');
+
+				borderRow(itemSheet.addRow({
+					sr: itemSrNo++,
+					poNo: poNumber,
+					orderType: orderTypeLabel,
+					vendorName,
+					productName,
+					productCode,
+					hsnCode,
+					uom: uomCode,
+					qty: safeFloat(item.qty),
+					price: safeFloat(item.price),
+					discount: safeFloat(item.discount),
+					discountType: safeStr(item.discount_price_type ?? ''),
+					igst: safeFloat(item.igst),
+					cgst: safeFloat(item.cgst),
+					sgst: safeFloat(item.sgst),
+					cess: safeFloat(item.cess),
+					total: safeFloat(item.total),
+					budgetNo: safeStr(item.budget_no ?? ''),
+					note: safeStr(item.note ?? ''),
+					specification: safeStr(item.specification ?? ''),
+				}), itemColCount);
+			}
+		}
+
+		offset += EXPORT_BATCH_SIZE;
+		if (batch.length < EXPORT_BATCH_SIZE) break;
+	}
+
+	await workbook.xlsx.writeFile(filePath);
+
+	const baseUrl = BASE_URL || 'http://localhost:4300';
+	return {
+		fileName,
+		path: `${baseUrl}/storage/purchase-orders/${fileName}`,
+	};
+};

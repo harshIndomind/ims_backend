@@ -71,6 +71,28 @@ exports.lastIndentByBudgetId = catchAsync(async (req, res) => {
 	});
 });
 
+/**
+ * [2026-06-03] getConsumedBudgetByBudgetId
+ *
+ * WHY: Added to support frontend budget-phase enforcement. Without this endpoint the
+ * frontend had no way to know how much of the current phase budget was already consumed
+ * by previously saved indents, allowing users to exceed the phase limit across multiple
+ * separate indent creation sessions.
+ *
+ * Returns consumed_amount, consumed_qty, phase_amount, available_amount, phase_period.
+ * The frontend shows "Available Budget" in the Budget Details card and blocks the user
+ * from adding items that would exceed available_amount.
+ */
+exports.getConsumedBudgetByBudgetId = catchAsync(async (req, res) => {
+	const { budget_id } = req.params;
+	const data = await indentService.getConsumedBudgetByBudgetId(req, budget_id);
+
+	res.status(StatusCodes.OK).json({
+		message: 'Consumed budget fetched successfully',
+		data,
+	});
+});
+
 exports.verifyIndentQuantity = catchAsync(async (req, res) => {
 	const { ids } = req.body;
 

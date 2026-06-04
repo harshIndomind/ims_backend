@@ -39,6 +39,16 @@ router.get(
 	indentController.lastIndentByBudgetId,
 );
 
+// [2026-06-03] New route: returns total consumed amount/qty for a budget's current phase.
+// WHY: The old /budget/:budget_id route only returned the last single IndentItem. The
+// frontend needs aggregate totals across ALL previous indents to enforce phase budget
+// limits before the user submits a new indent.
+router.get(
+	'/budget/:budget_id/consumed',
+	checkPermission('indent', 'view'),
+	indentController.getConsumedBudgetByBudgetId,
+);
+
 router.get(
 	'/product-services/:productId',
 	checkPermission('indent', 'view'),

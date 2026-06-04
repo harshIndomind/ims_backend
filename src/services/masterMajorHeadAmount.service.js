@@ -60,6 +60,16 @@ exports.updateMasterMajorHeadAmount = async (id, payload) => {
 		);
 	}
 
+	const subHeadCount = await MasterSubHeadAmount.count({
+		where: { major_head_amount_id: id },
+	});
+	if (subHeadCount > 0) {
+		throw new AppError(
+			'Amount cannot be edited — sub-heads have already been allocated from this major head amount',
+			StatusCodes.UNPROCESSABLE_ENTITY,
+		);
+	}
+
 	await masterMajorHeadAmountRepo.update(masterMajorHeadAmount, {
 		major_head_id,
 		period_id,

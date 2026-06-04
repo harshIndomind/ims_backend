@@ -7,9 +7,9 @@ router.use(verifyToken);
 const { upload } = require('../../middlewares/multer');
 
 router.get('/generate-po-number', purchaseController.generatePoNumber);
+router.get('/export', purchaseController.exportPurchaseOrders);
 router.post('/', purchaseController.createPurchaseOrder);
 router.get('/', purchaseController.getAllPurchaseOrders);
-// router.get('/export', purchaseController.exportSaleInvoices);
 
 // router.get('/payments', purchaseController.getPayments);
 
