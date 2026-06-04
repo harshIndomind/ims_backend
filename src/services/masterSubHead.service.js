@@ -2,14 +2,14 @@ const AppError = require('../utils/AppError');
 const { StatusCodes } = require('http-status-codes');
 const { masterSubHeadRepo } = require('../repository/index');
 const logger = require('../utils/logger');
-const { organization } = require('../models/index');
+const { organization, MasterMajorHead } = require('../models/index');
 
 /**
  * Create
  */
 exports.createMasterSubHead = async (req, payload) => {
 	const { org_id } = req.user;
-	const { sh_code, sh_name } = payload;
+	const { sh_code, sh_name, major_head_id } = payload;
 
 	if (!sh_code || !sh_name) {
 		logger.warn('Validation failed while creating Master Major Head', payload);
@@ -23,6 +23,7 @@ exports.createMasterSubHead = async (req, payload) => {
 		org_id,
 		sh_code,
 		sh_name,
+		...(major_head_id ? { major_head_id: Number(major_head_id) } : {}),
 	});
 
 	logger.info('Sub Head created', {
@@ -37,7 +38,7 @@ exports.createMasterSubHead = async (req, payload) => {
  * Update
  */
 exports.updateMasterSubHead = async (id, payload) => {
-	const { sh_code, sh_name } = payload;
+	const { sh_code, sh_name, major_head_id } = payload;
 
 	const MasterSubHead = await masterSubHeadRepo.findById(id);
 
@@ -49,6 +50,7 @@ exports.updateMasterSubHead = async (id, payload) => {
 	await masterSubHeadRepo.update(MasterSubHead, {
 		sh_code,
 		sh_name,
+		...(major_head_id !== undefined ? { major_head_id: major_head_id ? Number(major_head_id) : null } : {}),
 	});
 
 	logger.info('Sub Head updated', {
@@ -63,22 +65,32 @@ exports.updateMasterSubHead = async (id, payload) => {
  */
 exports.getAllMasterSubHead = async (req) => {
 	const { org_id } = req.user;
-	const { limit, offset } = req.query;
+	const { limit, offset, major_head_id } = req.query;
+
+	const where = { org_id };
+	if (major_head_id) {
+		where.major_head_id = Number(major_head_id);
+	}
 
 	const options = {};
 	if (limit) {
 		options.limit = Number(limit);
 		options.offset = Number(offset);
 	}
-	logger.info('Fetching all Sub Heads');
+	logger.info('Fetching all Sub Heads', { major_head_id });
 	return await masterSubHeadRepo.findAll(
-		{ org_id },
+		where,
 		{
 			include: [
 				{
 					model: organization,
 					as: 'organization',
 					attributes: ['org_code', 'org_name'],
+				},
+				{
+					model: MasterMajorHead,
+					as: 'majorHead',
+					attributes: ['id', 'm_code', 'm_name'],
 				},
 			],
 			...options,

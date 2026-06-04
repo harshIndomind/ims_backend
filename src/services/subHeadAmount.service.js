@@ -12,6 +12,9 @@ const {
 const {
 	getAmountByMajorHeadAndPeriod,
 } = require('../services/masterMajorHeadAmount.service');
+const {
+	getAmountByMajorHeadAndPeriodAndSubHead,
+} = require('../services/budget.service');
 const { fn, col } = require('sequelize');
 
 /**
@@ -108,6 +111,19 @@ exports.updateSubHeadAmount = async (req, payload) => {
 	if (!masterMajorHeadAmount) {
 		logger.warn('Sub head amount not found for update', { id });
 		throw new AppError('Sub head amount not found', StatusCodes.NOT_FOUND);
+	}
+
+	const budgetData = await getAmountByMajorHeadAndPeriodAndSubHead(
+		masterMajorHeadAmount.major_head_id,
+		masterMajorHeadAmount.period_id,
+		masterMajorHeadAmount.sub_head_id,
+	);
+	const budgetUsedAmount = budgetData ? Number(budgetData.total_budget_used ?? 0) : 0;
+	if (budgetUsedAmount > 0) {
+		throw new AppError(
+			'Amount cannot be edited — budgets are already using this sub-head allocation',
+			StatusCodes.UNPROCESSABLE_ENTITY,
+		);
 	}
 
 	const majorHeadAmount = await getAmountByMajorHeadAndPeriod(
@@ -240,7 +256,21 @@ exports.getSubHeadAmountById = async (req, id) => {
 		masterMajorHeadAmount.period_id,
 	);
 
-	const responseData = { ...masterMajorHeadAmount.toJSON(), subHeadAmount };
+	const budgetData = await getAmountByMajorHeadAndPeriodAndSubHead(
+		masterMajorHeadAmount.major_head_id,
+		masterMajorHeadAmount.period_id,
+		masterMajorHeadAmount.sub_head_id,
+	);
+
+	const budgetUsedAmount = parseFloat((budgetData ? Number(budgetData.total_budget_used ?? 0) : 0).toFixed(2));
+	const subHeadRemainingAmount = parseFloat((Number(masterMajorHeadAmount.amount) - budgetUsedAmount).toFixed(2));
+
+	const responseData = {
+		...masterMajorHeadAmount.toJSON(),
+		subHeadAmount,
+		budgetUsedAmount,
+		subHeadRemainingAmount,
+	};
 
 	return responseData;
 };
