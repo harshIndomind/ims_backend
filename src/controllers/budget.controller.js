@@ -1,7 +1,10 @@
+const path = require('path');
+const fs = require('fs').promises;
 const catchAsync = require('../utils/catchAsync');
 const { StatusCodes } = require('http-status-codes');
 const budgetService = require('../services/budget.service');
 const budgetReportService = require('../services/budget-report.service');
+const { BASE_URL } = require('../config/serverConfig');
 const logger = require('../utils/logger');
 
 exports.createBudget = catchAsync(async (req, res) => {
@@ -91,27 +94,43 @@ exports.getAllApprovedBudgets = catchAsync(async (req, res) => {
 	res.status(StatusCodes.OK).json({ data });
 });
 
+const BUDGET_STORAGE_DIR = path.join(__dirname, '../../storage/budgets');
+const SAFE_FILENAME_RE = /^budget_report_[\d_-]+\.xlsx$/;
+
 exports.downloadBudgetReport = catchAsync(async (req, res) => {
 	const data = await budgetService.getAllBudgets(req);
 
-	if (!data.rows || data.rows.length == 0) {
+	if (!data.rows || data.rows.length === 0) {
 		return res
 			.status(StatusCodes.NO_CONTENT)
 			.json({ message: 'Budget data is not available' });
 	}
 
-	const workbook = await budgetReportService.generateExcel(data);
-	console.log('workbook ', workbook);
-	// 👉 Headers set karo
-	res.setHeader(
-		'Content-Type',
-		'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-	);
+	const now = new Date();
+	const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
+	const fileName = `budget_report_${ts}.xlsx`;
+	const filePath = path.join(BUDGET_STORAGE_DIR, fileName);
 
-	res.setHeader('Content-Disposition', 'attachment; filename=budget.xlsx');
+	await budgetReportService.generateExcel(data, filePath);
 
-	// 👉 Direct response me bhejo
-	await workbook.xlsx.write(res);
+	const baseUrl = BASE_URL || 'http://localhost:4300';
+	res.status(StatusCodes.OK).json({
+		message: 'Budget report generated successfully',
+		fileName,
+		path: `${baseUrl}/storage/budgets/${fileName}`,
+	});
+});
 
-	res.end();
+exports.cleanupBudgetReport = catchAsync(async (req, res) => {
+	const { name } = req.query;
+	console.log("name ", SAFE_FILENAME_RE.test(name));
+	
+	if (!name || !SAFE_FILENAME_RE.test(name)) {
+		return res.status(StatusCodes.BAD_REQUEST).json({ message: 'Invalid file name' });
+	}
+
+	const filePath = path.join(BUDGET_STORAGE_DIR, name);
+	await fs.unlink(filePath).catch(() => {});
+
+	res.status(StatusCodes.OK).json({ message: 'Report file deleted' });
 });

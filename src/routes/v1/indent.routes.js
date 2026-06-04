@@ -15,6 +15,11 @@ router.get(
 	checkPermission('indent', 'export'),
 	indentController.downloadIndentReport,
 );
+router.delete(
+	'/report/file',
+	checkPermission('indent', 'export'),
+	indentController.cleanupIndentReport,
+);
 router.get(
 	'/',
 	checkPermission('indent', 'view'),

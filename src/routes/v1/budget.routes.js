@@ -15,6 +15,11 @@ router.get(
 	checkPermission('budget', 'export'),
 	budgetController.downloadBudgetReport,
 );
+router.delete(
+	'/report/file',
+	checkPermission('budget', 'export'),
+	budgetController.cleanupBudgetReport,
+);
 router.get(
 	'/',
 	checkPermission('budget', 'view'),

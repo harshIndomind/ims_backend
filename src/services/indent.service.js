@@ -19,7 +19,7 @@ const {
 	MasterUnit
 } = require('../models/index');
 const AppError = require('../utils/AppError');
-const { Op } = require('sequelize');
+const { Op, literal } = require('sequelize');
 const logger = require('../utils/logger');
 const { StatusCodes } = require('http-status-codes');
 const parseDate = require('../utils/parse-date');
@@ -237,6 +237,18 @@ exports.getAllIndents = async (req) => {
 	logger.debug("indentItemsWhere ", {indentItemsWhere})
 	const filterOptions = {
 		where,
+		attributes: {
+			include: [
+				[
+					literal('(SELECT COUNT(*) FROM `PurchaseOrders` WHERE `indent_id` = `Indent`.`id`)'),
+					'po_count',
+				],
+				[
+					literal('(SELECT COUNT(*) FROM `WorkOrders` WHERE `indent_id` = `Indent`.`id`)'),
+					'wo_count',
+				],
+			],
+		},
 		include: [
 			{ association: 'department' },
 			{ association: 'period' },
