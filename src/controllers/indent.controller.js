@@ -140,6 +140,8 @@ exports.downloadIndentReport = catchAsync(async (req, res) => {
 			.json({ message: 'Indent data is not available' });
 	}
 
+	await fs.mkdir(INDENT_STORAGE_DIR, { recursive: true });
+
 	const now = new Date();
 	const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
 	const fileName = `indent_report_${ts}.xlsx`;
