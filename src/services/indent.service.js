@@ -42,6 +42,10 @@ exports.createIndent = async (req, payload) => {
 			...indentPayload
 		} = payload;
 
+		if (!Array.isArray(selectedIndents) || selectedIndents.length === 0) {
+			throw new AppError('At least one item is required to create an indent.', StatusCodes.BAD_REQUEST);
+		}
+
 		// [2026-06-03] Validate budget phase limits BEFORE writing any DB records.
 		// WHY: Frontend validation can be bypassed (commented out, API called directly, etc).
 		// Without this, over-budget indents can be saved and only get caught at approval time,
@@ -648,7 +652,9 @@ const getPhaseQuantityDateWise = (budget, date) => {
 	for (const [index, phase] of phases.entries()) {
 		if (!phase.date) continue;
 
-		const phaseTime = new Date(phase.date).getTime();
+		const phaseEndOfDay = new Date(phase.date);
+		phaseEndOfDay.setHours(23, 59, 59, 999);
+		const phaseTime = phaseEndOfDay.getTime();
 
 		if (currentTime <= phaseTime) {
 			return {
@@ -682,10 +688,16 @@ const getPhaseRange = (budget, phasePeriod) => {
 		budget.second_phase_date,
 		budget.third_phase_date,
 	];
-	return {
-		startDate: phasePeriod > 1 ? new Date(phaseDates[phasePeriod - 2]) : null,
-		endDate: new Date(phaseDates[phasePeriod - 1]),
-	};
+	const endDate = new Date(phaseDates[phasePeriod - 1]);
+	endDate.setHours(23, 59, 59, 999);
+
+	let startDate = null;
+	if (phasePeriod > 1) {
+		startDate = new Date(phaseDates[phasePeriod - 2]);
+		startDate.setHours(23, 59, 59, 999);
+	}
+
+	return { startDate, endDate };
 };
 
 async function rollbackStockInProductService(req, allocationResults) {

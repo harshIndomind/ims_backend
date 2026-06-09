@@ -105,7 +105,7 @@ exports.getAllBudgets = async (req) => {
 	const departmentId = Number(selectedDepartmentId);
 	const costCenterId = Number(selectedCostCenterId);
 
-	if (selectedBudgetTypeId != 'both') where.budgetType = selectedBudgetTypeId;
+	if (selectedBudgetTypeId != 'all') where.budgetType = selectedBudgetTypeId;
 	if (selectedStatusId != 'all') where.is_lock = selectedStatusId === 'lock' ? 1 : 0;
 	if (periodId > 0) where.period_id = periodId;
 	if (departmentId > 0) where.department_id = departmentId;
@@ -323,7 +323,7 @@ exports.getAllApprovedBudgets = async (req) => {
 
 	const where = { sanc_by: 'yes', is_lock: 0 };
 
-	if (budgetType) where.budgetType = budgetType;
+	if (budgetType !== 'all') where.budgetType = budgetType;
 	if (periodId) where.period_id = periodId;
 	if (departmentId) where.department_id = departmentId;
 

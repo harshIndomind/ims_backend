@@ -8,14 +8,16 @@ const {
 const logger = require('../utils/logger');
 const { sequelize } = require('../models/index');
 const { Op } = require('sequelize');
-const { WorkOrderItem, Indent, User, organization, Role, PaymentRequisition } = require('../models/index');
+const { WorkOrder, WorkOrderItem, Indent, User, organization, Role, PaymentRequisition } = require('../models/index');
 const {
 	generateInvoiceHTMLPDF,
 	generateInvoiceHTML,
 } = require('../pdf/htmlPdfGenerator');
 const { fetch } = require('undici');
-const { VCP_SERVICE_API_BASE_URL } = require('../config/serverConfig');
+const { VCP_SERVICE_API_BASE_URL, BASE_URL } = require('../config/serverConfig');
 const { generateSignedUrl } = require('../utils/s3Bucket');
+const ExcelJS = require('exceljs');
+const path = require('path');
 
 // Services have no stock and carry qty_for_purchase_order = 0 on the indent,
 // so they must be excluded from the purchase-order qty ledger (otherwise the
@@ -721,4 +723,260 @@ exports.getWorkOrderNo = async (req) => {
 	}
 
 	return newWorkOrderNumber.toString().padStart(4, '0');
+};
+
+const EXPORT_BATCH_SIZE = 200;
+
+const safeFloat = (val, fallback = 0) => {
+	const n = parseFloat(val);
+	return isNaN(n) ? fallback : n;
+};
+const safeStr = (val) => (val == null ? '' : String(val));
+
+const formatExportDate = (val) => {
+	if (!val) return '';
+	try {
+		return new Date(val).toLocaleDateString('en-IN', {
+			day: '2-digit', month: '2-digit', year: 'numeric',
+		});
+	} catch { return ''; }
+};
+
+const formatExportDateTime = (val) => {
+	if (!val) return '';
+	try {
+		return new Date(val).toLocaleString('en-IN', {
+			day: '2-digit', month: '2-digit', year: 'numeric',
+			hour: '2-digit', minute: '2-digit',
+		});
+	} catch { return ''; }
+};
+
+exports.exportWorkOrders = async (req) => {
+	const { org_id, role } = req.user;
+
+	if (!org_id && role !== 'Admin') {
+		throw new AppError("You don't have access to this API.", 403);
+	}
+
+	const { from_date, to_date } = req.query;
+	const whereClause = { org_id };
+
+	if (from_date || to_date) {
+		const fromDate = new Date(from_date);
+		const toDate = new Date(to_date);
+		if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+			throw new AppError('Invalid date range');
+		}
+		toDate.setHours(23, 59, 59, 999);
+		whereClause.createdAt = { [Op.between]: [fromDate, toDate] };
+	}
+
+	const now = new Date();
+	const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
+	const fileName = `work_order_report_${ts}.xlsx`;
+	const filePath = path.join(__dirname, `../../storage/work-orders/${fileName}`);
+
+	const workbook = new ExcelJS.Workbook();
+
+	const YELLOW = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFBF00' } };
+	const HEADER_FONT = { bold: true, color: { argb: 'FF000000' } };
+	const HEADER_ALIGN = { vertical: 'middle', horizontal: 'center', wrapText: true };
+	const THIN_BORDER = {
+		top: { style: 'thin', color: { argb: 'FF000000' } },
+		left: { style: 'thin', color: { argb: 'FF000000' } },
+		bottom: { style: 'thin', color: { argb: 'FF000000' } },
+		right: { style: 'thin', color: { argb: 'FF000000' } },
+	};
+
+	const borderRow = (row, numCols) => {
+		for (let c = 1; c <= numCols; c++) {
+			row.getCell(c).border = THIN_BORDER;
+		}
+	};
+
+	const styleHeaderRow = (sheet) => {
+		const row = sheet.getRow(1);
+		const numCols = sheet.columns.length;
+		for (let c = 1; c <= numCols; c++) {
+			const cell = row.getCell(c);
+			cell.font = HEADER_FONT;
+			cell.fill = YELLOW;
+			cell.alignment = HEADER_ALIGN;
+			cell.border = THIN_BORDER;
+		}
+		row.height = 22;
+	};
+
+	const woSheet = workbook.addWorksheet('Work Orders');
+	woSheet.columns = [
+		{ header: 'Sr. No.', key: 'sr', width: 8 },
+		{ header: 'W.O. No.', key: 'woNo', width: 20 },
+		{ header: 'Vendor Name', key: 'vendorName', width: 32 },
+		{ header: 'Vendor GSTIN', key: 'vendorGstin', width: 20 },
+		{ header: 'Vendor Mobile', key: 'vendorMobile', width: 16 },
+		{ header: 'W.O. Date', key: 'woDate', width: 14 },
+		{ header: 'Due Date', key: 'dueDate', width: 14 },
+		{ header: 'Start Date', key: 'startDate', width: 14 },
+		{ header: 'End Date', key: 'endDate', width: 14 },
+		{ header: 'Taxable Amount (₹)', key: 'totalTaxable', width: 20 },
+		{ header: 'Total Tax (₹)', key: 'totalTax', width: 16 },
+		{ header: 'Grand Total (₹)', key: 'grandTotal', width: 18 },
+		{ header: 'Total Paid (₹)', key: 'totalPaid', width: 16 },
+		{ header: 'Outstanding (₹)', key: 'remaining', width: 16 },
+		{ header: 'Payment Status', key: 'paymentStatus', width: 16 },
+		{ header: 'Order Status', key: 'status', width: 14 },
+		{ header: 'Same State (GST)', key: 'sameState', width: 18 },
+		{ header: 'QC Required', key: 'qcCheck', width: 14 },
+		{ header: 'Retention (%)', key: 'retention', width: 14 },
+		{ header: 'Retention Amount (₹)', key: 'retentionAmount', width: 22 },
+		{ header: 'Payment Term (%)', key: 'paymentTermValue', width: 20 },
+		{ header: 'Payment Term Amount (₹)', key: 'paymentTermAmount', width: 24 },
+		{ header: 'Remarks', key: 'remarks', width: 35 },
+		{ header: 'Created At', key: 'createdAt', width: 20 },
+	];
+	styleHeaderRow(woSheet);
+
+	const itemSheet = workbook.addWorksheet('Line Items');
+	itemSheet.columns = [
+		{ header: 'Sr. No.', key: 'sr', width: 8 },
+		{ header: 'W.O. No.', key: 'woNo', width: 20 },
+		{ header: 'Vendor Name', key: 'vendorName', width: 32 },
+		{ header: 'Product Name', key: 'productName', width: 38 },
+		{ header: 'Product Code', key: 'productCode', width: 18 },
+		{ header: 'HSN / SAC Code', key: 'hsnCode', width: 18 },
+		{ header: 'UOM', key: 'uom', width: 12 },
+		{ header: 'Qty', key: 'qty', width: 10 },
+		{ header: 'Rate (₹)', key: 'price', width: 14 },
+		{ header: 'Discount', key: 'discount', width: 12 },
+		{ header: 'Discount Type', key: 'discountType', width: 14 },
+		{ header: 'IGST (%)', key: 'igst', width: 12 },
+		{ header: 'CGST (%)', key: 'cgst', width: 12 },
+		{ header: 'SGST (%)', key: 'sgst', width: 12 },
+		{ header: 'CESS (%)', key: 'cess', width: 12 },
+		{ header: 'Line Total (₹)', key: 'total', width: 16 },
+		{ header: 'Budget No.', key: 'budgetNo', width: 16 },
+		{ header: 'Note', key: 'note', width: 28 },
+		{ header: 'Specification', key: 'specification', width: 28 },
+	];
+	styleHeaderRow(itemSheet);
+
+	const woColCount = woSheet.columns.length;
+	const itemColCount = itemSheet.columns.length;
+
+	let offset = 0;
+	let woSrNo = 1;
+	let itemSrNo = 1;
+
+	for (;;) {
+		const batch = await WorkOrder.findAll({
+			where: whereClause,
+			attributes: [
+				'id', 'woPrefix', 'woNo', 'woPostfix', 'woDetail', 'vendorInfo',
+				'dueDate', 'grandTotal', 'total_taxable', 'total_tax',
+				'totalPaid', 'remainingAmount', 'paymentStatus', 'status',
+				'same_state', 'wo_qc_check', 'start_date', 'end_date',
+				'retention', 'retention_amount', 'remarks',
+				'payment_term_value', 'payment_term_amount', 'createdAt',
+			],
+			include: [
+				{
+					model: WorkOrderItem,
+					as: 'items',
+					attributes: [
+						'productSnapshot', 'uomSnapshot', 'hsn_sac_code',
+						'qty', 'price', 'discount', 'discount_price_type',
+						'igst', 'cgst', 'sgst', 'cess', 'total',
+						'note', 'specification', 'budget_no',
+					],
+				},
+			],
+			order: [['createdAt', 'DESC']],
+			limit: EXPORT_BATCH_SIZE,
+			offset,
+		});
+
+		if (!batch || batch.length === 0) break;
+
+		for (const woInstance of batch) {
+			const wo = woInstance.get({ plain: true });
+
+			const woNumber = `${safeStr(wo.woPrefix)}${safeStr(wo.woNo)}${safeStr(wo.woPostfix)}`;
+			const vendorInfo = wo.vendorInfo ?? {};
+			const vendorName = safeStr(vendorInfo.vendor_name ?? vendorInfo.name ?? '');
+			const vendorGstin = safeStr(vendorInfo.gstin ?? vendorInfo.gst_no ?? '');
+			const vendorMobile = safeStr(vendorInfo.contactNo ?? vendorInfo.phone ?? '');
+			const woDetail = wo.woDetail ?? {};
+			const woDate = formatExportDate(woDetail.date ?? wo.createdAt);
+
+			borderRow(woSheet.addRow({
+				sr: woSrNo++,
+				woNo: woNumber,
+				vendorName,
+				vendorGstin,
+				vendorMobile,
+				woDate,
+				dueDate: formatExportDate(wo.dueDate),
+				startDate: formatExportDate(wo.start_date),
+				endDate: formatExportDate(wo.end_date),
+				totalTaxable: safeFloat(wo.total_taxable),
+				totalTax: safeFloat(wo.total_tax),
+				grandTotal: safeFloat(wo.grandTotal),
+				totalPaid: safeFloat(wo.totalPaid),
+				remaining: safeFloat(wo.remainingAmount),
+				paymentStatus: safeStr(wo.paymentStatus),
+				status: safeStr(wo.status).toUpperCase(),
+				sameState: wo.same_state ? 'Yes' : 'No',
+				qcCheck: wo.wo_qc_check ? 'Yes' : 'No',
+				retention: wo.retention != null ? safeFloat(wo.retention) : '',
+				retentionAmount: wo.retention_amount != null ? safeFloat(wo.retention_amount) : '',
+				paymentTermValue: wo.payment_term_value != null ? safeFloat(wo.payment_term_value) : '',
+				paymentTermAmount: wo.payment_term_amount != null ? safeFloat(wo.payment_term_amount) : '',
+				remarks: safeStr(wo.remarks),
+				createdAt: formatExportDateTime(wo.createdAt),
+			}), woColCount);
+
+			for (const item of (wo.items ?? [])) {
+				const snap = item.productSnapshot ?? {};
+				const uomSnap = item.uomSnapshot ?? {};
+				const productName = safeStr(snap.name ?? '');
+				const productCode = safeStr(snap.uniqueProductId ?? snap.product_code ?? snap.sku ?? '');
+				const hsnCode = safeStr(item.hsn_sac_code ?? snap.hsn_code ?? snap.hsn_sac_code ?? '');
+				const uomCode = safeStr(uomSnap.code ?? uomSnap.name ?? uomSnap.short_name ?? '');
+
+				borderRow(itemSheet.addRow({
+					sr: itemSrNo++,
+					woNo: woNumber,
+					vendorName,
+					productName,
+					productCode,
+					hsnCode,
+					uom: uomCode,
+					qty: safeFloat(item.qty),
+					price: safeFloat(item.price),
+					discount: safeFloat(item.discount),
+					discountType: safeStr(item.discount_price_type ?? ''),
+					igst: safeFloat(item.igst),
+					cgst: safeFloat(item.cgst),
+					sgst: safeFloat(item.sgst),
+					cess: safeFloat(item.cess),
+					total: safeFloat(item.total),
+					budgetNo: safeStr(item.budget_no ?? ''),
+					note: safeStr(item.note ?? ''),
+					specification: safeStr(item.specification ?? ''),
+				}), itemColCount);
+			}
+		}
+
+		offset += EXPORT_BATCH_SIZE;
+		if (batch.length < EXPORT_BATCH_SIZE) break;
+	}
+
+	await workbook.xlsx.writeFile(filePath);
+
+	const baseUrl = BASE_URL || 'http://localhost:4300';
+	return {
+		fileName,
+		path: `${baseUrl}/storage/work-orders/${fileName}`,
+	};
 };

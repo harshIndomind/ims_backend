@@ -6,6 +6,7 @@ const verifyToken = require('../../middlewares/verifyToken');
 router.use(verifyToken);
 
 router.get('/generate-wo-number', workOrderController.generateWoNumber);
+router.get('/export', workOrderController.exportWorkOrders);
 router.post('/', workOrderController.createWorkOrder);
 router.get('/', workOrderController.getAllWorkOrders);
 router.get('/:id', workOrderController.getWorkOrderById);

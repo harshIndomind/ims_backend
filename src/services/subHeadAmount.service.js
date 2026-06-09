@@ -185,7 +185,7 @@ exports.getAllSubHeadAmount = async (req) => {
 		options.offset = Number(offset);
 	}
 	logger.info('Fetching all Sub head amounts');
-	return await masterSubHeadAmountRepo.findAll({
+	const result = await masterSubHeadAmountRepo.findAll({
 		where: { org_id },
 		...options,
 		include: [
@@ -211,6 +211,25 @@ exports.getAllSubHeadAmount = async (req) => {
 			},
 		],
 	});
+
+	const rows = await Promise.all(
+		result.rows.map(async (row) => {
+			const budgetData = await getAmountByMajorHeadAndPeriodAndSubHead(
+				row.major_head_id,
+				row.period_id,
+				row.sub_head_id,
+			).catch(() => null);
+			const budgetUsedAmount = parseFloat(
+				(budgetData ? Number(budgetData.total_budget_used ?? 0) : 0).toFixed(2),
+			);
+			const subHeadRemainingAmount = parseFloat(
+				(Number(row.amount) - budgetUsedAmount).toFixed(2),
+			);
+			return { ...row.toJSON(), budgetUsedAmount, subHeadRemainingAmount };
+		}),
+	);
+
+	return { count: result.count, rows };
 };
 
 /**
