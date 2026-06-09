@@ -9,6 +9,7 @@ const { generateSignedUrl } = require('../utils/s3Bucket');
 const fs = require('fs');
 const path = require('path');
 const { BASE_URL } = require('../config/serverConfig');
+const fetchPermissions = require('../helpers/fetchPermissions');
 
 /**
  * Generate the next requisition number preview (before creation).
@@ -242,6 +243,7 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 			poWoId,
 			wo_no,
 			supplier_id,
+			cost_center_id,
 			supplier_snapshot,
 			bankDetailsSnapshot,
 			poWoDate,
@@ -255,7 +257,6 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 			projectName,
 			activityId,
 			budgetId,
-			authorizedById,
 			paymentDate,
 			remark,
 			termCondition,
@@ -268,19 +269,44 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 		const po_id = requisitionAgainst === 'PO' && poWoId ? Number(poWoId) : null;
 		const wo_id = requisitionAgainst === 'WO' && poWoId ? Number(poWoId) : null;
 
-		const authorizedBy = {
-			id: req.user.id,
-			name: req.user.name,
-			email: req.user.email,
-		};
+		// Determine if the editing user is an approver
+		const userPermissions = await fetchPermissions(req);
+		const isApprover = userPermissions.includes('payment-requisition:approver');
 
-		logger.info('Updating payment requisition', { id, org_id });
+		// Only approvers may set/change the authorized_by; everyone else preserves it
+		const authorizedByUpdate = isApprover
+			? {
+				authorized_by_id: req.user.id,
+				authorized_by: { id: req.user.id, name: req.user.name, email: req.user.email },
+			}
+			: {
+				authorized_by_id: existing.authorized_by_id,
+				authorized_by: existing.authorized_by,
+			};
+
+		// Only approvers may change status, payment_type, transaction_id, remark
+		const approverOnlyFields = isApprover
+			? {
+				status: status || existing.status,
+				payment_type: paymentType || null,
+				transaction_id: transactionId || null,
+				remark: remark || null,
+			}
+			: {
+				status: existing.status,
+				payment_type: existing.payment_type,
+				transaction_id: existing.transaction_id,
+				remark: existing.remark,
+			};
+
+		logger.info('Updating payment requisition', { id, org_id, isApprover });
 
 		await paymentRequisitionRepo.updateById(
 			id,
 			{
 				requisition_against: requisitionAgainst,
 				supplier_id: supplier_id ? Number(supplier_id) : null,
+				cost_center_id: cost_center_id || existing.cost_center_id || null,
 				supplier_snapshot: supplier_snapshot ?? null,
 				bank_details_snapshot: bankDetailsSnapshot ?? null,
 				po_id,
@@ -297,22 +323,18 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 				project_name: projectName || null,
 				activity_id: activityId || null,
 				budget_id: budgetId || null,
-				authorized_by_id: authorizedBy ? Number(authorizedBy.id) : null,
-				authorized_by: authorizedBy,
+				...authorizedByUpdate,
 				payment_date: paymentDate || null,
-				remark: remark || null,
 				term_condition: termCondition || null,
 				payment_term_id,
-				payment_type: paymentType || null,
-				transaction_id: transactionId || null,
-				status: status || undefined,
+				...approverOnlyFields,
 			},
 			{ transaction },
 		);
 
 		// Sync totalPaid / remainingAmount / paymentStatus on the parent PO or WO
 		const oldStatus = existing.status;
-		const newStatus = status || oldStatus;
+		const newStatus = approverOnlyFields.status;
 		const oldAmount = parseFloat(existing.requisition_amount) || 0;
 		const newAmount = Number(requisitionAmount) != null ? Number(requisitionAmount) : oldAmount;
 		const parentId = po_id || wo_id || existing.po_id || existing.wo_id;
