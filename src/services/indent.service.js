@@ -619,11 +619,16 @@ exports.getConsumedBudgetByBudgetId = async (req, budgetId) => {
 	const consumed_amount = existingItems.reduce((sum, i) => sum + Number(i.amount || 0), 0);
 	const consumed_qty = existingItems.reduce((sum, i) => sum + Number(i.qty || 0), 0);
 
+	const available_amount =
+		budget.budgetType === 'item-wise'
+			? phase_amount - consumed_qty
+			: phase_amount - consumed_amount;
+
 	return {
 		consumed_amount,
 		consumed_qty,
 		phase_amount,
-		available_amount: phase_amount - consumed_amount,
+		available_amount,
 		phase_period: phasePeriod,
 		phase_date: phaseDate,
 	};
