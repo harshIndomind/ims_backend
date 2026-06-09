@@ -27,6 +27,14 @@ exports.deleteWorkOrder = catchAsync(async (req, res) => {
 	res.status(200).json({ message: 'Work order deleted successfully' });
 });
 
+exports.exportWorkOrders = catchAsync(async (req, res) => {
+	const result = await workOrderService.exportWorkOrders(req);
+	res.status(200).json({
+		message: 'Work orders exported successfully',
+		path: result.path,
+	});
+});
+
 exports.generateWoNumber = catchAsync(async (req, res) => {
 	const workOrderNumber = await workOrderService.getWorkOrderNo(req);
 	res.status(200).json({

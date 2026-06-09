@@ -14,12 +14,16 @@ module.exports = (sequelize, DataTypes) => {
 			});
 			RateContract.hasMany(models.RateContractUnitSupplier, {
 				foreignKey: 'rate_contract_id',
-				as: 'unit_supplier_mapping'
-			})
+				as: 'unit_supplier_mapping',
+			});
 			RateContract.hasMany(models.RateContractUnitItem, {
 				foreignKey: 'rate_contract_id',
-				as: 'unit_product_mapping'
-			})
+				as: 'unit_product_mapping',
+			});
+			RateContract.hasMany(models.RateContractProduct, {
+				foreignKey: 'rate_contract_id',
+				as: 'products',
+			});
 		}
 	}
 	RateContract.init(

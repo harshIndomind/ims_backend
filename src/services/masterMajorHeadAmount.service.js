@@ -96,9 +96,14 @@ exports.getAllMasterMajorHeadAmount = async (req) => {
 		options.offset = Number(offset);
 	}
 	logger.info('Fetching all Master Major Head Amounts');
-	return await masterMajorHeadAmountRepo.findAll({
+	const result = await masterMajorHeadAmountRepo.findAll({
 		where: { org_id },
 		...options,
+		attributes: {
+			include: [
+				[fn('SUM', col('subHeadAmount.amount')), 'total_sub_head_amount'],
+			],
+		},
 		include: [
 			{
 				model: MasterMajorHead,
@@ -115,8 +120,18 @@ exports.getAllMasterMajorHeadAmount = async (req) => {
 				as: 'organization',
 				attributes: ['org_code', 'org_name'],
 			},
+			{
+				model: MasterSubHeadAmount,
+				as: 'subHeadAmount',
+				attributes: [],
+			},
 		],
+		group: ['MasterMajorHeadAmount.id', 'majorHead.id', 'period.id', 'organization.id'],
+		subQuery: false,
 	});
+	// Sequelize returns count as an array when GROUP BY is used; normalize to a number
+	const count = Array.isArray(result.count) ? result.count.length : result.count;
+	return { count, rows: result.rows };
 };
 
 /**
