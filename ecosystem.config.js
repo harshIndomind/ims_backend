@@ -31,6 +31,15 @@ module.exports = {
         PORT: 4006,
         NODE_ENV: 'production',
       },
+    },
+    {
+      name: 'scm-swayamm-backend-tg-uat',
+      script: 'src/index.js',
+      cwd: '/var/www/html/tg-uat-erp/scm/api',
+      env: {
+        PORT: 4008,
+        NODE_ENV: 'production',
+      },
     }
   ]
 };

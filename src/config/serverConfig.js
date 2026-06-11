@@ -43,5 +43,17 @@ module.exports = {
 	},
 	defaultPassword: process.env.DEFAULT_USER_PASSWORD || 123456,
 	EVENT_SECRET: process.env.EVENT_SECRET,
-	SHOULD_SYNC_HRMS: process.env.SHOULD_SYNC_HRMS === 'true'
+	SHOULD_SYNC_HRMS: process.env.SHOULD_SYNC_HRMS === 'true',
+	CORS_WHITELIST: process.env.CORS_WHITELIST
+		? process.env.CORS_WHITELIST.split(',').map((origin) => origin.trim()).filter(Boolean)
+		: [
+				'http://localhost:3000',
+				'https://auth.swayamm.test:3000',
+				'http://scm.swayamm.test:3003',
+				// Production
+				'https://vcdev.swayamm.com',
+				'https://auth.swayamm.com',
+				'https://scm.swayamm.com',
+				'https://vctest.swayamm.com',
+		  ],
 };

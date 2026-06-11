@@ -4,21 +4,31 @@ on:
   push:
     branches: [master]
 
+# Avoid two deploys racing each other against the same APP_DIR/backup.
+concurrency:
+  group: scm-backend-production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
 jobs:
   backup-ec2-code:
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     environment: production
+    timeout-minutes: 10
 
     steps:
       - name: Setup SSH Key
         run: |
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           echo "${{ secrets.EC2_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
 
           if [ -z "${{ secrets.EC2_HOST }}" ]; then
-            echo "❌ EC2_HOST is not set!"
+            echo "EC2_HOST is not set!"
             exit 1
           fi
 
@@ -28,33 +38,62 @@ jobs:
         run: |
           ssh ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} "APP_DIR='${{ secrets.APP_DIR }}' bash -s" << 'EOF'
             set -e
-            echo "📦 Backing up from ${{ secrets.APP_DIR }}"
-            [ -z ${{ secrets.APP_DIR }} ] && echo "❌ APP_DIR is empty" && exit 1
-            rm -rf ~/test-scm-backup
-            mkdir -p ~/test-scm-backup
+
+            # Refuse to operate on an empty/unsafe APP_DIR before any rm -rf.
+            case "$APP_DIR" in
+              ""|"/"|"~"|"$HOME"|"$HOME/")
+                echo "Refusing to deploy: APP_DIR (\"$APP_DIR\") looks unsafe"
+                exit 1
+                ;;
+              /*) ;;
+              *)
+                echo "Refusing to deploy: APP_DIR must be an absolute path"
+                exit 1
+                ;;
+            esac
+            depth=$(echo "$APP_DIR" | tr -cd "/" | wc -c)
+            if [ "$depth" -lt 3 ]; then
+              echo "Refusing to deploy: APP_DIR (\"$APP_DIR\") is too shallow"
+              exit 1
+            fi
+
+            echo "Backing up from $APP_DIR"
+            rm -rf ~/scm-backend-backup
+            mkdir -p ~/scm-backend-backup
 
             # Only copy if not empty
             shopt -s nullglob
-            cp -a \$APP_DIR/* ~/test-scm-backup/ || echo "⚠️ No files to backup"
-            
-            echo "✅ Backup completed"
+            cp -a "$APP_DIR"/* ~/scm-backend-backup/ 2>/dev/null || echo "No files to backup"
+
+            echo "Backup completed"
           EOF
+
+      - name: Remove SSH key
+        if: always()
+        run: rm -f ~/.ssh/id_rsa
 
   sync-code-to-ec2:
     needs: backup-ec2-code
     runs-on: ubuntu-latest
     environment: production
+    timeout-minutes: 10
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup SSH Key
         run: |
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           echo "${{ secrets.EC2_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+          if [ -z "${{ secrets.APP_DIR }}" ]; then
+            echo "APP_DIR is not set!"
+            exit 1
+          fi
 
       - name: Rsync Code to EC2
         run: |
@@ -65,17 +104,23 @@ jobs:
             --exclude='src/uploads' \
             --exclude='storage' \
             --exclude='logs' \
-            . ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:${{ secrets.APP_DIR }}
+            . ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:${{ secrets.APP_DIR }}/
+
+      - name: Remove SSH key
+        if: always()
+        run: rm -f ~/.ssh/id_rsa
 
   deploy-to-ec2:
     needs: sync-code-to-ec2
     runs-on: ubuntu-latest
     environment: production
+    timeout-minutes: 10
 
     steps:
       - name: Setup SSH Key
         run: |
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           echo "${{ secrets.EC2_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
@@ -84,40 +129,67 @@ jobs:
         run: |
           ssh ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} "APP_DIR='${{ secrets.APP_DIR }}' bash -s" << 'EOF'
             set -e
-          
+
             export NVM_DIR="$HOME/.nvm"
             [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
 
-            cd ${{ secrets.APP_DIR }}
+            # Refuse to operate on an empty/unsafe APP_DIR before any rm -rf.
+            case "$APP_DIR" in
+              ""|"/"|"~"|"$HOME"|"$HOME/")
+                echo "Refusing to deploy: APP_DIR (\"$APP_DIR\") looks unsafe"
+                exit 1
+                ;;
+              /*) ;;
+              *)
+                echo "Refusing to deploy: APP_DIR must be an absolute path"
+                exit 1
+                ;;
+            esac
+            depth=$(echo "$APP_DIR" | tr -cd "/" | wc -c)
+            if [ "$depth" -lt 3 ]; then
+              echo "Refusing to deploy: APP_DIR (\"$APP_DIR\") is too shallow"
+              exit 1
+            fi
+
+            cd "$APP_DIR"
             nvm use 22
-          
-            echo "🚀 Starting testing..."
-                    
-            if ! npm ci --legacy-peer-deps; then
-              echo "❌ NPM install failed! Rolling back..."
+
+            rollback() {
+              echo "Rolling back..."
               rm -rf ./*
-              cp -a ~/test-scm-backup/. .
-              pm2 delete scm-swayamm-backend-prod || true
-              pm2 start ecosystem.config.js --only scm-swayamm-backend-prod
+              cp -a ~/scm-backend-backup/. .
+              pm2 startOrReload ecosystem.config.js --only scm-swayamm-backend-prod
               pm2 save
-              sudo systemctl restart nginx
+              sudo systemctl reload nginx
+            }
+
+            echo "Starting deployment..."
+
+            if ! npm ci --omit=dev --legacy-peer-deps; then
+              echo "NPM install failed! Rolling back..."
+              rollback
               exit 1
             fi
-          
-            pm2 delete scm-swayamm-backend-prod || true
-            if ! pm2 start ecosystem.config.js --only scm-swayamm-backend-prod; then
-              echo "❌ PM2 start failed! Rolling back..."
-              rm -rf ./*
-              cp -a ~/test-scm-backup/. .
-              pm2 delete scm-swayamm-backend-prod || true
-              pm2 start ecosystem.config.js --only scm-swayamm-backend-prod
-              pm2 save
-              sudo systemctl restart nginx
+
+            if ! pm2 startOrReload ecosystem.config.js --only scm-swayamm-backend-prod; then
+              echo "PM2 start failed! Rolling back..."
+              rollback
               exit 1
             fi
-          
+
+            # Give the process a moment to come up and confirm it's running.
+            sleep 3
+            if [ -z "$(pm2 pid scm-swayamm-backend-prod)" ]; then
+              echo "Process not running after start! Rolling back..."
+              rollback
+              exit 1
+            fi
+
             pm2 save
-            sudo systemctl restart nginx
-            echo "✅ Deployment successful"
+            sudo systemctl reload nginx
+            echo "Deployment successful"
           EOF
 
+      - name: Remove SSH key
+        if: always()
+        run: rm -f ~/.ssh/id_rsa

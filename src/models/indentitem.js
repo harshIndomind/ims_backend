@@ -117,8 +117,8 @@ module.exports = (sequelize, DataTypes) => {
 				defaultValue: 0,
 			},
 			days: {
-				type: DataTypes.INTEGER,
-				defaultValue: 0,
+				type: DataTypes.DATEONLY,
+				allowNull: true,
 			},
 			specification: {
 				type: DataTypes.STRING(200),
