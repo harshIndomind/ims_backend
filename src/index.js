@@ -1,6 +1,6 @@
 const express = require('express');
 const app = express();
-const { PORT, BASE_URL, APP_ENV } = require('./config/serverConfig');
+const { PORT, BASE_URL, APP_ENV, CORS_WHITELIST } = require('./config/serverConfig');
 const cors = require('cors');
 const authRoutes = require('./routes/v1/auth.routes');
 const db = require('./models/index');
@@ -42,16 +42,7 @@ async function prepareAndStartServer() {
 
 	app.use(helmet());
 	app.use(cookieParser());
-	const whitelist = [
-		'http://localhost:3000',
-		'https://auth.swayamm.test:3000',
-		'http://scm.swayamm.test:3003',
-		// Production
-		'https://vcdev.swayamm.com',
-		'https://auth.swayamm.com',
-		'https://scm.swayamm.com',
-		'https://vctest.swayamm.com',
-	];
+	const whitelist = CORS_WHITELIST;
 
 	app.use(
 		cors({

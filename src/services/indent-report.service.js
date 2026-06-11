@@ -114,7 +114,7 @@ exports.generateExcel = async (data, filePath) => {
 			'Actual Qty Issue',
 			'Qty Pending',
 			'Last Date',
-			'Days',
+			'Requirement Date',
 			'Budget ID',
 			'Details',
 		]);
@@ -142,7 +142,7 @@ exports.generateExcel = async (data, filePath) => {
 				item.qty_updated_by_verifier,
 				item.qty_for_purchase_order,
 				new Date(item.issue_date).toLocaleDateString(),
-				item.days,
+				item.days ? new Date(item.days).toLocaleDateString() : '',
 				item.budget?.budget_id,
 				indent.drawing_details || 'N/A',
 			]);
