@@ -22,7 +22,7 @@ module.exports = {
 				createdAt: new Date(),
 				updatedAt: new Date(),
 			},
-						{
+			{
 				name: 'App User',
 				code: 'app_user',
 				description: 'Basic dashboard details view.',
@@ -44,12 +44,6 @@ module.exports = {
 			{
 				name: 'Indent Verifier',
 				code: 'indent_verifier',
-				createdAt: new Date(),
-				updatedAt: new Date(),
-			},
-			{
-				name: 'App User',
-				code: 'app_user',
 				createdAt: new Date(),
 				updatedAt: new Date(),
 			},

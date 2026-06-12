@@ -43,6 +43,7 @@ async function prepareAndStartServer() {
 	app.use(helmet());
 	app.use(cookieParser());
 	const whitelist = [
+		'http://localhost:3003',
 		'http://localhost:3000',
 		'https://auth.swayamm.test:3000',
 		'http://scm.swayamm.test:3003',
@@ -233,8 +234,8 @@ async function prepareAndStartServer() {
 		.then(async () => {
 			console.log(`✅ DB connected (${envLabel})`);
 
-			await connect();
-			await startConsumer();
+			// await connect();
+			// await startConsumer();
 
 			server.listen(PORT, () => {
 				console.log(`${envLabel} server running on ${BASE_URL}`);
