@@ -106,8 +106,8 @@ module.exports = {
 				allowNull: true,
 			},
 			days: {
-				type: Sequelize.INTEGER,
-				defaultValue: 0,
+				type: Sequelize.DATEONLY,
+				allowNull: true,
 			},
 			specification: {
 				type: Sequelize.STRING(200),

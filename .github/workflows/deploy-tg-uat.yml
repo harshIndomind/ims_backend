@@ -1,0 +1,195 @@
+name: TG UAT - SCM Backend Deployment
+
+on:
+  push:
+    branches: [tg-uat]
+
+# Avoid two deploys racing each other against the same APP_DIR/backup.
+concurrency:
+  group: tg-uat-scm-backend-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backup-ec2-code:
+    if: github.ref == 'refs/heads/tg-uat'
+    runs-on: ubuntu-latest
+    environment: tg-uat-erp
+    timeout-minutes: 10
+
+    steps:
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "${{ secrets.EC2_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+          if [ -z "${{ secrets.EC2_HOST }}" ]; then
+            echo "EC2_HOST is not set!"
+            exit 1
+          fi
+
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: SSH & Backup Current App on EC2
+        run: |
+          ssh ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} "APP_DIR='${{ secrets.APP_DIR }}' bash -s" << 'EOF'
+            set -e
+
+            # Refuse to operate on an empty/unsafe APP_DIR before any rm -rf.
+            case "$APP_DIR" in
+              ""|"/"|"~"|"$HOME"|"$HOME/")
+                echo "Refusing to deploy: APP_DIR (\"$APP_DIR\") looks unsafe"
+                exit 1
+                ;;
+              /*) ;;
+              *)
+                echo "Refusing to deploy: APP_DIR must be an absolute path"
+                exit 1
+                ;;
+            esac
+            depth=$(echo "$APP_DIR" | tr -cd "/" | wc -c)
+            if [ "$depth" -lt 3 ]; then
+              echo "Refusing to deploy: APP_DIR (\"$APP_DIR\") is too shallow"
+              exit 1
+            fi
+
+            echo "Backing up from $APP_DIR"
+            rm -rf ~/scm-backend-tg-uat-backup
+            mkdir -p ~/scm-backend-tg-uat-backup
+
+            # Only copy if not empty
+            shopt -s nullglob
+            cp -a "$APP_DIR"/* ~/scm-backend-tg-uat-backup/ 2>/dev/null || echo "No files to backup"
+
+            echo "Backup completed"
+          EOF
+
+      - name: Remove SSH key
+        if: always()
+        run: rm -f ~/.ssh/id_rsa
+
+  sync-code-to-ec2:
+    needs: backup-ec2-code
+    runs-on: ubuntu-latest
+    environment: tg-uat-erp
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "${{ secrets.EC2_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+          if [ -z "${{ secrets.APP_DIR }}" ]; then
+            echo "APP_DIR is not set!"
+            exit 1
+          fi
+
+      - name: Rsync Code to EC2
+        run: |
+          rsync -avz --delete \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='.env*' \
+            --exclude='src/uploads' \
+            --exclude='storage' \
+            --exclude='logs' \
+            . ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:${{ secrets.APP_DIR }}/
+
+      - name: Remove SSH key
+        if: always()
+        run: rm -f ~/.ssh/id_rsa
+
+  deploy-to-ec2:
+    needs: sync-code-to-ec2
+    runs-on: ubuntu-latest
+    environment: tg-uat-erp
+    timeout-minutes: 10
+
+    steps:
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "${{ secrets.EC2_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: SSH & Deploy with Rollback on Failure
+        run: |
+          ssh ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} "APP_DIR='${{ secrets.APP_DIR }}' bash -s" << 'EOF'
+            set -e
+
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+
+            # Refuse to operate on an empty/unsafe APP_DIR before any rm -rf.
+            case "$APP_DIR" in
+              ""|"/"|"~"|"$HOME"|"$HOME/")
+                echo "Refusing to deploy: APP_DIR (\"$APP_DIR\") looks unsafe"
+                exit 1
+                ;;
+              /*) ;;
+              *)
+                echo "Refusing to deploy: APP_DIR must be an absolute path"
+                exit 1
+                ;;
+            esac
+            depth=$(echo "$APP_DIR" | tr -cd "/" | wc -c)
+            if [ "$depth" -lt 3 ]; then
+              echo "Refusing to deploy: APP_DIR (\"$APP_DIR\") is too shallow"
+              exit 1
+            fi
+
+            cd "$APP_DIR"
+            nvm use 22
+
+            rollback() {
+              echo "Rolling back..."
+              rm -rf ./*
+              cp -a ~/scm-backend-tg-uat-backup/. .
+              pm2 startOrReload ecosystem.config.js --only scm-swayamm-backend-tg-uat
+              pm2 save
+              sudo systemctl reload nginx
+            }
+
+            echo "Starting deployment..."
+
+            if ! npm ci --omit=dev --legacy-peer-deps; then
+              echo "NPM install failed! Rolling back..."
+              rollback
+              exit 1
+            fi
+
+            if ! pm2 startOrReload ecosystem.config.js --only scm-swayamm-backend-tg-uat; then
+              echo "PM2 start failed! Rolling back..."
+              rollback
+              exit 1
+            fi
+
+            # Give the process a moment to come up and confirm it's running.
+            sleep 3
+            if [ -z "$(pm2 pid scm-swayamm-backend-tg-uat)" ]; then
+              echo "Process not running after start! Rolling back..."
+              rollback
+              exit 1
+            fi
+
+            pm2 save
+            sudo systemctl reload nginx
+            echo "Deployment successful"
+          EOF
+
+      - name: Remove SSH key
+        if: always()
+        run: rm -f ~/.ssh/id_rsa
