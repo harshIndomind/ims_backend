@@ -42,6 +42,12 @@ module.exports = {
 				updatedAt: new Date(),
 			},
 			{
+				name: 'Indent Creator',
+				code: 'indent_creator',
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			},
+			{
 				name: 'Indent Verifier',
 				code: 'indent_verifier',
 				createdAt: new Date(),

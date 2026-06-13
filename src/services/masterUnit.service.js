@@ -61,16 +61,17 @@ exports.getAllMasterUnit = async (req) => {
 
 	const where = {
 		org_id: Number(org_id),
+		lock: false,
 	};
 
-	const filterOptions = { where };
+	const filterOptions = {};
 
 	if (limit) {
 		filterOptions.limit = Number(limit);
 		filterOptions.offset = Number(offset || 0);
 	}
 
-	return await masterUnitsRepositoy.findAll({}, filterOptions);
+	return await masterUnitsRepositoy.findAll(where, filterOptions);
 };
 
 exports.getMasterUnitById = async (id) => {

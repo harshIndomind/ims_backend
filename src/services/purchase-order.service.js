@@ -371,7 +371,7 @@ exports.updatePurchaseOrder = async (req) => {
 exports.getAllPurchaseOrders = async (req) => {
 	const { org_id, role } = req.user;
 
-	const { from_date, to_date } = req.query;
+	const { from_date, to_date, unit_id } = req.query;
 	const limit = req.query.limit ? parseInt(req.query.limit) : undefined;
 	const offset = req.query.offset ? parseInt(req.query.offset) : undefined;
 
@@ -415,6 +415,13 @@ exports.getAllPurchaseOrders = async (req) => {
 				attributes: ['id', 'requisition_no', 'requisition_amount', 'status'],
 				where: { status: 'APPROVED' },
 				required: false,
+			},
+			{
+				model: Indent,
+				as: 'indent',
+				attributes: ['id', 'unit_id'],
+				where: unit_id ? { unit_id: Number(unit_id) } : undefined,
+				required: !!unit_id,
 			},
 		],
 		order: [['createdAt', 'DESC']],

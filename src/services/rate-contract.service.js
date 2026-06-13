@@ -115,13 +115,15 @@ exports.createRateContract = async (req, payload) => {
 			await RateContractUnitSupplier.bulkCreate(unitSupplierData, { transaction: t });
 		}
 
-		// Unit → Product Mapping (checked units only)
+		// Unit → Product Mapping (checked units only, mapped to every product)
 		const selectedUnits = unit_product_mapping.filter((item) => item.isChecked);
-		const unitProductData = selectedUnits.map((item) => ({
-			rate_contract_id: rateContract.id,
-			unit_id: item.unitId,
-			product_id: products[0]?.product_id ?? null,
-		}));
+		const unitProductData = selectedUnits.flatMap((item) =>
+			products.map((p) => ({
+				rate_contract_id: rateContract.id,
+				unit_id: item.unitId,
+				product_id: p.product_id,
+			})),
+		);
 
 		if (unitProductData.length) {
 			await RateContractUnitItem.bulkCreate(unitProductData, { transaction: t });
@@ -223,14 +225,16 @@ exports.updateRateContract = async (id, payload) => {
 			await RateContractUnitSupplier.bulkCreate(unitSupplierData, { transaction: t });
 		}
 
-		// Replace unit product mapping
+		// Replace unit product mapping (checked units only, mapped to every product)
 		await RateContractUnitItem.destroy({ where: { rate_contract_id: id }, transaction: t });
 		const selectedUnits = unit_product_mapping.filter((item) => item.isChecked);
-		const unitProductData = selectedUnits.map((item) => ({
-			rate_contract_id: id,
-			unit_id: item.unitId,
-			product_id: products[0]?.product_id ?? null,
-		}));
+		const unitProductData = selectedUnits.flatMap((item) =>
+			products.map((p) => ({
+				rate_contract_id: id,
+				unit_id: item.unitId,
+				product_id: p.product_id,
+			})),
+		);
 		if (unitProductData.length) {
 			await RateContractUnitItem.bulkCreate(unitProductData, { transaction: t });
 		}
@@ -286,7 +290,7 @@ exports.deleteRateContract = async (id) => {
 	return true;
 };
 
-exports.getRateContractByProductId = async (product_id) => {
+exports.getRateContractByProductId = async (product_id, { unit_id, date } = {}) => {
 	// Find a rate contract that contains this product in its products list
 	const productRecord = await RateContractProduct.findOne({
 		where: { product_id: Number(product_id) },
@@ -301,9 +305,39 @@ exports.getRateContractByProductId = async (product_id) => {
 
 	if (!productRecord) return null;
 
+	const rc = productRecord.rateContract.toJSON();
+	logger.debug("Rate Contract", {rc})
+	// Rate contract only applies to the selected unit if it's mapped for this product.
+	// If it isn't (or the date is outside the contract's validity period), treat it as
+	// "no applicable rate contract" so the caller falls back to the product's own price/UOM
+	// instead of surfacing an error.
+	const unitMappings = rc.unit_product_mapping || [];
+	if (unit_id && unitMappings.length > 0) {
+		const isUnitMapped = unitMappings.some(
+			(mapping) =>
+				Number(mapping.unit_id) === Number(unit_id) &&
+				Number(mapping.product_id) === Number(product_id)
+		);
+
+		if (!isUnitMapped) return null;
+	}
+
+	if (date) {
+		const checkDate = new Date(date);
+		const effectiveDate = rc.effective_date ? new Date(rc.effective_date) : null;
+		const endDate = rc.end_date ? new Date(rc.end_date) : null;
+
+		if (effectiveDate) effectiveDate.setHours(0, 0, 0, 0);
+		if (endDate) endDate.setHours(23, 59, 59, 999);
+		checkDate.setHours(12, 0, 0, 0);
+
+		if ((effectiveDate && checkDate < effectiveDate) || (endDate && checkDate > endDate)) {
+			return null;
+		}
+	}
+
 	// Return rate contract with the matched product's rate data merged at the top level
 	// for backward compatibility with PO/WO/Budget/Indent forms
-	const rc = productRecord.rateContract.toJSON();
 	rc.contract_rate = productRecord.contract_rate;
 	rc.uom_id = productRecord.uom_id;
 	rc.special_discount = productRecord.special_discount;

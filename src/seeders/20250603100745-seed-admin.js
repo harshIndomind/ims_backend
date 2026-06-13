@@ -1,6 +1,10 @@
 'use strict';
 const bcrypt = require('bcrypt');
 
+// Shared across auth, vcp, and scm seeders so the superadmin user
+// has the same uuid in every service's database.
+const SUPERADMIN_UUID = 'e84bf2bc-44e8-406f-ba2a-2242638eecfa';
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
 	async up(queryInterface, Sequelize) {
@@ -9,6 +13,7 @@ module.exports = {
 			'Users',
 			[
 				{
+					uuid: SUPERADMIN_UUID,
 					name: 'Super Admin',
 					email: 'superadmin@indomind.ai',
 					password: password,
