@@ -153,6 +153,10 @@ async function prepareAndStartServer() {
 		require('./routes/v1/masterAccounts.routes'),
 	);
 	app.use(
+    `${apiPrefix}/v1/master/term-categories`,
+    require('./routes/v1//masterTermCategory.routes'),  
+);
+	app.use(
 		`${apiPrefix}/v1/master/terms`,
 		require('./routes/v1/masterTerms.routes'),
 	);

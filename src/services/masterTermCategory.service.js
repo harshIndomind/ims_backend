@@ -26,7 +26,7 @@ exports.createTermCategory = async (payload) => {
 		category_name,
 		category_code: category_code || null,
 		description: description || null,
-		is_active: true,
+		
 	});
 
 	logger.info('Term Category created', { id: termCategory.id });
@@ -129,13 +129,7 @@ exports.toggleTermCategoryStatus = async (id) => {
 		throw new AppError('Term Category not found', StatusCodes.NOT_FOUND);
 	}
 
-	const newStatus = !termCategory.is_active;
-
-	await masterTermCategoryRepository.update(termCategory, {
-		is_active: newStatus,
-	});
-
-	logger.info('Term Category status toggled', { id, is_active: newStatus });
+	
 
 	return termCategory;
 };
@@ -146,7 +140,7 @@ exports.getActiveTermCategories = async () => {
 	return await masterTermCategoryRepository.findAll(
 		{},
 		{
-			where: { is_active: true },
+			
 			attributes: ['id', 'category_name', 'category_code', 'description'],
 			order: [['category_name', 'ASC']],
 		}
