@@ -7,6 +7,29 @@ const {
 const logger = require('../utils/logger');
 const { MasterMajorHead } = require('../models/index');
 const { organization } = require('../models/index');
+const { Budget, Indent } = require('../models/index');
+
+/**
+ * Check whether a Master Period is referenced by a Budget or an Indent.
+ * Purchase Orders and Work Orders are created against an Indent, so a period
+ * used by any Indent is transitively in use by PO/WO as well.
+ */
+const isMasterPeriodInUse = async (periodId) => {
+	const budgetCount = await Budget.count({ where: { period_id: periodId } });
+	if (budgetCount > 0) {
+		return true;
+	}
+
+	const indents = await Indent.findAll({
+		where: { period_id: periodId },
+		attributes: ['id'],
+	});
+	if (indents.length > 0) {
+		return true;
+	}
+
+	return false;
+};
 
 /**
  * Create
@@ -81,6 +104,14 @@ exports.updateMasterPeriod = async (id, payload) => {
 	if (!MasterPeriod) {
 		logger.warn('Master Period not found for update', { id });
 		throw new AppError('Master Period not found', StatusCodes.NOT_FOUND);
+	}
+
+	if (await isMasterPeriodInUse(id)) {
+		logger.warn('Master Period in use, cannot update', { id });
+		throw new AppError(
+			'This period cannot be updated as it is already used in Budget, Indent, Purchase Order or Work Order',
+			StatusCodes.BAD_REQUEST,
+		);
 	}
 
 	// const masterMajorHead = masterMajorHeadRepo.findById(major_code_id);
@@ -160,7 +191,10 @@ exports.getMasterPeriodById = async (id) => {
 
 	logger.info('Master Period fetched', { id });
 
-	return MasterPeriod;
+	const result = MasterPeriod.toJSON();
+	result.is_used = await isMasterPeriodInUse(id);
+
+	return result;
 };
 
 exports.getMasterPeriodByMajorHead = async (major_code_id) => {
