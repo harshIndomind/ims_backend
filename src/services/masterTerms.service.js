@@ -1,46 +1,44 @@
 const AppError = require('../utils/AppError');
 const { StatusCodes } = require('http-status-codes');
 const { masterTermsRepository } = require('../repository/index');
+const { MasterTermCategory } = require('../models');
 const logger = require('../utils/logger');
 const { Op } = require('sequelize');
 
 exports.createMasterTerms = async (req, payload) => {
 	const { org_id } = req.user;
-	const { terms_type } = payload;
+	const { terms_type, category_id } = payload;   
 
 	if (!terms_type) {
-		logger.warn('Validation failed while creating Master Terms', payload);
 		throw new AppError('Terms type is required', StatusCodes.BAD_REQUEST);
 	}
 
 	const masterTerms = await masterTermsRepository.create({
 		org_id,
 		terms_type,
+		category_id: category_id || null,    
 	});
-
-	logger.info('Master Terms created', { id: masterTerms.id });
 
 	return masterTerms;
 };
 
 exports.updateMasterTerms = async (id, payload) => {
-	const { terms_type } = payload;
+	const { terms_type, category_id } = payload;   
 
 	if (!terms_type) {
-		logger.warn('Validation failed while updating Master Terms', payload);
 		throw new AppError('Terms type is required', StatusCodes.BAD_REQUEST);
 	}
 
 	const masterTerms = await masterTermsRepository.findById(id);
 
 	if (!masterTerms) {
-		logger.warn('Master Terms not found for update', { id });
 		throw new AppError('Master Terms not found', StatusCodes.NOT_FOUND);
 	}
 
-	await masterTermsRepository.update(masterTerms, { terms_type });
-
-	logger.info('Master Terms updated', { id });
+	await masterTermsRepository.update(masterTerms, {
+		terms_type,
+		category_id: category_id || null,    // ← add this
+	});
 
 	return masterTerms;
 };
@@ -51,31 +49,43 @@ exports.getAllMasterTerms = async (req) => {
 
 	const where = {
 		org_id: Number(org_id),
-		terms_type: {
-			[Op.like]: `%${search || ''}%`,
-		},
+		terms_type: { [Op.like]: `%${search || ''}%` },
 	};
 
-	const filterOptions = { where };
+	const filterOptions = {
+		where,
+		include: [
+			{
+				model: MasterTermCategory,
+				as: 'category',
+				attributes: ['id', 'category_name', 'category_code'],
+			},
+		],
+	};
 
 	if (limit) {
 		filterOptions.limit = Number(limit);
 		filterOptions.offset = Number(offset || 0);
 	}
 
-	logger.info('Fetching all Master Terms', {filterOptions});
+	logger.info('Fetching all Master Terms', { filterOptions });
 	return await masterTermsRepository.findAll({}, filterOptions);
-};
+}; 	
 
 exports.getMasterTermsById = async (id) => {
-	const masterTerms = await masterTermsRepository.findById(id);
+	const masterTerms = await masterTermsRepository.findById(id, {
+		include: [
+			{
+				model: MasterTermCategory,
+				as: 'category',
+				attributes: ['id', 'category_name', 'category_code'],
+			},
+		],
+	});
 
 	if (!masterTerms) {
-		logger.warn('Master Terms not found', { id });
 		throw new AppError('Master Terms not found', StatusCodes.NOT_FOUND);
 	}
-
-	logger.info('Master Terms fetched', { id });
 
 	return masterTerms;
 };

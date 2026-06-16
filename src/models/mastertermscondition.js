@@ -7,6 +7,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'org_id',
 				as: 'organization',
 			});
+			MasterTermsCondition.belongsTo(models.MasterTermCategory, {
+				foreignKey: 'category_id',
+				as: 'category',
+			});
 		}
 	}
 	MasterTermsCondition.init(
@@ -15,6 +19,11 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.INTEGER,
 				allowNull: true,
 				references: { model: 'organizations', key: 'id' },
+			},
+			category_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+				references: { model: 'MasterTermCategories', key: 'id' },
 			},
 			terms_type: {
 				type: DataTypes.TEXT,
@@ -25,6 +34,7 @@ module.exports = (sequelize, DataTypes) => {
 			sequelize,
 			timestamps: true,
 			modelName: 'MasterTermsCondition',
+			tableName: 'MasterTermsConditions',
 		},
 	);
 	return MasterTermsCondition;
