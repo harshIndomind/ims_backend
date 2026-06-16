@@ -28,4 +28,8 @@ module.exports = {
     organizationBankRepository: require('./organizationBank.repository'),
     purchaseOrderRepository: require('./purchase-order.repository'),
     purchaseOrderItemsRepository: require('./purchase-order-items.repository'),
-    purchaseOrderSerialItemsRepository: require('./purchase-order-serial-items.repository'),}
+    purchaseOrderSerialItemsRepository: require('./purchase-order-serial-items.repository'),
+    paymentRequisitionRepository: require('./payment-requisition.repository'),
+    workOrderRepository: require('./work-order.repository'),
+    workOrderItemsRepository: require('./work-order-items.repository'),
+}
