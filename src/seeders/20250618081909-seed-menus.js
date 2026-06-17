@@ -305,7 +305,20 @@ module.exports = {
 				isActive: 1,
 				createdAt: new Date(),
 				updatedAt: new Date(),
+			},
+			{
+				id: 26,
+				parentId: 2,
+				menuName: 'Terms Category',
+				icon: null,
+				url: '/masters/terms-category',
+				slug: 'terms-category',
+				showInSidebar: 1,
+				isActive: 1,
+				createdAt: new Date(),
+				updatedAt: new Date(),
 			}
+		
 		]);
 	},
 
