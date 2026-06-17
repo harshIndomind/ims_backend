@@ -228,8 +228,8 @@ async function prepareAndStartServer() {
 		.then(async () => {
 			console.log(`✅ DB connected (${envLabel})`);
 
-			// await connect();
-			// await startConsumer();
+			await connect();
+			await startConsumer();
 
 			server.listen(PORT, () => {
 				console.log(`${envLabel} server running on ${BASE_URL}`);
