@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const MasterTermCategoryController = require('../../controllers/masterTermCategory.controller');
+const MasterTermCategoryController = require('../../controllers/mastertermcategory.controller');
 const verifyToken = require('../../middlewares/verifyToken');
 
 router.use(verifyToken); // all routes protected
