@@ -14,7 +14,7 @@ exports.createMasterUnit = catchAsync(async (req, res) => {
 exports.updateMasterUnit = catchAsync(async (req, res) => {
 	const { id } = req.params;
 
-	const data = await masterUnit.updateMasterUnit(id, req.body);
+	const data = await masterUnit.updateMasterUnit(req, id, req.body);
 
 	res.status(StatusCodes.OK).json({
 		message: 'Master Unit Updated Successfully',
@@ -31,7 +31,7 @@ exports.getAllMasterUnit = catchAsync(async (req, res) => {
 exports.getMasterUnitById = catchAsync(async (req, res) => {
 	const { id } = req.params;
 
-	const data = await masterUnit.getMasterUnitById(id);
+	const data = await masterUnit.getMasterUnitById(req, id);
 
 	res.status(StatusCodes.OK).json({
 		message: 'Master Unit Fetched Successfully',
@@ -42,7 +42,7 @@ exports.getMasterUnitById = catchAsync(async (req, res) => {
 exports.deleteMasterUnit = catchAsync(async (req, res) => {
 	const { id } = req.params;
 
-	await masterUnit.deleteMasterUnit(id);
+	await masterUnit.deleteMasterUnit(req, id);
 
 	res.status(StatusCodes.OK).json({
 		message: 'Master Unit Deleted Successfully',
@@ -52,7 +52,7 @@ exports.deleteMasterUnit = catchAsync(async (req, res) => {
 exports.toggleMasterUnitStatus = catchAsync(async (req, res) => {
 	const { id } = req.params;
 
-	const data = await masterUnit.toggleMasterUnitStatus(id);
+	const data = await masterUnit.toggleMasterUnitStatus(req, id);
 
 	res.status(StatusCodes.OK).json({
 		message: `Master Unit ${data.lock ? 'deactivated' : 'activated'} successfully`,
