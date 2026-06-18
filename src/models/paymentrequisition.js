@@ -28,6 +28,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'payment_term_id',
 				as: 'terms',
 			});
+			PaymentRequisition.hasMany(models.PaymentRequisitionDeduction, {
+				foreignKey: 'payment_requisition_id',
+				as: 'deductions',
+			});
 		}
 	}
 
@@ -55,6 +59,11 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.ENUM('WO', 'PO', 'Invoice'),
 				allowNull: false,
 				defaultValue: 'WO',
+			},
+			requisition_type: {
+				type: DataTypes.ENUM('REGULAR', 'RETENTION_RELEASE'),
+				allowNull: false,
+				defaultValue: 'REGULAR',
 			},
 			supplier_id: {
 				type: DataTypes.INTEGER,
@@ -108,21 +117,40 @@ module.exports = (sequelize, DataTypes) => {
 				defaultValue: 0,
 			},
 			requisition_amount: {
+				// @deprecated — use gross_amount on new records; kept for backward compat
+				type: DataTypes.DECIMAL(15, 2),
+				allowNull: false,
+				defaultValue: 0,
+			},
+			gross_amount: {
+				type: DataTypes.DECIMAL(15, 2),
+				allowNull: false,
+				defaultValue: 0,
+			},
+			total_deductions: {
+				type: DataTypes.DECIMAL(15, 2),
+				allowNull: false,
+				defaultValue: 0,
+			},
+			net_payable: {
 				type: DataTypes.DECIMAL(15, 2),
 				allowNull: false,
 				defaultValue: 0,
 			},
 			tds_percent: {
+				// @deprecated — use deductions child rows; kept for backward compat
 				type: DataTypes.DECIMAL(5, 2),
 				allowNull: false,
 				defaultValue: 0,
 			},
 			tds_amount: {
+				// @deprecated — use deductions child rows; kept for backward compat
 				type: DataTypes.DECIMAL(15, 2),
 				allowNull: false,
 				defaultValue: 0,
 			},
 			total_amount: {
+				// @deprecated — use net_payable; kept for backward compat
 				type: DataTypes.DECIMAL(15, 2),
 				allowNull: false,
 				defaultValue: 0,

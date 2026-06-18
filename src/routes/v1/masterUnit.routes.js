@@ -32,4 +32,9 @@ router.delete(
 	MasterUnitController.deleteMasterUnit
 );
 
+router.patch(
+	'/:id/toggle-status',
+	MasterUnitController.toggleMasterUnitStatus
+);
+
 module.exports = router;

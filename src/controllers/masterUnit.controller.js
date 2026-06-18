@@ -48,3 +48,14 @@ exports.deleteMasterUnit = catchAsync(async (req, res) => {
 		message: 'Master Unit Deleted Successfully',
 	});
 });
+
+exports.toggleMasterUnitStatus = catchAsync(async (req, res) => {
+	const { id } = req.params;
+
+	const data = await masterUnit.toggleMasterUnitStatus(id);
+
+	res.status(StatusCodes.OK).json({
+		message: `Master Unit ${data.lock ? 'deactivated' : 'activated'} successfully`,
+		data,
+	});
+});

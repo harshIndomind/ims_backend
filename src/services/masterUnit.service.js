@@ -1,8 +1,56 @@
 const AppError = require('../utils/AppError');
 const { StatusCodes } = require('http-status-codes');
 const { masterUnitsRepositoy } = require('../repository/index');
+const { Country, GstStateCode } = require('../models/index');
 const logger = require('../utils/logger');
-const { organization } = require('../models/index');
+
+const COMPANY_DETAIL_FIELDS = [
+	'unit_name',
+	'unit_short_name',
+	'gstin',
+	'pan',
+	'registration_type',
+	'contact_no',
+	'company_email',
+	'is_tds_applicable',
+	'tds_percentage',
+	'address1',
+	'address2',
+	'landmark',
+	'country_id',
+	'state_id',
+	'country',
+	'state',
+	'city',
+	'pincode',
+	'bank_account_holder_name',
+	'bank_name',
+	'bank_ifsc_code',
+	'bank_account_no',
+	'bank_branch_name',
+	'fax',
+	'website',
+	'credit_limit',
+	'due_days',
+	'note',
+	'ob_vendor_balance_type',
+	'ob_vendor_amount',
+	'ob_customer_balance_type',
+	'ob_customer_amount',
+];
+
+const DETAIL_INCLUDES = [
+	{ model: Country, as: 'countryData', attributes: ['id', 'name'] },
+	{ model: GstStateCode, as: 'stateData', attributes: ['id', 'state_name', 'gst_code_padded'] },
+];
+
+function pickCompanyFields(payload) {
+	const data = {};
+	for (const key of COMPANY_DETAIL_FIELDS) {
+		if (key in payload) data[key] = payload[key];
+	}
+	return data;
+}
 
 exports.createMasterUnit = async (req, payload) => {
 	const { org_id } = req.user;
@@ -15,24 +63,16 @@ exports.createMasterUnit = async (req, payload) => {
 
 	const masterUnit = await masterUnitsRepositoy.create({
 		org_id,
-		unit_name,
-		unit_short_name: unit_short_name || null,
 		unitName: unit_name,
-		unitCd: unit_short_name,
+		...pickCompanyFields(payload),
 	});
 
-	logger.info('Master Unit created', {
-		id: masterUnit.id,
-		unit_name: masterUnit.unit_name,
-		unit_short_name: masterUnit.unit_short_name,
-	});
+	logger.info('Master Unit created', { id: masterUnit.id, unit_name });
 
 	return masterUnit;
 };
 
 exports.updateMasterUnit = async (id, payload) => {
-	const { unit_name, unit_short_name } = payload;
-
 	const masterUnit = await masterUnitsRepositoy.findById(id);
 
 	if (!masterUnit) {
@@ -40,31 +80,25 @@ exports.updateMasterUnit = async (id, payload) => {
 		throw new AppError('Master Unit not found', StatusCodes.NOT_FOUND);
 	}
 
-	await masterUnitsRepositoy.update(masterUnit, {
-		unit_name,
-		unit_short_name,
-		unitName: unit_name,
-		unitCd: unit_short_name,
-	});
+	// unitCd, unitName, lock, masterUnitid are HRMS-synced — never overwrite via API
+	await masterUnitsRepositoy.update(masterUnit, pickCompanyFields(payload));
 
-	logger.info('Master Unit updated', {
-		id,
-	});
+	logger.info('Master Unit updated', { id });
 
-	return masterUnit;
+	return masterUnit.reload({ include: DETAIL_INCLUDES });
 };
 
 exports.getAllMasterUnit = async (req) => {
 	logger.info('Fetching all Master Units');
 	const { org_id } = req.user;
-	const { limit, offset } = req.query;
+	const { limit, offset, active } = req.query;
 
 	const where = {
 		org_id: Number(org_id),
-		lock: false,
+		...(active === 'true' && { lock: false }),
 	};
 
-	const filterOptions = {};
+	const filterOptions = { include: DETAIL_INCLUDES };
 
 	if (limit) {
 		filterOptions.limit = Number(limit);
@@ -75,7 +109,7 @@ exports.getAllMasterUnit = async (req) => {
 };
 
 exports.getMasterUnitById = async (id) => {
-	const masterUnit = await masterUnitsRepositoy.findById(id);
+	const masterUnit = await masterUnitsRepositoy.findById(id, { include: DETAIL_INCLUDES });
 
 	if (!masterUnit) {
 		logger.warn('Master Unit not found', { id });
@@ -83,6 +117,21 @@ exports.getMasterUnitById = async (id) => {
 	}
 
 	logger.info('Master Unit fetched', { id });
+
+	return masterUnit;
+};
+
+exports.toggleMasterUnitStatus = async (id) => {
+	const masterUnit = await masterUnitsRepositoy.findById(id);
+
+	if (!masterUnit) {
+		logger.warn('Master Unit not found for status toggle', { id });
+		throw new AppError('Master Unit not found', StatusCodes.NOT_FOUND);
+	}
+
+	await masterUnitsRepositoy.update(masterUnit, { lock: !masterUnit.lock });
+
+	logger.info('Master Unit status toggled', { id, lock: masterUnit.lock });
 
 	return masterUnit;
 };
