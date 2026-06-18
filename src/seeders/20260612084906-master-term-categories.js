@@ -6,34 +6,48 @@ module.exports = {
   async up(queryInterface, Sequelize) {
     await queryInterface.bulkInsert('MasterTermCategories', [
       {
-        category_name: 'Non-Disclosure Agreement',
-        category_code: 'NDA',
-        description: 'Confidentiality terms',
+        category_name: 'Price Term',
+        category_code: 'PT',
+        description: 'Pricing terms',
         createdAt: new Date(),
         updatedAt: new Date(),
       },
       {
-        category_name: 'Service Level Agreement',
-        category_code: 'SLA',
-        description: 'Service performance terms',
+        category_name: 'GST Term',
+        category_code: 'GST',
+        description: 'Goods and Services Tax terms',
         createdAt: new Date(),
         updatedAt: new Date(),
       },
       {
-        category_name: 'Privacy Policy',
-        category_code: 'PP',
-        description: 'Data privacy terms',
+        category_name: 'Payment Term',
+        category_code: 'PT',
+        description: 'Payment terms',
         createdAt: new Date(),
         updatedAt: new Date(),
       },
       {
-        category_name: 'Terms of Service',
-        category_code: 'TOS',
-        description: 'General terms of service',
+        category_name: 'Delivery Term',
+        category_code: 'DT',
+        description: 'Delivery information',
         createdAt: new Date(),
         updatedAt: new Date(),
       },
-      
+      {
+        category_name: 'PF Term',
+        category_code: 'PF',
+        description: ' Provident Fund terms',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      {
+        category_name: 'LD Clause Term',
+        category_code: 'LD',
+        description: 'Letter of Credit terms',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+        
        
     ]);
   },
