@@ -1,7 +1,7 @@
 const AppError = require('../utils/AppError');
 const { StatusCodes } = require('http-status-codes');
 const { masterUnitsRepositoy } = require('../repository/index');
-const { Country, GstStateCode } = require('../models/index');
+const { Country, GstStateCode, organization } = require('../models/index');
 const logger = require('../utils/logger');
 
 const COMPANY_DETAIL_FIELDS = [
@@ -42,6 +42,7 @@ const COMPANY_DETAIL_FIELDS = [
 const DETAIL_INCLUDES = [
 	{ model: Country, as: 'countryData', attributes: ['id', 'name'] },
 	{ model: GstStateCode, as: 'stateData', attributes: ['id', 'state_name', 'gst_code_padded'] },
+	{ model: organization, as: 'organization', attributes: ['id', 'org_name'] },
 ];
 
 function pickCompanyFields(payload) {
@@ -50,6 +51,13 @@ function pickCompanyFields(payload) {
 		if (key in payload) data[key] = payload[key];
 	}
 	return data;
+}
+
+function assertOrgAccess(req, masterUnit) {
+	if (req.user.isSuperAdmin) return;
+	if (masterUnit.org_id !== req.user.org_id) {
+		throw new AppError('Master Unit not found', StatusCodes.NOT_FOUND);
+	}
 }
 
 exports.createMasterUnit = async (req, payload) => {
@@ -72,13 +80,14 @@ exports.createMasterUnit = async (req, payload) => {
 	return masterUnit;
 };
 
-exports.updateMasterUnit = async (id, payload) => {
+exports.updateMasterUnit = async (req, id, payload) => {
 	const masterUnit = await masterUnitsRepositoy.findById(id);
 
 	if (!masterUnit) {
 		logger.warn('Master Unit not found for update', { id });
 		throw new AppError('Master Unit not found', StatusCodes.NOT_FOUND);
 	}
+	assertOrgAccess(req, masterUnit);
 
 	// unitCd, unitName, lock, masterUnitid are HRMS-synced — never overwrite via API
 	await masterUnitsRepositoy.update(masterUnit, pickCompanyFields(payload));
@@ -90,11 +99,15 @@ exports.updateMasterUnit = async (id, payload) => {
 
 exports.getAllMasterUnit = async (req) => {
 	logger.info('Fetching all Master Units');
-	const { org_id } = req.user;
-	const { limit, offset, active } = req.query;
+	const { org_id, isSuperAdmin } = req.user;
+	const { limit, offset, active, org_id: filterOrgId } = req.query;
 
 	const where = {
-		org_id: Number(org_id),
+		// Super Admins may browse units across organizations via the org dropdown;
+		// everyone else stays locked to their own organization.
+		...(isSuperAdmin
+			? filterOrgId && { org_id: Number(filterOrgId) }
+			: { org_id: Number(org_id) }),
 		...(active === 'true' && { lock: false }),
 	};
 
@@ -108,26 +121,28 @@ exports.getAllMasterUnit = async (req) => {
 	return await masterUnitsRepositoy.findAll(where, filterOptions);
 };
 
-exports.getMasterUnitById = async (id) => {
+exports.getMasterUnitById = async (req, id) => {
 	const masterUnit = await masterUnitsRepositoy.findById(id, { include: DETAIL_INCLUDES });
 
 	if (!masterUnit) {
 		logger.warn('Master Unit not found', { id });
 		throw new AppError('Master Unit not found', StatusCodes.NOT_FOUND);
 	}
+	assertOrgAccess(req, masterUnit);
 
 	logger.info('Master Unit fetched', { id });
 
 	return masterUnit;
 };
 
-exports.toggleMasterUnitStatus = async (id) => {
+exports.toggleMasterUnitStatus = async (req, id) => {
 	const masterUnit = await masterUnitsRepositoy.findById(id);
 
 	if (!masterUnit) {
 		logger.warn('Master Unit not found for status toggle', { id });
 		throw new AppError('Master Unit not found', StatusCodes.NOT_FOUND);
 	}
+	assertOrgAccess(req, masterUnit);
 
 	await masterUnitsRepositoy.update(masterUnit, { lock: !masterUnit.lock });
 
@@ -136,13 +151,14 @@ exports.toggleMasterUnitStatus = async (id) => {
 	return masterUnit;
 };
 
-exports.deleteMasterUnit = async (id) => {
+exports.deleteMasterUnit = async (req, id) => {
 	const masterUnit = await masterUnitsRepositoy.findById(id);
 
 	if (!masterUnit) {
 		logger.warn('Master Unit not found for delete', { id });
 		throw new AppError('Master Unit not found', StatusCodes.NOT_FOUND);
 	}
+	assertOrgAccess(req, masterUnit);
 
 	await masterUnitsRepositoy.delete(masterUnit);
 
