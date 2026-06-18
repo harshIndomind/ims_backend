@@ -1,4 +1,4 @@
-const { PaymentRequisition, User, MasterTermsCondition } = require('../models/index');
+const { PaymentRequisition, PaymentRequisitionDeduction, User, MasterTermsCondition } = require('../models/index');
 
 const include = [
 	{
@@ -15,6 +15,11 @@ const include = [
 		model: MasterTermsCondition,
 		as: 'terms',
 		attributes: ['id', 'org_id', 'terms_type'],
+	},
+	{
+		model: PaymentRequisitionDeduction,
+		as: 'deductions',
+		attributes: ['id', 'deduction_type', 'deduction_name', 'percentage', 'amount', 'remarks'],
 	},
 ];
 

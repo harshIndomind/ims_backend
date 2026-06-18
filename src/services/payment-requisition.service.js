@@ -1,194 +1,75 @@
-const { sequelize, PaymentRequisition, PurchaseOrder, WorkOrder, User, organization, Role, CostCenter } = require('../models/index');
+const {
+	sequelize,
+	PaymentRequisition,
+	PaymentRequisitionDeduction,
+	PurchaseOrder,
+	WorkOrder,
+	User,
+	organization,
+	Role,
+	CostCenter,
+} = require('../models/index');
 const { Op, fn, col, literal } = require('sequelize');
 const paymentRequisitionRepo = require('../repository/payment-requisition.repository');
+const deductionRepo = require('../repository/payment-requisition-deduction.repository');
+const analyticsRepo = require('../repository/payment-requisition-analytics.repository');
 const AppError = require('../utils/AppError');
 const logger = require('../utils/logger');
 const { StatusCodes } = require('http-status-codes');
-const { generateInvoiceHTML, generateInvoiceHTMLPDF } = require('../pdf/htmlPdfGenerator');
+const { generateInvoiceHTML } = require('../pdf/htmlPdfGenerator');
 const { generateSignedUrl } = require('../utils/s3Bucket');
 const fs = require('fs');
 const path = require('path');
 const { BASE_URL } = require('../config/serverConfig');
 const fetchPermissions = require('../helpers/fetchPermissions');
 
-/**
- * Generate the next requisition number preview (before creation).
- * Pattern: PR-XXXXXX (zero-padded to 6 digits)
- */
-exports.getNextRequisitionNo = async (req) => {
-	const { org_id } = req.user;
-
-	const last = await paymentRequisitionRepo.findLastCreated({ org_id });
-
-	if (!last) {
-		logger.debug('No previous requisition found, starting from PR-000001', { org_id });
-		return 'PR-000001';
-	}
-
-	const lastId = last.id;
-	const next = String(lastId + 1).padStart(6, '0');
-
-	logger.debug('Generated next requisition no', { org_id, lastId, nextNo: `PR-${next}` });
-	return `PR-${next}`;
-};
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 /**
- * Create a new payment requisition.
+ * Validates an array of deduction DTOs and returns the normalized rows.
+ *
+ * Each deduction must have: deduction_type (required), amount (required, > 0).
+ * percentage is optional — if provided it is stored as-is for reference; the
+ * caller is responsible for computing amount from it before passing here.
  */
-exports.createPaymentRequisition = async (req, payload) => {
-	const transaction = await sequelize.transaction();
+function normalizeDeductions(deductions = [], payment_requisition_id) {
+	const VALID_TYPES = ['RETENTION', 'TDS', 'SECURITY_DEPOSIT', 'ADVANCE_RECOVERY', 'LD', 'GST_TDS', 'WCT', 'OTHER'];
 
-	try {
-		const user = req.user;
-
-		const {
-			wo_no,
-			requisitionAgainst,
-			poWoId,
-			supplier_id,
-			cost_center_id,
-			supplier_snapshot,
-			bankDetailsSnapshot,
-			poWoDate,
-			woPOAmount,
-			requisitionValuePercent,
-			requisitionAmount,
-			tdsPercent,
-			tdsAmount,
-			totalAmount,
-			projectCode,
-			projectName,
-			activityId,
-			budgetId,
-			authorizedById,
-			paymentDate,
-			remark,
-			termCondition,
-			payment_term_id,
-			paymentType,
-			transactionId,
-			status,
-		} = payload;
-
-		const fedBy = {
-			id: user.id,
-			name: user.name,
-			email: user.email,
+	return deductions.map((d, i) => {
+		if (!d.deduction_type || !VALID_TYPES.includes(d.deduction_type)) {
+			throw new AppError(
+				`Deduction[${i}]: invalid deduction_type "${d.deduction_type}". Valid: ${VALID_TYPES.join(', ')}`,
+				StatusCodes.UNPROCESSABLE_ENTITY,
+			);
+		}
+		const amount = parseFloat(d.amount);
+		if (isNaN(amount) || amount < 0) {
+			throw new AppError(`Deduction[${i}]: amount must be a non-negative number`, StatusCodes.UNPROCESSABLE_ENTITY);
+		}
+		return {
+			payment_requisition_id,
+			deduction_type: d.deduction_type,
+			deduction_name: d.deduction_name || d.deduction_type,
+			percentage: d.percentage != null ? parseFloat(d.percentage) : null,
+			amount,
+			remarks: d.remarks || null,
 		};
-
-		const po_id = requisitionAgainst === 'PO' && poWoId ? Number(poWoId) : null;
-		const wo_id = requisitionAgainst === 'WO' && poWoId ? Number(poWoId) : null;
-
-		logger.info('Creating payment requisition', {
-			org_id: user.org_id,
-			user_id: user.id,
-			requisitionAgainst,
-			po_id,
-			wo_id,
-		});
-
-		const requisition = await paymentRequisitionRepo.create(
-			{
-				org_id: user.org_id,
-				requisition_date: new Date(),
-				requisition_against: requisitionAgainst,
-				supplier_id: supplier_id ? Number(supplier_id) : null,
-				cost_center_id,
-				supplier_snapshot: supplier_snapshot ?? null,
-				bank_details_snapshot: bankDetailsSnapshot ?? null,
-				po_id,
-				wo_id,
-				wo_no,
-				po_wo_date: poWoDate || null,
-				wo_po_amount: woPOAmount ? Number(woPOAmount) : 0,
-				requisition_value_percent: Number(requisitionValuePercent) || 0,
-				requisition_amount: Number(requisitionAmount) || 0,
-				tds_percent: Number(tdsPercent) || 0,
-				tds_amount: Number(tdsAmount) || 0,
-				total_amount: Number(totalAmount) || 0,
-				project_code: projectCode || null,
-				project_name: projectName || null,
-				activity_id: activityId || null,
-				budget_id: budgetId || null,
-				fed_by_id: user.id,
-				fed_by: fedBy,
-				// authorized_by_id: authorizedById ? Number(authorizedById) : null,
-				payment_date: paymentDate || null,
-				remark: remark || null,
-				term_condition: termCondition || null,
-				payment_term_id,
-				payment_type: paymentType || null,
-				transaction_id: transactionId || null,
-				status: status || 'PENDING',
-			},
-			{ transaction },
-		);
-
-		// Generate and assign requisition number after insert (get real auto-inc id)
-		const requisitionNo = `PR-${String(requisition.id).padStart(6, '0')}`;
-		await paymentRequisitionRepo.updateById(
-			requisition.id,
-			{ requisition_no: requisitionNo },
-			{ transaction },
-		);
-
-		await transaction.commit();
-
-		logger.info('Payment requisition created successfully', {
-			requisition_id: requisition.id,
-			requisition_no: requisitionNo,
-			org_id: user.org_id,
-		});
-
-		return { ...requisition.toJSON(), requisition_no: requisitionNo };
-	} catch (error) {
-		await transaction.rollback();
-		logger.error('Failed to create payment requisition', {
-			error: error.message,
-			org_id: req.user?.org_id,
-		});
-		throw error;
-	}
-};
-
-/**
- * Fetch all payment requisitions for the org.
- */
-exports.getAllPaymentRequisitions = async (req) => {
-	const { org_id } = req.user;
-
-	logger.debug('Fetching all payment requisitions', { org_id });
-
-	const data = await paymentRequisitionRepo.findAll({ org_id });
-
-	logger.info('Payment requisitions fetched', {
-		org_id,
-		count: data.count,
 	});
-
-	return data;
-};
+}
 
 /**
- * Fetch a single payment requisition by id.
+ * Sums an array of deduction DTOs. Returns 0 for empty arrays.
  */
-exports.getPaymentRequisitionById = async (req, id) => {
-	const { org_id } = req.user;
-
-	logger.debug('Fetching payment requisition by id', { id, org_id });
-
-	const requisition = await paymentRequisitionRepo.findById(id);
-
-	if (!requisition || requisition.org_id !== org_id) {
-		logger.warn('Payment requisition not found or unauthorized', { id, org_id });
-		throw new AppError('Payment requisition not found', StatusCodes.NOT_FOUND);
-	}
-
-	return requisition;
-};
+function sumDeductions(deductions = []) {
+	return deductions.reduce((acc, d) => acc + parseFloat(d.amount || 0), 0);
+}
 
 /**
- * Recalculate and update totalPaid, remainingAmount, paymentStatus on a PO or WO.
+ * Recalculates and persists totalPaid / remainingAmount / paymentStatus on a PO or WO.
+ * Uses net_payable (actual cash out) for REGULAR requisitions.
+ * RETENTION_RELEASE requisitions add back the released amount as positive cash.
  */
 async function syncPoWoPaymentFields(Model, id, org_id, amountDelta, transaction) {
 	const record = await Model.findOne({ where: { id, org_id }, transaction });
@@ -214,7 +95,7 @@ async function syncPoWoPaymentFields(Model, id, org_id, amountDelta, transaction
 	);
 
 	logger.debug('Synced PO/WO payment fields', {
-		modelName: Model.name,
+		model: Model.name,
 		id,
 		amountDelta,
 		newTotalPaid,
@@ -224,24 +105,62 @@ async function syncPoWoPaymentFields(Model, id, org_id, amountDelta, transaction
 }
 
 /**
- * Update an existing payment requisition.
+ * Returns the effective "cash paid" amount for syncPoWoPaymentFields.
+ * For REGULAR requisitions this is net_payable (gross minus all deductions).
+ * For RETENTION_RELEASE this is gross_amount (pure positive cash back).
  */
-exports.updatePaymentRequisition = async (req, id, payload) => {
+function effectivePaidAmount(requisition) {
+	if (requisition.requisition_type === 'RETENTION_RELEASE') {
+		return parseFloat(requisition.gross_amount) || 0;
+	}
+	// Fall back to legacy total_amount for old rows that predate net_payable
+	const netPayable = parseFloat(requisition.net_payable);
+	if (!isNaN(netPayable) && netPayable > 0) return netPayable;
+	return parseFloat(requisition.total_amount) || 0;
+}
+
+// ---------------------------------------------------------------------------
+// Requisition Number
+// ---------------------------------------------------------------------------
+
+exports.getNextRequisitionNo = async (req) => {
+	const { org_id } = req.user;
+	const last = await paymentRequisitionRepo.findLastCreated({ org_id });
+	if (!last) return 'PR-000001';
+	return `PR-${String(last.id + 1).padStart(6, '0')}`;
+};
+
+// ---------------------------------------------------------------------------
+// Create
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates a PaymentRequisition with optional deduction line-items.
+ *
+ * Payload shape:
+ * {
+ *   requisitionAgainst: 'PO' | 'WO' | 'Invoice',
+ *   requisitionType:    'REGULAR' | 'RETENTION_RELEASE',  // default REGULAR
+ *   poWoId:            101,
+ *   grossAmount:       100000,
+ *   deductions: [
+ *     { deduction_type: 'RETENTION', deduction_name: 'Retention @10%', percentage: 10, amount: 10000 },
+ *     { deduction_type: 'TDS',       deduction_name: 'TDS @2%',        percentage: 2,  amount: 2000  },
+ *   ],
+ *   // ... all other existing fields
+ * }
+ */
+exports.createPaymentRequisition = async (req, payload) => {
 	const transaction = await sequelize.transaction();
 
 	try {
-		const { org_id } = req.user;
-
-		const existing = await paymentRequisitionRepo.findById(id);
-
-		if (!existing || existing.org_id !== org_id) {
-			throw new AppError('Payment requisition not found', StatusCodes.NOT_FOUND);
-		}
+		const user = req.user;
 
 		const {
-			requisitionAgainst,
-			poWoId,
 			wo_no,
+			requisitionAgainst,
+			requisitionType = 'REGULAR',
+			poWoId,
 			supplier_id,
 			cost_center_id,
 			supplier_snapshot,
@@ -249,7 +168,11 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 			poWoDate,
 			woPOAmount,
 			requisitionValuePercent,
+			// Accept both old (requisitionAmount) and new (grossAmount) field names
+			grossAmount,
 			requisitionAmount,
+			deductions = [],
+			// Legacy TDS fields — accepted for backward compat but superseded by deductions[]
 			tdsPercent,
 			tdsAmount,
 			totalAmount,
@@ -266,45 +189,207 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 			status,
 		} = payload;
 
+		const gross = parseFloat(grossAmount ?? requisitionAmount ?? 0);
+		const totalDed = sumDeductions(deductions);
+		const netPayable = gross - totalDed;
+
+		if (netPayable < 0) {
+			throw new AppError('total_deductions exceeds gross_amount', StatusCodes.UNPROCESSABLE_ENTITY);
+		}
+
+		const fedBy = { id: user.id, name: user.name, email: user.email };
 		const po_id = requisitionAgainst === 'PO' && poWoId ? Number(poWoId) : null;
 		const wo_id = requisitionAgainst === 'WO' && poWoId ? Number(poWoId) : null;
 
-		// Determine if the editing user is an approver
+		// Validate retention cap — prevent cumulative over-deduction across requisitions
+		const retentionDeds = deductions.filter((d) => d.deduction_type === 'RETENTION');
+		if (retentionDeds.length > 0 && (po_id || wo_id)) {
+			const newRetentionAmt = retentionDeds.reduce((s, d) => s + (parseFloat(d.amount) || 0), 0);
+			const orderId = po_id || wo_id;
+			const OrderModel = po_id ? PurchaseOrder : WorkOrder;
+			const order = await OrderModel.findByPk(orderId, { attributes: ['retention_amount'] });
+			if (order && parseFloat(order.retention_amount) > 0) {
+				const idField = po_id ? 'po_id' : 'wo_id';
+				const summary = await analyticsRepo.getRetentionSummary({ idField, id: orderId, org_id: user.org_id });
+				const alreadyHeld = parseFloat(summary.retention_held) || 0;
+				const cap = parseFloat(order.retention_amount);
+				if (alreadyHeld + newRetentionAmt > cap + 0.005) {
+					throw new AppError(
+						`Retention cap exceeded. Contract cap: ₹${cap.toFixed(2)}, Already held: ₹${alreadyHeld.toFixed(2)}, New deduction: ₹${newRetentionAmt.toFixed(2)}. Max allowed: ₹${Math.max(0, cap - alreadyHeld).toFixed(2)}.`,
+						StatusCodes.UNPROCESSABLE_ENTITY,
+					);
+				}
+			}
+		}
+
+		logger.info('Creating payment requisition', { org_id: user.org_id, user_id: user.id, requisitionAgainst, po_id, wo_id });
+
+		const requisition = await paymentRequisitionRepo.create(
+			{
+				org_id: user.org_id,
+				requisition_date: new Date(),
+				requisition_against: requisitionAgainst,
+				requisition_type: requisitionType,
+				supplier_id: supplier_id ? Number(supplier_id) : null,
+				cost_center_id,
+				supplier_snapshot: supplier_snapshot ?? null,
+				bank_details_snapshot: bankDetailsSnapshot ?? null,
+				po_id,
+				wo_id,
+				wo_no,
+				po_wo_date: poWoDate || null,
+				wo_po_amount: woPOAmount ? Number(woPOAmount) : 0,
+				requisition_value_percent: Number(requisitionValuePercent) || 0,
+				// Mirror to legacy column so existing reports/PDFs keep working
+				requisition_amount: gross,
+				gross_amount: gross,
+				total_deductions: totalDed,
+				net_payable: netPayable,
+				// Legacy TDS — preserve if passed in, otherwise compute from deductions
+				tds_percent: Number(tdsPercent) || 0,
+				tds_amount: Number(tdsAmount) || totalDed,
+				total_amount: Number(totalAmount) || netPayable,
+				project_code: projectCode || null,
+				project_name: projectName || null,
+				activity_id: activityId || null,
+				budget_id: budgetId || null,
+				fed_by_id: user.id,
+				fed_by: fedBy,
+				payment_date: paymentDate || null,
+				remark: remark || null,
+				term_condition: termCondition || null,
+				payment_term_id,
+				payment_type: paymentType || null,
+				transaction_id: transactionId || null,
+				status: status || 'PENDING',
+			},
+			{ transaction },
+		);
+
+		// Assign requisition number using real auto-increment id
+		const requisitionNo = `PR-${String(requisition.id).padStart(6, '0')}`;
+		await paymentRequisitionRepo.updateById(requisition.id, { requisition_no: requisitionNo }, { transaction });
+
+		// Persist deduction line-items
+		if (deductions.length > 0) {
+			const rows = normalizeDeductions(deductions, requisition.id);
+			await deductionRepo.bulkCreate(rows, { transaction });
+		}
+
+		await transaction.commit();
+
+		logger.info('Payment requisition created', { id: requisition.id, requisitionNo, org_id: user.org_id });
+
+		return paymentRequisitionRepo.findById(requisition.id);
+	} catch (error) {
+		await transaction.rollback();
+		logger.error('Failed to create payment requisition', { error: error.message, org_id: req.user?.org_id });
+		throw error;
+	}
+};
+
+// ---------------------------------------------------------------------------
+// Read
+// ---------------------------------------------------------------------------
+
+exports.getAllPaymentRequisitions = async (req) => {
+	const { org_id } = req.user;
+	const data = await paymentRequisitionRepo.findAll({ org_id });
+	return data;
+};
+
+exports.getPaymentRequisitionById = async (req, id) => {
+	const { org_id } = req.user;
+	const requisition = await paymentRequisitionRepo.findById(id);
+	if (!requisition || requisition.org_id !== org_id) {
+		throw new AppError('Payment requisition not found', StatusCodes.NOT_FOUND);
+	}
+	return requisition;
+};
+
+// ---------------------------------------------------------------------------
+// Update
+// ---------------------------------------------------------------------------
+
+/**
+ * Replaces the deductions for a requisition atomically (delete-all + re-insert).
+ * This is the simplest correct approach: the caller always sends the full desired
+ * state, so a diff/patch would only add complexity without benefit.
+ */
+exports.updatePaymentRequisition = async (req, id, payload) => {
+	const transaction = await sequelize.transaction();
+
+	try {
+		const { org_id } = req.user;
+		const existing = await paymentRequisitionRepo.findById(id);
+
+		if (!existing || existing.org_id !== org_id) {
+			throw new AppError('Payment requisition not found', StatusCodes.NOT_FOUND);
+		}
+
+		const {
+			requisitionAgainst,
+			requisitionType,
+			poWoId,
+			wo_no,
+			supplier_id,
+			cost_center_id,
+			supplier_snapshot,
+			bankDetailsSnapshot,
+			poWoDate,
+			woPOAmount,
+			requisitionValuePercent,
+			grossAmount,
+			requisitionAmount,
+			deductions,
+			tdsPercent,
+			tdsAmount,
+			totalAmount,
+			projectCode,
+			projectName,
+			activityId,
+			budgetId,
+			paymentDate,
+			remark,
+			termCondition,
+			payment_term_id,
+			paymentType,
+			transactionId,
+			status,
+		} = payload;
+
+		const gross = parseFloat(grossAmount ?? requisitionAmount ?? existing.gross_amount ?? existing.requisition_amount ?? 0);
+		const dedList = deductions !== undefined ? deductions : null;
+		const totalDed = dedList !== null ? sumDeductions(dedList) : parseFloat(existing.total_deductions || 0);
+		const netPayable = gross - totalDed;
+
+		if (netPayable < 0) {
+			throw new AppError('total_deductions exceeds gross_amount', StatusCodes.UNPROCESSABLE_ENTITY);
+		}
+
 		const userPermissions = await fetchPermissions(req);
 		const isApprover = userPermissions.includes('payment-requisition:approver');
 
-		// Only approvers may set/change the authorized_by; everyone else preserves it
 		const authorizedByUpdate = isApprover
-			? {
-				authorized_by_id: req.user.id,
-				authorized_by: { id: req.user.id, name: req.user.name, email: req.user.email },
-			}
-			: {
-				authorized_by_id: existing.authorized_by_id,
-				authorized_by: existing.authorized_by,
-			};
+			? { authorized_by_id: req.user.id, authorized_by: { id: req.user.id, name: req.user.name, email: req.user.email } }
+			: { authorized_by_id: existing.authorized_by_id, authorized_by: existing.authorized_by };
 
-		// Only approvers may change status, payment_type, transaction_id, remark
 		const approverOnlyFields = isApprover
-			? {
-				status: status || existing.status,
-				payment_type: paymentType || null,
-				transaction_id: transactionId || null,
-				remark: remark || null,
-			}
-			: {
-				status: existing.status,
-				payment_type: existing.payment_type,
-				transaction_id: existing.transaction_id,
-				remark: existing.remark,
-			};
+			? { status: status || existing.status, payment_type: paymentType || null, transaction_id: transactionId || null, remark: remark || null }
+			: { status: existing.status, payment_type: existing.payment_type, transaction_id: existing.transaction_id, remark: existing.remark };
 
-		logger.info('Updating payment requisition', { id, org_id, isApprover });
+		const po_id = (requisitionAgainst || existing.requisition_against) === 'PO' && (poWoId ?? existing.po_id)
+			? Number(poWoId ?? existing.po_id)
+			: null;
+		const wo_id = (requisitionAgainst || existing.requisition_against) === 'WO' && (poWoId ?? existing.wo_id)
+			? Number(poWoId ?? existing.wo_id)
+			: null;
 
 		await paymentRequisitionRepo.updateById(
 			id,
 			{
-				requisition_against: requisitionAgainst,
+				requisition_against: requisitionAgainst || existing.requisition_against,
+				requisition_type: requisitionType || existing.requisition_type,
 				supplier_id: supplier_id ? Number(supplier_id) : null,
 				cost_center_id: cost_center_id || existing.cost_center_id || null,
 				supplier_snapshot: supplier_snapshot ?? null,
@@ -315,10 +400,13 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 				po_wo_date: poWoDate || null,
 				wo_po_amount: woPOAmount ? Number(woPOAmount) : 0,
 				requisition_value_percent: Number(requisitionValuePercent) || 0,
-				requisition_amount: Number(requisitionAmount) || 0,
+				requisition_amount: gross,
+				gross_amount: gross,
+				total_deductions: totalDed,
+				net_payable: netPayable,
 				tds_percent: Number(tdsPercent) || 0,
-				tds_amount: Number(tdsAmount) || 0,
-				total_amount: Number(totalAmount) || 0,
+				tds_amount: Number(tdsAmount) || totalDed,
+				total_amount: Number(totalAmount) || netPayable,
 				project_code: projectCode || null,
 				project_name: projectName || null,
 				activity_id: activityId || null,
@@ -332,19 +420,25 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 			{ transaction },
 		);
 
-		// Sync totalPaid / remainingAmount / paymentStatus on the parent PO or WO
+		// Replace deductions only when the caller explicitly sends the array
+		if (dedList !== null) {
+			await deductionRepo.deleteByRequisitionId(id, { transaction });
+			if (dedList.length > 0) {
+				const rows = normalizeDeductions(dedList, Number(id));
+				await deductionRepo.bulkCreate(rows, { transaction });
+			}
+		}
+
+		// Sync totalPaid on parent PO/WO when approval status changes
 		const oldStatus = existing.status;
 		const newStatus = approverOnlyFields.status;
-		const oldAmount = parseFloat(existing.requisition_amount) || 0;
-		const newAmount = Number(requisitionAmount) != null ? Number(requisitionAmount) : oldAmount;
 		const parentId = po_id || wo_id || existing.po_id || existing.wo_id;
 		const ParentModel = (requisitionAgainst || existing.requisition_against) === 'PO' ? PurchaseOrder : WorkOrder;
 
 		if (parentId) {
 			let amountDelta = 0;
-			if (oldStatus === 'APPROVED') amountDelta -= oldAmount;
-			if (newStatus === 'APPROVED') amountDelta += newAmount;
-
+			if (oldStatus === 'APPROVED') amountDelta -= effectivePaidAmount(existing);
+			if (newStatus === 'APPROVED') amountDelta += netPayable;
 			if (amountDelta !== 0) {
 				await syncPoWoPaymentFields(ParentModel, parentId, org_id, amountDelta, transaction);
 			}
@@ -352,136 +446,296 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 
 		await transaction.commit();
 
-		logger.info('Payment requisition updated successfully', { id, org_id });
-
+		logger.info('Payment requisition updated', { id, org_id });
 		return paymentRequisitionRepo.findById(id);
 	} catch (error) {
 		await transaction.rollback();
-		logger.error('Failed to update payment requisition', {
-			id,
-			error: error.message,
-			org_id: req.user?.org_id,
-		});
+		logger.error('Failed to update payment requisition', { id, error: error.message });
 		throw error;
 	}
 };
 
-/**
- * Delete a payment requisition.
- */
+// ---------------------------------------------------------------------------
+// Deduction CRUD (individual endpoints)
+// ---------------------------------------------------------------------------
+
+exports.addDeduction = async (req, requisitionId, deductionPayload) => {
+	const transaction = await sequelize.transaction();
+	try {
+		const { org_id } = req.user;
+		const requisition = await paymentRequisitionRepo.findById(requisitionId);
+
+		if (!requisition || requisition.org_id !== org_id) {
+			throw new AppError('Payment requisition not found', StatusCodes.NOT_FOUND);
+		}
+
+		const [row] = normalizeDeductions([deductionPayload], Number(requisitionId));
+		const deduction = await deductionRepo.bulkCreate([row], { transaction });
+
+		// Recalculate totals
+		const existingDeductions = await deductionRepo.findByRequisitionId(requisitionId, { transaction });
+		const totalDed = existingDeductions.reduce((s, d) => s + parseFloat(d.amount || 0), 0);
+		const gross = parseFloat(requisition.gross_amount || requisition.requisition_amount || 0);
+		const netPayable = gross - totalDed;
+
+		if (netPayable < 0) {
+			throw new AppError('Adding this deduction would make net_payable negative', StatusCodes.UNPROCESSABLE_ENTITY);
+		}
+
+		await paymentRequisitionRepo.updateById(
+			requisitionId,
+			{ total_deductions: totalDed, net_payable: netPayable, tds_amount: totalDed, total_amount: netPayable },
+			{ transaction },
+		);
+
+		await transaction.commit();
+		return deduction[0];
+	} catch (err) {
+		await transaction.rollback();
+		throw err;
+	}
+};
+
+exports.updateDeduction = async (req, requisitionId, deductionId, deductionPayload) => {
+	const transaction = await sequelize.transaction();
+	try {
+		const { org_id } = req.user;
+		const requisition = await paymentRequisitionRepo.findById(requisitionId);
+
+		if (!requisition || requisition.org_id !== org_id) {
+			throw new AppError('Payment requisition not found', StatusCodes.NOT_FOUND);
+		}
+
+		const deduction = await deductionRepo.findById(deductionId);
+		if (!deduction || deduction.payment_requisition_id !== Number(requisitionId)) {
+			throw new AppError('Deduction not found', StatusCodes.NOT_FOUND);
+		}
+
+		const [normalized] = normalizeDeductions([deductionPayload], Number(requisitionId));
+		await deductionRepo.updateById(deductionId, normalized, { transaction });
+
+		const allDeductions = await deductionRepo.findByRequisitionId(requisitionId, { transaction });
+		const totalDed = allDeductions.reduce((s, d) => s + parseFloat(d.amount || 0), 0);
+		const gross = parseFloat(requisition.gross_amount || requisition.requisition_amount || 0);
+		const netPayable = gross - totalDed;
+
+		if (netPayable < 0) {
+			throw new AppError('Updated deduction makes net_payable negative', StatusCodes.UNPROCESSABLE_ENTITY);
+		}
+
+		await paymentRequisitionRepo.updateById(
+			requisitionId,
+			{ total_deductions: totalDed, net_payable: netPayable, tds_amount: totalDed, total_amount: netPayable },
+			{ transaction },
+		);
+
+		await transaction.commit();
+		return deductionRepo.findById(deductionId);
+	} catch (err) {
+		await transaction.rollback();
+		throw err;
+	}
+};
+
+exports.deleteDeduction = async (req, requisitionId, deductionId) => {
+	const transaction = await sequelize.transaction();
+	try {
+		const { org_id } = req.user;
+		const requisition = await paymentRequisitionRepo.findById(requisitionId);
+
+		if (!requisition || requisition.org_id !== org_id) {
+			throw new AppError('Payment requisition not found', StatusCodes.NOT_FOUND);
+		}
+
+		const deduction = await deductionRepo.findById(deductionId);
+		if (!deduction || deduction.payment_requisition_id !== Number(requisitionId)) {
+			throw new AppError('Deduction not found', StatusCodes.NOT_FOUND);
+		}
+
+		await deductionRepo.deleteById(deductionId, { transaction });
+
+		const remaining = await deductionRepo.findByRequisitionId(requisitionId, { transaction });
+		const totalDed = remaining.reduce((s, d) => s + parseFloat(d.amount || 0), 0);
+		const gross = parseFloat(requisition.gross_amount || requisition.requisition_amount || 0);
+		const netPayable = gross - totalDed;
+
+		await paymentRequisitionRepo.updateById(
+			requisitionId,
+			{ total_deductions: totalDed, net_payable: netPayable, tds_amount: totalDed, total_amount: netPayable },
+			{ transaction },
+		);
+
+		await transaction.commit();
+	} catch (err) {
+		await transaction.rollback();
+		throw err;
+	}
+};
+
+// ---------------------------------------------------------------------------
+// Delete requisition
+// ---------------------------------------------------------------------------
+
 exports.deletePaymentRequisition = async (req, id) => {
 	const { org_id } = req.user;
-
 	const existing = await paymentRequisitionRepo.findById(id);
 
 	if (!existing || existing.org_id !== org_id) {
-		logger.warn('Delete attempted on non-existent or unauthorized requisition', { id, org_id });
 		throw new AppError('Payment requisition not found', StatusCodes.NOT_FOUND);
 	}
 
 	const transaction = await sequelize.transaction();
-
 	try {
-		logger.info('Deleting payment requisition', { id, org_id });
-
+		// Child deductions are deleted via CASCADE on the FK, but we delete explicitly
+		// so the audit log is clear about what happened.
+		await deductionRepo.deleteByRequisitionId(id, { transaction });
 		await paymentRequisitionRepo.deleteById(id, { transaction });
 
-		// If the requisition was APPROVED, reverse its contribution to totalPaid on the parent PO/WO
 		if (existing.status === 'APPROVED') {
 			const parentId = existing.po_id || existing.wo_id;
 			const ParentModel = existing.requisition_against === 'PO' ? PurchaseOrder : WorkOrder;
-			const amount = parseFloat(existing.requisition_amount) || 0;
-
+			const amount = effectivePaidAmount(existing);
 			if (parentId && amount > 0) {
 				await syncPoWoPaymentFields(ParentModel, parentId, org_id, -amount, transaction);
 			}
 		}
 
 		await transaction.commit();
-
-		logger.info('Payment requisition deleted', { id, org_id });
 	} catch (error) {
 		await transaction.rollback();
-		logger.error('Failed to delete payment requisition', { id, error: error.message, org_id });
 		throw error;
 	}
 };
 
-/**
- * Get payment summary for a specific PO or WO.
- * Returns counts + amounts of all non-rejected requisitions against it.
- */
+// ---------------------------------------------------------------------------
+// PO / WO Summary
+// ---------------------------------------------------------------------------
+
 exports.getPoWoSummary = async (req, type, id) => {
 	const { org_id } = req.user;
 
-	// Fetch the PO/WO amounts: basic (pre-tax taxable) and total (incl. tax)
-	let basicAmount = 0;
-	let totalAmount = 0;
-	if (type === 'PO') {
-		const po = await PurchaseOrder.findOne({
-			where: { id, org_id },
-			attributes: ['total_taxable', 'grandTotal'],
-		});
-		if (!po) throw new AppError('Purchase order not found', StatusCodes.NOT_FOUND);
-		basicAmount = parseFloat(po.total_taxable) || 0;
-		totalAmount = parseFloat(po.grandTotal) || 0;
-	} else {
-		const wo = await WorkOrder.findOne({
-			where: { id, org_id },
-			attributes: ['total_taxable', 'grandTotal'],
-		});
-		if (!wo) throw new AppError('Work order not found', StatusCodes.NOT_FOUND);
-		basicAmount = parseFloat(wo.total_taxable) || 0;
-		totalAmount = parseFloat(wo.grandTotal) || 0;
-	}
+	const idField = type === 'PO' ? 'po_id' : 'wo_id';
+	const Model = type === 'PO' ? PurchaseOrder : WorkOrder;
 
-	// Aggregate all non-rejected requisitions for this PO/WO
-	const idFilter = type === 'PO' ? { po_id: Number(id) } : { wo_id: Number(id) };
+	const record = await Model.findOne({ where: { id, org_id }, attributes: ['total_taxable', 'grandTotal'] });
+	if (!record) throw new AppError(`${type} not found`, StatusCodes.NOT_FOUND);
 
-	const result = await PaymentRequisition.findOne({
-		where: {
-			...idFilter,
-			org_id,
-			status: { [Op.ne]: 'REJECTED' },
-		},
-		attributes: [
-			[fn('COUNT', col('id')), 'totalReqCount'],
-			[fn('SUM', col('requisition_amount')), 'reqFedAmount'],
-			[fn('SUM', literal(`CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END`)), 'pendingCount'],
-		],
-		raw: true,
-	});
+	const basicAmount = parseFloat(record.total_taxable) || 0;
+	const totalAmount = parseFloat(record.grandTotal) || 0;
 
-	const totalReqCount = parseInt(result?.totalReqCount || 0);
-	const reqFedAmount = parseFloat(result?.reqFedAmount || 0);
-	const pendingCount = parseInt(result?.pendingCount || 0);
-	const remainingAmount = Math.max(0, totalAmount - reqFedAmount);
+	const [financial, retentionSummary, deductionBreakdown] = await Promise.all([
+		analyticsRepo.getPoWoFinancialSummary({ idField, id, org_id }),
+		analyticsRepo.getRetentionSummary({ idField, id, org_id }),
+		analyticsRepo.getDeductionBreakdownByPoWo({ idField, id, org_id }),
+	]);
 
-	logger.debug('PO/WO summary computed', {
-		type,
-		id,
-		basicAmount,
-		totalAmount,
-		reqFedAmount,
-		remainingAmount,
-		totalReqCount,
-		pendingCount,
-	});
+	const totalGross = parseFloat(financial?.total_gross || 0);
+	const totalNetPaid = parseFloat(financial?.total_net_paid || 0);
+	const totalRetentionReleased = parseFloat(financial?.total_retention_released || 0);
+	const totalDeductions = parseFloat(financial?.total_deductions || 0);
+	const remainingAmount = Math.max(0, totalAmount - totalGross);
 
 	return {
-		totalReqCount,
 		poWoBasicAmount: basicAmount,
 		poWoExpInvAmount: totalAmount,
-		invoiceAmount: 0,
-		reqFedAmount,
+		totalGross,
+		totalDeductions,
+		totalNetPaid,
 		remainingAmount,
-		pendingCount,
+		totalReqCount: parseInt(financial?.non_rejected_count || 0),
+		pendingCount: parseInt(financial?.pending_count || 0),
+		retention: {
+			held: retentionSummary.retention_held,
+			released: retentionSummary.retention_released,
+			balance: retentionSummary.retention_balance,
+		},
+		deductionBreakdown,
 	};
 };
 
+exports.getDeductionAnalytics = async (req, type, id) => {
+	const { org_id } = req.user;
+	const idField = type === 'PO' ? 'po_id' : 'wo_id';
+	return analyticsRepo.getFullLedgerByPoWo({ idField, id, org_id });
+};
+
+// ---------------------------------------------------------------------------
+// Retention Release
+// ---------------------------------------------------------------------------
+
 /**
- * Build the data object for the payment requisition EJS template.
+ * Creates a RETENTION_RELEASE requisition.
+ *
+ * This does NOT modify previous deduction rows — it creates a new requisition
+ * of type RETENTION_RELEASE with a positive gross_amount equal to the release amount.
+ * No deductions are applied. The analytics layer handles netting automatically.
+ *
+ * Payload: { po_id | wo_id, release_amount, remark, payment_date, ... }
  */
+exports.createRetentionRelease = async (req, payload) => {
+	const {
+		requisitionAgainst,
+		poWoId,
+		wo_no,
+		releaseAmount,
+		remark,
+		paymentDate,
+		payment_term_id,
+		paymentType,
+		transactionId,
+		supplier_id,
+		supplier_snapshot,
+		bankDetailsSnapshot,
+		cost_center_id,
+		poWoDate,
+		activityId,
+		budgetId,
+	} = payload;
+
+	if (!releaseAmount || parseFloat(releaseAmount) <= 0) {
+		throw new AppError('releaseAmount must be a positive number', StatusCodes.UNPROCESSABLE_ENTITY);
+	}
+
+	// Validate that we are not releasing more than what is held
+	const { org_id } = req.user;
+	const idField = requisitionAgainst === 'PO' ? 'po_id' : 'wo_id';
+	const retentionSummary = await analyticsRepo.getRetentionSummary({ idField, id: poWoId, org_id });
+
+	const requested = parseFloat(releaseAmount);
+	if (requested > retentionSummary.retention_balance) {
+		throw new AppError(
+			`Cannot release ₹${requested.toFixed(2)}. Retention balance is only ₹${retentionSummary.retention_balance.toFixed(2)}`,
+			StatusCodes.UNPROCESSABLE_ENTITY,
+		);
+	}
+
+	return exports.createPaymentRequisition(req, {
+		requisitionAgainst,
+		requisitionType: 'RETENTION_RELEASE',
+		poWoId,
+		wo_no,
+		grossAmount: requested,
+		deductions: [],
+		remark: remark || `Retention release of ₹${requested.toFixed(2)}`,
+		paymentDate,
+		payment_term_id,
+		paymentType,
+		transactionId,
+		supplier_id,
+		supplier_snapshot,
+		bankDetailsSnapshot,
+		cost_center_id,
+		poWoDate,
+		activityId,
+		budgetId,
+		status: 'PENDING',
+	});
+};
+
+// ---------------------------------------------------------------------------
+// PDF / HTML
+// ---------------------------------------------------------------------------
+
 async function buildRequisitionTemplateData(requisition) {
 	const data = requisition.get ? requisition.get({ plain: true }) : requisition;
 
@@ -499,9 +753,7 @@ async function buildRequisitionTemplateData(requisition) {
 		if (business) {
 			business.address = `${business.org_address || ''}, ${business.city || ''} - ${business.pincode || ''}`;
 		}
-		if (userData.logo) {
-			businessLogo = await generateSignedUrl(userData.logo);
-		}
+		if (userData.logo) businessLogo = await generateSignedUrl(userData.logo);
 	}
 
 	let cost_center_name = null;
@@ -510,69 +762,35 @@ async function buildRequisitionTemplateData(requisition) {
 		cost_center_name = cc?.name ?? null;
 	}
 
-	return {
-		...data,
-		businessLogo,
-		business,
-		cost_center_name,
-	};
+	return { ...data, businessLogo, business, cost_center_name };
 }
 
-/**
- * Generate HTML for a payment requisition.
- */
 exports.generateRequisitionHtml = async (req) => {
-	try {
-		const { id } = req.params;
-		const { org_id } = req.user;
-
-		const requisition = await paymentRequisitionRepo.findById(id);
-		if (!requisition || requisition.org_id !== org_id) {
-			throw new AppError('Payment requisition not found', StatusCodes.NOT_FOUND);
-		}
-
-		const templateData = await buildRequisitionTemplateData(requisition);
-		const html = await generateInvoiceHTML(templateData, 'paymentRequisitionTemplate');
-
-		return `<div class="preview-page">${html}</div>`;
-	} catch (err) {
-		logger.error('Failed to generate payment requisition HTML', { error: err.message });
-		throw new AppError('Failed to generate HTML');
+	const { id } = req.params;
+	const { org_id } = req.user;
+	const requisition = await paymentRequisitionRepo.findById(id);
+	if (!requisition || requisition.org_id !== org_id) {
+		throw new AppError('Payment requisition not found', StatusCodes.NOT_FOUND);
 	}
+	const templateData = await buildRequisitionTemplateData(requisition);
+	const html = await generateInvoiceHTML(templateData, 'paymentRequisitionTemplate');
+	return `<div class="preview-page">${html}</div>`;
 };
 
-/**
- * Generate a PDF file for a payment requisition and return its public URL.
- */
 exports.downloadRequisitionPdf = async (req) => {
-	try {
-		const { html = '' } = req.body;
-
-		const now = new Date();
-		const formatted = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
-		const pdfName = `payment_requisition_${formatted}.pdf`;
-
-		const pdfDir = path.join(__dirname, '../../storage/payment-requisitions');
-		fs.mkdirSync(pdfDir, { recursive: true });
-
-		const pdfPath = path.join(pdfDir, pdfName);
-
-		const puppeteer = require('puppeteer');
-		const browser = await puppeteer.launch();
-		const page = await browser.newPage();
-		await page.setContent(html, { waitUntil: 'networkidle0' });
-		await page.pdf({
-			path: pdfPath,
-			format: 'A4',
-			printBackground: true,
-			margin: { top: '10mm', bottom: '10mm', left: '10mm', right: '10mm' },
-		});
-		await browser.close();
-
-		const baseUrl = BASE_URL || 'http://localhost:5000';
-		return `${baseUrl}/storage/payment-requisitions/${pdfName}`;
-	} catch (err) {
-		logger.error('Failed to generate payment requisition PDF', { error: err.message });
-		throw new AppError('Failed to generate PDF');
-	}
+	const { html = '' } = req.body;
+	const now = new Date();
+	const formatted = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
+	const pdfName = `payment_requisition_${formatted}.pdf`;
+	const pdfDir = path.join(__dirname, '../../storage/payment-requisitions');
+	fs.mkdirSync(pdfDir, { recursive: true });
+	const pdfPath = path.join(pdfDir, pdfName);
+	const puppeteer = require('puppeteer');
+	const browser = await puppeteer.launch();
+	const page = await browser.newPage();
+	await page.setContent(html, { waitUntil: 'networkidle0' });
+	await page.pdf({ path: pdfPath, format: 'A4', printBackground: true, margin: { top: '10mm', bottom: '10mm', left: '10mm', right: '10mm' } });
+	await browser.close();
+	const baseUrl = BASE_URL || 'http://localhost:5000';
+	return `${baseUrl}/storage/payment-requisitions/${pdfName}`;
 };

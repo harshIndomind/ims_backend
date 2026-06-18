@@ -1,62 +1,41 @@
 const router = require('express').Router();
-const paymentRequisitionController = require('../../controllers/payment-requisition.controller');
+const c = require('../../controllers/payment-requisition.controller');
 const checkPermission = require('../../middlewares/checkPermission');
 const verifyToken = require('../../middlewares/verifyToken');
 
 router.use(verifyToken);
 
-router.get(
-	'/generate-requisition-number',
-	checkPermission('payment-requisition', 'view'),
-	paymentRequisitionController.getNextRequisitionNo,
-);
+// ── Utility ─────────────────────────────────────────────────────────────────
+router.get('/generate-requisition-number', checkPermission('payment-requisition', 'view'), c.getNextRequisitionNo);
 
-router.get(
-	'/po-wo-summary',
-	checkPermission('payment-requisition', 'view'),
-	paymentRequisitionController.getPoWoSummary,
-);
+// ── Summaries ────────────────────────────────────────────────────────────────
+// GET /payment-requisitions/po-wo-summary?type=PO&id=101
+router.get('/po-wo-summary', checkPermission('payment-requisition', 'view'), c.getPoWoSummary);
 
-router.post(
-	'/',
-	checkPermission('payment-requisition', 'create'),
-	paymentRequisitionController.createPaymentRequisition,
-);
+// GET /payment-requisitions/deduction-analytics?type=PO&id=101
+router.get('/deduction-analytics', checkPermission('payment-requisition', 'view'), c.getDeductionAnalytics);
 
-router.get(
-	'/',
-	checkPermission('payment-requisition', 'view'),
-	paymentRequisitionController.getAllPaymentRequisitions,
-);
+// ── Retention Release ─────────────────────────────────────────────────────────
+// POST /payment-requisitions/retention-release
+router.post('/retention-release', checkPermission('payment-requisition', 'create'), c.createRetentionRelease);
 
-router.get(
-	'/:id',
-	checkPermission('payment-requisition', 'view'),
-	paymentRequisitionController.getPaymentRequisitionById,
-);
+// ── Requisition CRUD ──────────────────────────────────────────────────────────
+router.post('/', checkPermission('payment-requisition', 'create'), c.createPaymentRequisition);
+router.get('/', checkPermission('payment-requisition', 'view'), c.getAllPaymentRequisitions);
+router.get('/:id', checkPermission('payment-requisition', 'view'), c.getPaymentRequisitionById);
+router.put('/:id', checkPermission('payment-requisition', 'edit'), c.updatePaymentRequisition);
+router.delete('/:id', checkPermission('payment-requisition', 'delete'), c.deletePaymentRequisition);
 
-router.put(
-	'/:id',
-	checkPermission('payment-requisition', 'edit'),
-	paymentRequisitionController.updatePaymentRequisition,
-);
+// ── Deduction sub-resources ───────────────────────────────────────────────────
+// POST   /payment-requisitions/:id/deductions
+// PUT    /payment-requisitions/:id/deductions/:deductionId
+// DELETE /payment-requisitions/:id/deductions/:deductionId
+router.post('/:id/deductions', checkPermission('payment-requisition', 'edit'), c.addDeduction);
+router.put('/:id/deductions/:deductionId', checkPermission('payment-requisition', 'edit'), c.updateDeduction);
+router.delete('/:id/deductions/:deductionId', checkPermission('payment-requisition', 'edit'), c.deleteDeduction);
 
-router.delete(
-	'/:id',
-	checkPermission('payment-requisition', 'delete'),
-	paymentRequisitionController.deletePaymentRequisition,
-);
-
-router.post(
-	'/:id/html',
-	checkPermission('payment-requisition', 'view'),
-	paymentRequisitionController.generateRequisitionHtml,
-);
-
-router.post(
-	'/:id/pdf',
-	checkPermission('payment-requisition', 'view'),
-	paymentRequisitionController.downloadRequisitionPdf,
-);
+// ── PDF / HTML ────────────────────────────────────────────────────────────────
+router.post('/:id/html', checkPermission('payment-requisition', 'view'), c.generateRequisitionHtml);
+router.post('/:id/pdf', checkPermission('payment-requisition', 'view'), c.downloadRequisitionPdf);
 
 module.exports = router;
