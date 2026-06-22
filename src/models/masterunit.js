@@ -27,6 +27,12 @@ module.exports = (sequelize, DataTypes) => {
 	}
 	MasterUnit.init(
 		{
+			uuid: {
+				type: DataTypes.CHAR(36),
+				defaultValue: DataTypes.UUIDV4,
+				allowNull: false,
+				unique: true,
+			},
 			org_id: DataTypes.INTEGER,
 
 			// Local editable fields

@@ -7,6 +7,7 @@ const { APP_CODE } = require('../config/serverConfig');
 const userHandler   = require('./handlers/userHandler');
 const orgHandler    = require('./handlers/orgHandler');
 const masterHandler = require('./handlers/masterHandler');
+const masterUnitHandler = require('./handlers/masterUnitHandler');
 const logger        = require('../utils/logger');
 
 const QUEUE    = QUEUE_CONFIG[APP_CODE].queue;
@@ -144,6 +145,11 @@ async function routeEvent(event) {
 
     case 'master.synced':        return masterHandler.handleMasterSynced(data);
     case 'employees.synced':     return masterHandler.handleEmployeesSynced(data);
+
+    // Master Unit company-detail sync
+    case 'master_unit.created':  return masterUnitHandler.handleMasterUnitCreated(data);
+    case 'master_unit.updated':  return masterUnitHandler.handleMasterUnitUpdated(data);
+    case 'master_unit.deleted':  return masterUnitHandler.handleMasterUnitDeleted(data);
 
     default:
       logger.warn('Unknown event type', { eventType });
