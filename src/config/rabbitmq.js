@@ -46,6 +46,12 @@ const ROUTING_KEYS = [
   'master_unit.created',
   'master_unit.updated',
   'master_unit.deleted',
+  'department.created',
+  'department.updated',
+  'department.deleted',
+  'designation.created',
+  'designation.updated',
+  'designation.deleted',
 ];
 
 let connection = null;
