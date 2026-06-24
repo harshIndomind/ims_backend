@@ -69,7 +69,8 @@ const verifyToken = async (req, res, next) => {
 			org_uuid,
 			state_id,
 			organization_name,
-			isSuperAdmin: decoded.isSuperAdmin,
+			// Cross-app tokens minted by auth-backend don't carry isSuperAdmin, only roles
+			isSuperAdmin: decoded.isSuperAdmin ?? (decoded.roles ?? []).includes('super_admin'),
 			swayamm_org_id,
 		};
 
