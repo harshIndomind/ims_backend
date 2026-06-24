@@ -393,14 +393,12 @@ exports.approveIndent = async (req, id, items) => {
 	}
 
 	const plainIndentItems = indent.IndentItems.map((i) => i.get({ plain: true }));
-	const modifiedIndentItems = plainIndentItems.map((item) => ({
-		...item,
-		qty: updatedIndentQuantityMap.get(item.product_id).issue_qty,
-	}));
 
-	// --- Phase 1: dry-run verify (no deduction) to get allocation data for validation ---
+	// --- Phase 1: dry-run verify against the ORIGINAL requested qty (never the verifier's
+	// edited issue_qty) so the backorder/qty_for_purchase_order is always derived from the
+	// real shortfall, regardless of what the verifier types in. ---
 	const { allocationResults: dryRunResults } =
-		await verifyIndentQuantityWithProductServices(req, modifiedIndentItems, false);
+		await verifyIndentQuantityWithProductServices(req, plainIndentItems, false);
 
 	const dryRunMap = new Map(dryRunResults.map((i) => [i.product_id, i]));
 
@@ -411,7 +409,25 @@ exports.approveIndent = async (req, id, items) => {
 		}
 	}
 
-	// --- Phase 2: actual allocation (VCP deducts stock in its own committed transaction) ---
+	// The verifier may only confirm issuing up to what's actually available — never more.
+	for (const i of indent.IndentItems) {
+		const availableForIssue = dryRunMap.get(i.product_id)?.issued_qty ?? 0;
+		const submittedIssueQty = updatedIndentQuantityMap.get(i.product_id).issue_qty;
+		if (submittedIssueQty > availableForIssue) {
+			throw new AppError(
+				`Issue qty for product_id ${i.product_id} cannot exceed available qty (${availableForIssue})`,
+				StatusCodes.BAD_REQUEST,
+			);
+		}
+	}
+
+	// --- Phase 2: actual allocation (VCP deducts stock in its own committed transaction),
+	// deducting only the amount the verifier confirmed ---
+	const modifiedIndentItems = plainIndentItems.map((item) => ({
+		...item,
+		qty: updatedIndentQuantityMap.get(item.product_id).issue_qty,
+	}));
+
 	const { allocationResults } = await verifyIndentQuantityWithProductServices(
 		req,
 		modifiedIndentItems,
@@ -425,17 +441,17 @@ exports.approveIndent = async (req, id, items) => {
 	try {
 		for (const i of indent.IndentItems) {
 			const allocation = allocationMap.get(i.product_id);
+			const dryRun = dryRunMap.get(i.product_id);
 			const issuedQty = allocation?.issued_qty || 0;
-			const purchaseQty = allocation?.qty_for_purchase_order || 0;
-			const updatedIssueQty = updatedIndentQuantityMap.get(i.product_id)?.issue_qty || 0;
+			const purchaseQty = dryRun?.qty_for_purchase_order || 0;
 
 			await i.update(
 				{
 					qty_issued: issuedQty,
 					qty_for_purchase_order: purchaseQty,
-					minimum_stock_quantity: allocation?.minimum_stock_quantity || 0,
-					checkMinimumStock: allocation?.checkMinimumStock || false,
-					qty_updated_by_verifier: updatedIssueQty,
+					minimum_stock_quantity: dryRun?.minimum_stock_quantity || 0,
+					checkMinimumStock: dryRun?.checkMinimumStock || false,
+					qty_updated_by_verifier: issuedQty,
 				},
 				{ transaction },
 			);
