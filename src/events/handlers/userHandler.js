@@ -5,12 +5,47 @@ const {
 	User,
 	Role,
 	UserRole,
+	Department,
+	Designation,
+	MasterUnit,
 	sequelize,
 	organization,
 } = require('../../models');
 const logger = require('../../utils/logger');
 const AppError = require('../../utils/AppError');
 const { APP_CODE } = require('../../config/serverConfig');
+
+// department_id/designation_id/unit_id are local-only primary keys — auth-service's
+// event carries the cross-service uuid instead, which we resolve to our local ids here.
+async function resolveDeptDesigIds(department_uuid, designation_uuid, unit_uuid) {
+	const [dept, desig, unit] = await Promise.all([
+		department_uuid
+			? Department.findOne({ where: { uuid: department_uuid }, attributes: ['id'] })
+			: null,
+		designation_uuid
+			? Designation.findOne({ where: { uuid: designation_uuid }, attributes: ['id'] })
+			: null,
+		unit_uuid
+			? MasterUnit.findOne({ where: { uuid: unit_uuid }, attributes: ['id'] })
+			: null,
+	]);
+
+	if (department_uuid && !dept) {
+		logger.warn(`${APP_CODE}: department not found for uuid`, { department_uuid });
+	}
+	if (designation_uuid && !desig) {
+		logger.warn(`${APP_CODE}: designation not found for uuid`, { designation_uuid });
+	}
+	if (unit_uuid && !unit) {
+		logger.warn(`${APP_CODE}: unit not found for uuid`, { unit_uuid });
+	}
+
+	return {
+		department_id: dept?.id ?? null,
+		designation_id: desig?.id ?? null,
+		unit_id: unit?.id ?? null,
+	};
+}
 
 async function handleUserCreated(data) {
 	const t = await sequelize.transaction();
@@ -26,6 +61,12 @@ async function handleUserCreated(data) {
 			throw new AppError('Organization not found.');
 		}
 
+		const { department_id, designation_id, unit_id } = await resolveDeptDesigIds(
+			data.department_uuid,
+			data.designation_uuid,
+			data.unit_uuid,
+		);
+
 		// Upsert user — safe to run multiple times
 		const [user, created] = await User.upsert(
 			{
@@ -38,9 +79,9 @@ async function handleUserCreated(data) {
 				org_id: org.id,
 				is_active: data.is_active,
 				employee_code: data.employee_code,
-				department_id: data.department_id,
-				designation_id: data.designation_id,
-				unit_id: data.unit_id ?? null,
+				department_id,
+				designation_id,
+				unit_id,
 				layer: data.layer,
 				image: data.image,
 				logo: data.logo,
@@ -103,14 +144,21 @@ async function handleUserUpdated(data) {
 			return;
 		}
 
+		const { department_id, designation_id, unit_id } = await resolveDeptDesigIds(
+			data.department_uuid,
+			data.designation_uuid,
+			data.unit_uuid,
+		);
+
 		await User.update(
 			{
 				email: data.email,
 				name: data.name,
 				is_active: data.is_active,
 				employee_code: data.employee_code,
-				department_id: data.department_id,
-				designation_id: data.designation_id,
+				department_id,
+				designation_id,
+				unit_id,
 			},
 			{ where: { uuid: data.uuid }, transaction: t },
 		);

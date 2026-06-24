@@ -7,6 +7,8 @@ const { APP_CODE } = require('../config/serverConfig');
 const userHandler   = require('./handlers/userHandler');
 const orgHandler    = require('./handlers/orgHandler');
 const masterHandler = require('./handlers/masterHandler');
+const departmentHandler = require('./handlers/departmentHandler');
+const designationHandler = require('./handlers/designationHandler');
 const masterUnitHandler = require('./handlers/masterUnitHandler');
 const logger        = require('../utils/logger');
 
@@ -150,6 +152,14 @@ async function routeEvent(event) {
     case 'master_unit.created':  return masterUnitHandler.handleMasterUnitCreated(data);
     case 'master_unit.updated':  return masterUnitHandler.handleMasterUnitUpdated(data);
     case 'master_unit.deleted':  return masterUnitHandler.handleMasterUnitDeleted(data);
+
+    // Department / Designation masters sync (manual CRUD)
+    case 'department.created':   return departmentHandler.handleDepartmentCreated(data);
+    case 'department.updated':   return departmentHandler.handleDepartmentUpdated(data);
+    case 'department.deleted':   return departmentHandler.handleDepartmentDeleted(data);
+    case 'designation.created':  return designationHandler.handleDesignationCreated(data);
+    case 'designation.updated':  return designationHandler.handleDesignationUpdated(data);
+    case 'designation.deleted':  return designationHandler.handleDesignationDeleted(data);
 
     default:
       logger.warn('Unknown event type', { eventType });

@@ -9,6 +9,12 @@ module.exports = (sequelize, DataTypes) => {
 				primaryKey: true,
 				autoIncrement: true,
 			},
+			uuid: {
+				type: DataTypes.CHAR(36),
+				defaultValue: DataTypes.UUIDV4,
+				allowNull: false,
+				unique: true,
+			},
 			org_id: {
 				type: DataTypes.INTEGER,
 				references: {
