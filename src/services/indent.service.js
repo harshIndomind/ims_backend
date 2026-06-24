@@ -491,19 +491,24 @@ exports.deleteIndent = async (req, id) => {
 		throw new AppError(`Indent with ID ${id} not found`, StatusCodes.NOT_FOUND);
 	}
 
-	// If already verified, stock was deducted in VCP — roll it back first
+	// If already verified, stock was deducted in VCP — roll it back first.
+	// Service items never had stock deducted, so they're excluded here.
 	if (indent.isVerified && Array.isArray(indent.IndentItems) && indent.IndentItems.length > 0) {
-		const allocationResults = indent.IndentItems.map((item) => ({
-			product_id: item.product_id,
-			stock_type: item.stock_type,
-			base_issued_qty: item.qty_issued,
-			batch_id: item.batch_id,
-			issuedSerials: item.serial_items
-				.filter((s) => s.is_issued)
-				.map((s) => s.serial_no),
-		}));
+		const allocationResults = indent.IndentItems
+			.filter((item) => item.productSnapshot?.item_type !== 'service')
+			.map((item) => ({
+				product_id: item.product_id,
+				stock_type: item.stock_type,
+				base_issued_qty: item.qty_issued,
+				batch_id: item.batch_id,
+				issuedSerials: item.serial_items
+					.filter((s) => s.is_issued)
+					.map((s) => s.serial_no),
+			}));
 
-		await rollbackStockInProductService(req, allocationResults);
+		if (allocationResults.length > 0) {
+			await rollbackStockInProductService(req, allocationResults);
+		}
 	}
 
 	await indent.destroy();

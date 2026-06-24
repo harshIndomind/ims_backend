@@ -8,7 +8,17 @@ const {
 const logger = require('../utils/logger');
 const { sequelize } = require('../models/index');
 const { Op } = require('sequelize');
-const { WorkOrder, WorkOrderItem, Indent, User, organization, Role, PaymentRequisition } = require('../models/index');
+const {
+	WorkOrder,
+	WorkOrderItem,
+	Indent,
+	User,
+	organization,
+	Role,
+	PaymentRequisition,
+	MasterTermsCondition,
+	MasterUnit,
+} = require('../models/index');
 const {
 	generateInvoiceHTMLPDF,
 	generateInvoiceHTML,
@@ -511,7 +521,16 @@ exports.generateInvoiceHtml = async (req) => {
 	const { copies = [] } = req.body;
 
 	const workOrder = await workOrderRepository.findById(id, {
-		include: [{ model: WorkOrderItem, as: 'items' }],
+		include: [
+			{ model: WorkOrderItem, as: 'items' },
+			{ model: MasterTermsCondition, as: 'priceTerm' },
+			{ model: MasterTermsCondition, as: 'gstTerm' },
+			{ model: MasterTermsCondition, as: 'paymentTerm' },
+			{ model: MasterTermsCondition, as: 'deliveryTerm' },
+			{ model: MasterTermsCondition, as: 'pfTerm' },
+			{ model: MasterTermsCondition, as: 'ldClauseTerm' },
+			{ model: Indent, as: 'indent', include: [{ model: MasterUnit, as: 'unit' }] },
+		],
 	});
 
 	if (!workOrder) throw new AppError('Work order not found', StatusCodes.NOT_FOUND);
@@ -591,21 +610,37 @@ async function calculateWorkOrderInvoice(workOrder) {
 
 	let businessLogo = null;
 	let business = null;
-	if (userData) {
+	const unit = invoiceData.indent?.unit;
+	if (unit) {
+		business = {
+			org_name: unit.unit_name || unit.unitName || '',
+			city: unit.city,
+			pincode: unit.pincode,
+			org_gst_number: unit.gstin,
+			org_email: unit.company_email,
+		};
+		const unitAddressLine = [unit.address1, unit.address2, unit.landmark].filter(Boolean).join(', ');
+		business.address = `${unitAddressLine ? `${unitAddressLine},<br>` : ''}
+			${unit.city || ''} - ${unit.pincode || ''}, ${unit.state || ''}<br>`;
+	} else if (userData) {
 		business = userData.organization;
 		business.address = `${business.org_address || ''},<br>
 			${business.city || ''} - ${business.pincode || ''}, ${
 				business?._state?.state_name || ''
 			}<br>`;
-		if (userData.logo) {
-			businessLogo = await generateSignedUrl(userData.logo);
-		}
 	}
+	if (userData?.logo) {
+		businessLogo = await generateSignedUrl(userData.logo);
+	}
+
+	const orderReferenceNote =
+		'We are pleased to award the Service Order as detailed below. This order no. and Date must be quoted in your bills and in all correspondence in this connection with this office/factory.';
 
 	return {
 		...invoiceData,
 		businessLogo,
 		business,
+		orderReferenceNote,
 		vendorInfo: {
 			...invoiceData.vendorInfo,
 			state_name: state ? `${state.state_name} (${state.gst_code})` : 'N/A',
@@ -689,6 +724,32 @@ async function calculateWorkOrderInvoice(workOrder) {
 				calculatedValue: calculatedValue.toFixed(2),
 			};
 		})(),
+		termsAndConditions: [
+			invoiceData.priceTerm && {
+				label: 'Price Term',
+				value: invoiceData.priceTerm.terms_type,
+			},
+			invoiceData.gstTerm && {
+				label: 'GST Term',
+				value: invoiceData.gstTerm.terms_type,
+			},
+			invoiceData.paymentTerm && {
+				label: 'Payment Term',
+				value: invoiceData.paymentTerm.terms_type,
+			},
+			invoiceData.deliveryTerm && {
+				label: 'Delivery Term',
+				value: invoiceData.deliveryTerm.terms_type,
+			},
+			invoiceData.pfTerm && {
+				label: 'P&F Term',
+				value: invoiceData.pfTerm.terms_type,
+			},
+			invoiceData.ldClauseTerm && {
+				label: 'LD Clause Term',
+				value: invoiceData.ldClauseTerm.terms_type,
+			},
+		].filter(Boolean),
 	};
 }
 
