@@ -853,6 +853,11 @@ async function calculateSaleInvoice(invoice) {
 		businessLogo,
 		business,
 		orderReferenceNote,
+		dueDate: formatExportDate(invoiceData.dueDate),
+		poDetail: {
+			...invoiceData.poDetail,
+			date: formatExportDate(invoiceData.poDetail?.date),
+		},
 		vendorInfo: {
 			...invoiceData.vendorInfo,
 			state_name: `${state?.state_name} (${state?.gst_code})` || 'N/A',

@@ -641,6 +641,11 @@ async function calculateWorkOrderInvoice(workOrder) {
 		businessLogo,
 		business,
 		orderReferenceNote,
+		dueDate: formatExportDate(invoiceData.dueDate),
+		woDetail: {
+			...invoiceData.woDetail,
+			date: formatExportDate(invoiceData.woDetail?.date),
+		},
 		vendorInfo: {
 			...invoiceData.vendorInfo,
 			state_name: state ? `${state.state_name} (${state.gst_code})` : 'N/A',
