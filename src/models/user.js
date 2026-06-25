@@ -122,6 +122,10 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.DATE,
 				allowNull: true,
 			},
+			current_jti: {
+				type: DataTypes.CHAR(36),
+				allowNull: true,
+			},
 			logo: {
 				type: DataTypes.TEXT,
 				allowNull: true,

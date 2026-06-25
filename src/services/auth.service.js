@@ -1,4 +1,5 @@
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const {
 	User,
@@ -171,6 +172,9 @@ exports.login = async ({ email, password }, res) => {
 
 	const APP_CODE = process.env.APP_CODE; // 'SCM'
 
+	// jti ties the refresh token to this login session so logout can revoke it server-side
+	const jti = crypto.randomUUID();
+
 	// JWT payload
 	const payload = {
 		sub: user.uuid,
@@ -188,7 +192,13 @@ exports.login = async ({ email, password }, res) => {
 		isSuperAdmin,
 		avatar: imageUrl,
 		organization_name: user.organization?.org_name ?? null,
+		jti,
+		// identifies which service minted this token's session, so a service
+		// only enforces the jti revocation check against sessions it itself owns
+		iss: 'SCM',
 	};
+
+	await user.update({ current_jti: jti });
 
 	const accessToken = generateAccessToken(payload);
 	const refreshToken = generateRefreshToken(payload);
@@ -308,6 +318,13 @@ exports.refreshToken = async (req, res) => {
 		throw new AppError('User not found', 401);
 	}
 
+	// Only enforce the jti revocation check for sessions this service itself
+	// minted — a token minted by AUTH/VCP (e.g. user switched apps) was never
+	// recorded in this service's current_jti, so there's nothing to compare
+	if (decoded.iss === 'SCM' && (!user.current_jti || decoded.jti !== user.current_jti)) {
+		throw new AppError('Session has been revoked', 401);
+	}
+
 	if (!user.userRoles || user.userRoles.length === 0) {
 		throw new AppError('No roles assigned', 403);
 	}
@@ -336,6 +353,10 @@ exports.refreshToken = async (req, res) => {
 		isSuperAdmin,
 		avatar: imageUrl,
 		organization_name: user.organization?.org_name ?? null,
+		// preserve the original session's identity rather than fabricate one —
+		// this access token isn't itself checked against current_jti anywhere
+		jti: decoded.jti,
+		iss: decoded.iss,
 	};
 
 	return generateAccessToken(payload);
