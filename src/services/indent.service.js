@@ -382,7 +382,7 @@ exports.approveIndent = async (req, id, items) => {
 	for (const i of indent.IndentItems) {
 		if (!updatedIndentQuantityMap.has(i.product_id)) {
 			throw new AppError(
-				`Missing issue_qty for product_id ${i.product_id}`,
+				`Missing issue_qty for ${i.item_name}`,
 				StatusCodes.BAD_REQUEST,
 			);
 		}
@@ -415,7 +415,7 @@ exports.approveIndent = async (req, id, items) => {
 		const submittedIssueQty = updatedIndentQuantityMap.get(i.product_id).issue_qty;
 		if (submittedIssueQty > availableForIssue) {
 			throw new AppError(
-				`Issue qty for product_id ${i.product_id} cannot exceed available qty (${availableForIssue})`,
+				`Issue qty for ${i.item_name} cannot exceed available qty (${availableForIssue})`,
 				StatusCodes.BAD_REQUEST,
 			);
 		}

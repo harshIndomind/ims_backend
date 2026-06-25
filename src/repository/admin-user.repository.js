@@ -64,6 +64,10 @@ const findByEmail = async (email) => {
 	return await User.findOne({ where: { email } });
 };
 
+const findByEmployeeCode = async (employee_code) => {
+	return await User.findOne({ where: { employee_code } });
+};
+
 const findById = async (id) => {
 	const user = await User.findByPk(id, {
 		include: [
@@ -118,6 +122,7 @@ const deleteById = async (id) => {
 module.exports = {
 	createUser,
 	findByEmail,
+	findByEmployeeCode,
 	findById,
 	update,
 	deleteById,
