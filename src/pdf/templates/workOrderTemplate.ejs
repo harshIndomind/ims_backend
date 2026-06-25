@@ -538,13 +538,13 @@
                             <div class="info-row">
                                 <strong>WO Date:</strong>
                                 <span>
-                                    <%= new Date(invoice?.woDetail?.date).toLocaleDateString() || '' %>
+                                    <%= invoice?.woDetail?.date || '' %>
                                 </span>
                             </div>
                             <div class="info-row">
                                 <strong>Due Date:</strong>
                                 <span>
-                                    <%= new Date(invoice.dueDate).toLocaleDateString() || '' %>
+                                    <%= invoice.dueDate || '' %>
                                 </span>
                             </div>
                         </div>

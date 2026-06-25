@@ -435,13 +435,13 @@
                             <div class="info-row">
                                 <strong>PO Date:</strong>
                                 <span>
-                                    <%= new Date(invoice?.poDetail?.date).toLocaleDateString() || '' %>
+                                    <%= invoice?.poDetail?.date || '' %>
                                 </span>
                             </div>
                             <div class="info-row">
                                 <strong>Due Date:</strong>
                                 <span>
-                                    <%= new Date(invoice.dueDate).toLocaleDateString() || '' %>
+                                    <%= invoice.dueDate || '' %>
                                 </span>
                             </div>
                         </div>
