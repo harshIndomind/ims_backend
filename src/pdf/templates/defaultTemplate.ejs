@@ -653,26 +653,22 @@
                     </div>
 
                     <!-- Footer Note -->
-                    <div style="margin-top:15px; padding-top:128px; color:#555; font-size:8px; width:100%; box-sizing:border-box;">
-                        <!-- (E & O.E.) -->
-                        <div style="text-align:center; margin-bottom:6px;">
-                            <em>(E & O.E.)</em>
+                    <div style="margin-top:40px; color:#333; font-size:10px; width:100%; box-sizing:border-box;">
+                        <!-- Company Name -->
+                        <div style="text-align:right; font-weight:bold; margin-bottom:40px;">
+                            For <%= invoice?.business?.org_name ?? '' %>
                         </div>
 
-                        <!-- Certification + Company Name -->
-                        <div style="border-top:1px dotted #ccc; margin-top:8px; padding-top:8px;">
-                            <div style="text-align:center; line-height:1.4;">
-                                <div>Certified that the particulars given above are
-                                    true and correct.</div>
-                                <div style="margin-top:4px; font-weight:bold;">For
-                                    <%= invoice.business.org_name ?? '' %>
-                                </div>
-                            </div>
+                        <!-- Prepared By / Checked By / Authorized Signatory -->
+                        <div style="display:flex; justify-content:space-between; margin-bottom:50px;">
+                            <div>Prepared By</div>
+                            <div>Checked By</div>
+                            <div>Authorized Signatory</div>
                         </div>
 
-                        <!-- Signature Space -->
-                        <div style="border-top:1px dotted #ccc; margin-top:20px; padding-top:25px; min-height:80px; text-align:center;">
-                            <strong>Authorised Signatory</strong>
+                        <!-- Receiver's Signature -->
+                        <div style="text-align:left;">
+                            Receiver's Signature &amp; Seal with Date
                         </div>
                     </div>
 
