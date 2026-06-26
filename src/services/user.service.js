@@ -48,6 +48,11 @@ class UserService {
 		const existingUser = await userRepo.findByEmail(email);
 		if (existingUser) throw new AppError('Email already exists', 409);
 
+		if (employee_code) {
+			const existingEmployeeCode = await userRepo.findByEmployeeCode(employee_code);
+			if (existingEmployeeCode) throw new AppError('Employee Code already exists', 409);
+		}
+
 		if (!app_access?.length) {
 			throw new AppError('At least one app access must be provided', 400);
 		}
@@ -168,6 +173,12 @@ class UserService {
 		if (email && email !== user.email) {
 			const existing = await userRepo.findByEmail(email);
 			if (existing) throw new AppError('Email already exists', 409);
+		}
+
+		// Check employee_code uniqueness if changed
+		if (employee_code && employee_code !== user.employee_code) {
+			const existingEmployeeCode = await userRepo.findByEmployeeCode(employee_code);
+			if (existingEmployeeCode) throw new AppError('Employee Code already exists', 409);
 		}
 
 		// Validate app roles if provided

@@ -19,6 +19,7 @@ const verifyToken = async (req, res, next) => {
 		let organization_name = decoded.organization_name;
 		let state_id = decoded.state_id;
 		let local_user_id = null;
+		let local_user_name = null;
 
 		if (org_uuid) {
 			// New tokens: resolve local org_id from the shared org UUID,
@@ -29,7 +30,7 @@ const verifyToken = async (req, res, next) => {
 					attributes: ['id', 'swayamm_org_id', 'org_name', 'state_id'],
 				}),
 				decoded.sub
-					? User.findOne({ where: { uuid: decoded.sub }, attributes: ['id'] })
+					? User.findOne({ where: { uuid: decoded.sub }, attributes: ['id', 'name'] })
 					: null,
 			]);
 			if (org) {
@@ -38,16 +39,20 @@ const verifyToken = async (req, res, next) => {
 				organization_name = org.org_name;
 				state_id = org.state_id;
 			}
-			if (localUser) local_user_id = localUser.id;
+			if (localUser) {
+				local_user_id = localUser.id;
+				local_user_name = localUser.name;
+			}
 		} else if (decoded.sub) {
 			// Old tokens without org_uuid: resolve via local user record using user UUID
 			const user = await User.findOne({
 				where: { uuid: decoded.sub },
 				include: [{ model: organization, as: 'organization', required: false }],
-				attributes: ['id', 'org_id'],
+				attributes: ['id', 'name', 'org_id'],
 			});
 			if (user) {
 				local_user_id = user.id;
+				local_user_name = user.name;
 				org_id = user.org_id;
 				org_uuid = user.organization?.uuid ?? null;
 				swayamm_org_id = user.organization?.swayamm_org_id ?? null;
@@ -59,7 +64,9 @@ const verifyToken = async (req, res, next) => {
 		req.user = {
 			sub: decoded.sub,
 			id: local_user_id ?? decoded.id,
-			name: decoded.name,
+			// Cross-app tokens minted by auth-backend's own login don't carry `name` —
+			// fall back to the local User record resolved above.
+			name: decoded.name ?? local_user_name,
 			email: decoded.email,
 			roles: decoded.roles ?? [],
 			role: decoded.role ?? null,

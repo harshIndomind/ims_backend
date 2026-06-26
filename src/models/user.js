@@ -55,6 +55,7 @@ module.exports = (sequelize, DataTypes) => {
 			employee_code: {
 				type: DataTypes.STRING,
 				allowNull: true,
+				unique: true,
 			},
 			department_id: {
 				type: DataTypes.INTEGER,
