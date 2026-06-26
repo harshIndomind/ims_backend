@@ -19,6 +19,30 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'wo_id',
 				as: 'paymentRequisitions',
 			});
+			WorkOrder.belongsTo(models.MasterTermsCondition, {
+				foreignKey: 'price_term_id',
+				as: 'priceTerm',
+			});
+			WorkOrder.belongsTo(models.MasterTermsCondition, {
+				foreignKey: 'gst_term_id',
+				as: 'gstTerm',
+			});
+			WorkOrder.belongsTo(models.MasterTermsCondition, {
+				foreignKey: 'payment_term_id',
+				as: 'paymentTerm',
+			});
+			WorkOrder.belongsTo(models.MasterTermsCondition, {
+				foreignKey: 'delivery_term_id',
+				as: 'deliveryTerm',
+			});
+			WorkOrder.belongsTo(models.MasterTermsCondition, {
+				foreignKey: 'pf_term_id',
+				as: 'pfTerm',
+			});
+			WorkOrder.belongsTo(models.MasterTermsCondition, {
+				foreignKey: 'ld_clause_term_id',
+				as: 'ldClauseTerm',
+			});
 		}
 	}
 	WorkOrder.init(

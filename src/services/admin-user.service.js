@@ -24,6 +24,13 @@ const createUserByOrganization = async (data, loggedInUser) => {
 			throw new AppError('Email already exists', 400);
 		}
 
+		if (data.employee_code) {
+			const existingEmployeeCode = await AdminUserRepository.findByEmployeeCode(data.employee_code);
+			if (existingEmployeeCode) {
+				throw new AppError('Employee Code already exists', 400);
+			}
+		}
+
 		const hashedPassword = await bcrypt.hash(data.password, 10);
 
 		const payload = {
@@ -141,6 +148,13 @@ const update = async (userId, data) => {
 		const existingUser = await AdminUserRepository.findByEmail(data.email);
 		if (existingUser) {
 			throw new AppError('Email already exists', 400);
+		}
+	}
+
+	if (data.employee_code && data.employee_code !== user.employee_code) {
+		const existingEmployeeCode = await AdminUserRepository.findByEmployeeCode(data.employee_code);
+		if (existingEmployeeCode) {
+			throw new AppError('Employee Code already exists', 400);
 		}
 	}
 

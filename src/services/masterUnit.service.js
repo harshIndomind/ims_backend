@@ -3,6 +3,12 @@ const { StatusCodes } = require('http-status-codes');
 const { masterUnitsRepositoy } = require('../repository/index');
 const { Country, GstStateCode, organization } = require('../models/index');
 const logger = require('../utils/logger');
+const { publishEvent } = require('../events/publisher');
+const {
+	buildMasterUnitCreatedEvent,
+	buildMasterUnitUpdatedEvent,
+	buildMasterUnitDeletedEvent,
+} = require('../events/schemas/masterUnitEvents');
 
 const COMPANY_DETAIL_FIELDS = [
 	'unit_name',
@@ -53,6 +59,11 @@ function pickCompanyFields(payload) {
 	return data;
 }
 
+async function getOrgUuid(org_id) {
+	const org = await organization.findByPk(org_id, { attributes: ['uuid'] });
+	return org?.uuid ?? null;
+}
+
 function assertOrgAccess(req, masterUnit) {
 	if (req.user.isSuperAdmin) return;
 	if (masterUnit.org_id !== req.user.org_id) {
@@ -77,6 +88,9 @@ exports.createMasterUnit = async (req, payload) => {
 
 	logger.info('Master Unit created', { id: masterUnit.id, unit_name });
 
+	const orgUuid = await getOrgUuid(org_id);
+	await publishEvent('master_unit.created', buildMasterUnitCreatedEvent(masterUnit, orgUuid));
+
 	return masterUnit;
 };
 
@@ -94,7 +108,12 @@ exports.updateMasterUnit = async (req, id, payload) => {
 
 	logger.info('Master Unit updated', { id });
 
-	return masterUnit.reload({ include: DETAIL_INCLUDES });
+	const reloaded = await masterUnit.reload({ include: DETAIL_INCLUDES });
+
+	const orgUuid = await getOrgUuid(reloaded.org_id);
+	await publishEvent('master_unit.updated', buildMasterUnitUpdatedEvent(reloaded, orgUuid));
+
+	return reloaded;
 };
 
 exports.getAllMasterUnit = async (req) => {
@@ -148,6 +167,9 @@ exports.toggleMasterUnitStatus = async (req, id) => {
 
 	logger.info('Master Unit status toggled', { id, lock: masterUnit.lock });
 
+	const orgUuid = await getOrgUuid(masterUnit.org_id);
+	await publishEvent('master_unit.updated', buildMasterUnitUpdatedEvent(masterUnit, orgUuid));
+
 	return masterUnit;
 };
 
@@ -163,6 +185,8 @@ exports.deleteMasterUnit = async (req, id) => {
 	await masterUnitsRepositoy.delete(masterUnit);
 
 	logger.info('Master Unit deleted', { id });
+
+	await publishEvent('master_unit.deleted', buildMasterUnitDeletedEvent(masterUnit));
 
 	return true;
 };

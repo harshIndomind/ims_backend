@@ -23,6 +23,8 @@ const {
 	Indent,
 	Role,
 	PaymentRequisition,
+	MasterTermsCondition,
+	MasterUnit,
 } = require('../models/index');
 const {
 	generateInvoiceHTMLPDF,
@@ -718,6 +720,13 @@ exports.generateInvoiceHtml = async (req) => {
 					model: PurchaseOrderItem,
 					as: 'items',
 				},
+				{ model: MasterTermsCondition, as: 'priceTerm' },
+				{ model: MasterTermsCondition, as: 'gstTerm' },
+				{ model: MasterTermsCondition, as: 'paymentTerm' },
+				{ model: MasterTermsCondition, as: 'deliveryTerm' },
+				{ model: MasterTermsCondition, as: 'pfTerm' },
+				{ model: MasterTermsCondition, as: 'ldClauseTerm' },
+				{ model: Indent, as: 'indent', include: [{ model: MasterUnit, as: 'unit' }] },
 			],
 		});
 
@@ -814,21 +823,41 @@ async function calculateSaleInvoice(invoice) {
 
 	let businessLogo = null;
 	let business = null;
-	if (userData) {
+	const unit = invoiceData.indent?.unit;
+	if (unit) {
+		business = {
+			org_name: unit.unit_name || unit.unitName || '',
+			city: unit.city,
+			pincode: unit.pincode,
+			org_gst_number: unit.gstin,
+			org_email: unit.company_email,
+		};
+		const unitAddressLine = [unit.address1, unit.address2, unit.landmark].filter(Boolean).join(', ');
+		business.address = `${unitAddressLine ? `${unitAddressLine},<br>` : ''}
+			${unit.city || ''} - ${unit.pincode || ''}, ${unit.state || ''}<br>`;
+	} else if (userData) {
 		business = userData.organization;
 		business.address = `${business.org_address || ''},<br>
 			${business.city || ''} - ${business.pincode || ''}, ${
 				business?._state?.state_name || ''
 			}<br>`;
-		if (userData.logo) {
-			businessLogo = await generateSignedUrl(userData.logo);
-		}
+	}
+	if (userData?.logo) {
+		businessLogo = await generateSignedUrl(userData.logo);
 	}
 	console.log('invoiceData.items ', invoiceData.items);
+	const orderReferenceNote =
+		'With reference to your quotation we are pleased to place an order with you for the supply of the undernoted materials as per instructions specified below subject to general terms and conditions as mentioned below.';
 	const response = {
 		...invoiceData,
 		businessLogo,
 		business,
+		orderReferenceNote,
+		dueDate: formatExportDate(invoiceData.dueDate),
+		poDetail: {
+			...invoiceData.poDetail,
+			date: formatExportDate(invoiceData.poDetail?.date),
+		},
 		vendorInfo: {
 			...invoiceData.vendorInfo,
 			state_name: `${state?.state_name} (${state?.gst_code})` || 'N/A',
@@ -955,6 +984,32 @@ async function calculateSaleInvoice(invoice) {
 				calculatedValue: calculatedValue.toFixed(2),
 			};
 		})(),
+		termsAndConditions: [
+			invoiceData.priceTerm && {
+				label: 'Price Term',
+				value: invoiceData.priceTerm.terms_type,
+			},
+			invoiceData.gstTerm && {
+				label: 'GST Term',
+				value: invoiceData.gstTerm.terms_type,
+			},
+			invoiceData.paymentTerm && {
+				label: 'Payment Term',
+				value: invoiceData.paymentTerm.terms_type,
+			},
+			invoiceData.deliveryTerm && {
+				label: 'Delivery Term',
+				value: invoiceData.deliveryTerm.terms_type,
+			},
+			invoiceData.pfTerm && {
+				label: 'P&F Term',
+				value: invoiceData.pfTerm.terms_type,
+			},
+			invoiceData.ldClauseTerm && {
+				label: 'LD Clause Term',
+				value: invoiceData.ldClauseTerm.terms_type,
+			},
+		].filter(Boolean),
 	};
 
 	return response;

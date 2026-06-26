@@ -25,6 +25,10 @@ class UserRepository {
 		return User.findOne({ where: { email } });
 	}
 
+	async findByEmployeeCode(employee_code) {
+		return User.findOne({ where: { employee_code } });
+	}
+
 	async findById(id) {
 		return User.findOne({
 			where: { id },
