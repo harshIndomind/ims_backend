@@ -7,14 +7,14 @@ module.exports = {
     await queryInterface.bulkInsert('MasterTermCategories', [
       {
         category_name: 'Price Term',
-        category_code: 'PT',
+        category_code: 'PRT',
         description: 'Pricing terms',
         createdAt: new Date(),
         updatedAt: new Date(),
       },
       {
         category_name: 'GST Term',
-        category_code: 'GST',
+        category_code: 'GT',
         description: 'Goods and Services Tax terms',
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -35,14 +35,14 @@ module.exports = {
       },
       {
         category_name: 'PF Term',
-        category_code: 'PF',
+        category_code: 'PFT',
         description: ' Provident Fund terms',
         createdAt: new Date(),
         updatedAt: new Date(),
       },
       {
         category_name: 'LD Clause Term',
-        category_code: 'LD',
+        category_code: 'LDCT',
         description: 'Letter of Credit terms',
         createdAt: new Date(),
         updatedAt: new Date(),

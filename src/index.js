@@ -207,6 +207,10 @@ async function prepareAndStartServer() {
 		`${apiPrefix}/v1/payment-requisitions`,
 		require('./routes/v1/payment-requisition.routes'),
 	);
+	app.use(
+		`${apiPrefix}/v1/master/term-categories`,
+		require('./routes/v1//masterTermCategory.routes'),  
+	);	
 
 	app.get('/', (req, res) => {
 		res.status(200).json({ status: true, message: '✅ Its working.' });
