@@ -200,6 +200,10 @@ async function prepareAndStartServer() {
 		require('./routes/v1/purchase-order.routes'),
 	);
 	app.use(
+		`${apiPrefix}/v1/goods-receipt-notes`,
+		require('./routes/v1/grn.routes'),
+	);
+	app.use(
 		`${apiPrefix}/v1/work-orders`,
 		require('./routes/v1/work-order.routes'),
 	);

@@ -23,6 +23,7 @@ const { Op, literal } = require('sequelize');
 const logger = require('../utils/logger');
 const { StatusCodes } = require('http-status-codes');
 const parseDate = require('../utils/parse-date');
+const crypto = require('crypto');
 
 exports.createIndent = async (req, payload) => {
 	const transaction = await sequelize.transaction();
@@ -428,10 +429,16 @@ exports.approveIndent = async (req, id, items) => {
 		qty: updatedIndentQuantityMap.get(item.product_id).issue_qty,
 	}));
 
+	// One key per approval attempt: shared between the allocation call and its
+	// compensating rollback below, so a network retry of either can't double
+	// post to VCP's stock ledger (see docs/architecture/inventory-stock-ledger-migration.md §13).
+	const approvalIdempotencyKey = `INDENT-${id}-APPROVE-${crypto.randomUUID()}`;
+
 	const { allocationResults } = await verifyIndentQuantityWithProductServices(
 		req,
 		modifiedIndentItems,
 		true,
+		approvalIdempotencyKey,
 	);
 
 	const allocationMap = new Map(allocationResults.map((i) => [i.product_id, i]));
@@ -474,9 +481,10 @@ exports.approveIndent = async (req, id, items) => {
 		await transaction.rollback();
 		logger.error('SCM DB update failed after VCP stock deduction — attempting rollback', { scmError });
 
-		// Compensating transaction: restore stock in VCP
+		// Compensating transaction: restore stock in VCP. Reuses the same
+		// idempotency key as the allocation it's reversing.
 		try {
-			await rollbackStockInProductService(req, allocationResults);
+			await rollbackStockInProductService(req, allocationResults, approvalIdempotencyKey);
 		} catch (rollbackError) {
 			// Log prominently — manual intervention needed
 			logger.error('CRITICAL: VCP rollback-stock failed. Stock deducted but indent NOT approved. Manual correction required.', {
@@ -514,6 +522,8 @@ exports.deleteIndent = async (req, id) => {
 			.filter((item) => item.productSnapshot?.item_type !== 'service')
 			.map((item) => ({
 				product_id: item.product_id,
+				organization_id: indent.org_id,
+				indent_id: indent.id,
 				stock_type: item.stock_type,
 				base_issued_qty: item.qty_issued,
 				batch_id: item.batch_id,
@@ -523,7 +533,7 @@ exports.deleteIndent = async (req, id) => {
 			}));
 
 		if (allocationResults.length > 0) {
-			await rollbackStockInProductService(req, allocationResults);
+			await rollbackStockInProductService(req, allocationResults, `INDENT-${id}-DELETE-${crypto.randomUUID()}`);
 		}
 	}
 
@@ -726,7 +736,7 @@ const getPhaseRange = (budget, phasePeriod) => {
 	return { startDate, endDate };
 };
 
-async function rollbackStockInProductService(req, allocationResults) {
+async function rollbackStockInProductService(req, allocationResults, idempotencyKey = null) {
 	const URL = `${VCP_SERVICE_API_BASE_URL}${VCP_SERVICE_PRODUCT_ENDPOINT}/rollback-stock`;
 	const token = req.cookies.accessToken;
 
@@ -737,7 +747,7 @@ async function rollbackStockInProductService(req, allocationResults) {
 			Authorization: `Bearer ${token}`,
 			'x-s2s-comm-key': S2S_COMM_KEY,
 		},
-		body: JSON.stringify({ allocationResults }),
+		body: JSON.stringify({ allocationResults, idempotencyKey }),
 	});
 
 	const data = await response.json();
@@ -753,6 +763,7 @@ async function verifyIndentQuantityWithProductServices(
 	req,
 	selectedIndents,
 	allocateQuantity = false,
+	idempotencyKey = null,
 ) {
 	const URL = `${VCP_SERVICE_API_BASE_URL}${VCP_SERVICE_PRODUCT_ENDPOINT}/verify-stock`;
 	const token = req.cookies.accessToken;
@@ -768,7 +779,7 @@ async function verifyIndentQuantityWithProductServices(
 				Authorization: `Bearer ${token}`,
 				'x-s2s-comm-key': S2S_COMM_KEY,
 			},
-			body: JSON.stringify({ allocateQuantity, indents: selectedIndents }),
+			body: JSON.stringify({ allocateQuantity, indents: selectedIndents, idempotencyKey }),
 		});
 	} catch (err) {
 		throw new AppError(
