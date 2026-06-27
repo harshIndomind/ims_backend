@@ -27,7 +27,28 @@ exports.login = catchAsync(async (req, res) => {
 	res.json({ message: 'Login Successfully', data: loginData });
 });
 
-exports.logout = catchAsync((req, res) => {
+exports.logout = catchAsync(async (req, res) => {
+	const token = req.cookies.refreshToken;
+	if (token) {
+		try {
+			// ignoreExpiration: an expired refresh token still identifies a real
+			// session that should be revoked, not just one we can't act on
+			const decoded = jwt.verify(token, JWT_REFRESH_SECRET, {
+				ignoreExpiration: true,
+			});
+			// Only this service's own current_jti is ours to clear — a token
+			// minted by AUTH/VCP was never recorded in this service's column
+			if (decoded.iss === 'SCM') {
+				await User.update(
+					{ current_jti: null },
+					{ where: { uuid: decoded.sub, current_jti: decoded.jti } },
+				);
+			}
+		} catch (err) {
+			// malformed/forged token — nothing to revoke, fall through to cookie clearing
+		}
+	}
+
 	res.clearCookie('accessToken', {
 		httpOnly: true,
 		secure: COOKIE_SECURE,
