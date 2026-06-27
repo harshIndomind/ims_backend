@@ -17,6 +17,7 @@ const { init } = require('./utils/socket');
 // const {consumeAdminEvents} = require('./shared/consumeEvent');
 const { connect } = require('./config/rabbitmq');
 const { startConsumer } = require('./events/consumer');
+const { registerWorkflowNotificationHandler } = require('./events/handlers/workflowNotification.handler');
 const helmet = require('helmet');
 
 const limiter = rateLimit({
@@ -234,6 +235,7 @@ async function prepareAndStartServer() {
 
 			await connect();
 			await startConsumer();
+			registerWorkflowNotificationHandler();
 
 			server.listen(PORT, () => {
 				console.log(`${envLabel} server running on ${BASE_URL}`);

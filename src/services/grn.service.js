@@ -16,6 +16,7 @@ const {
 	VCP_SERVICE_PRODUCT_ENDPOINT,
 	S2S_COMM_KEY,
 } = require('../config/serverConfig');
+const indentService = require('./indent.service');
 
 async function callVcpStockEndpoint(req, path, body) {
 	const URL = `${VCP_SERVICE_API_BASE_URL}${VCP_SERVICE_PRODUCT_ENDPOINT}${path}`;
@@ -155,6 +156,24 @@ exports.createGRN = async (req) => {
 		}
 
 		await transaction.commit();
+
+		// Best-effort: stock has already landed in VCP and the GRN is recorded — a failure
+		// here must not undo either. Any items that don't get picked up (re-issue throws,
+		// or simply still have no available stock) stay pending and can be re-issued later,
+		// either by another GRN or the manual POST /indents/:id/reissue endpoint.
+		if (po.indent_id) {
+			try {
+				await indentService.reissuePendingQuantity(req, po.indent_id);
+			} catch (reissueError) {
+				logger.error('Re-issue after GRN failed — GRN recorded, indent left pending for manual/next-GRN re-issue', {
+					purchase_order_id,
+					indent_id: po.indent_id,
+					grn_id: grn.id,
+					reissueError,
+				});
+			}
+		}
+
 		return grn;
 	} catch (scmError) {
 		await transaction.rollback();

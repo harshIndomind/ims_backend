@@ -33,9 +33,63 @@ router.post(
 );
 
 router.post(
+	'/:id/verify',
+	checkPermission('indent', 'verify'),
+	indentController.verifyIndent,
+);
+
+router.post(
 	'/:id/approve',
+	checkPermission('indent', 'approve'),
+	indentController.approveIndent,
+);
+
+router.post(
+	'/:id/reissue',
+	checkPermission('indent', 'approve'),
+	indentController.reissueIndent,
+);
+
+router.post(
+	'/:id/reject',
+	checkPermission('indent', 'reject'),
+	indentController.rejectIndent,
+);
+
+router.post(
+	'/:id/cancel',
+	checkPermission('indent', 'cancel'),
+	indentController.cancelIndent,
+);
+
+router.post(
+	'/:id/reopen',
+	checkPermission('indent', 'reopen'),
+	indentController.reopenIndent,
+);
+
+router.post(
+	'/:id/archive',
+	checkPermission('indent', 'archive'),
+	indentController.archiveIndent,
+);
+
+router.post(
+	'/:id/restore',
+	checkPermission('indent', 'archive'),
+	indentController.restoreIndent,
+);
+
+router.put(
+	'/:id',
+	checkPermission('indent', 'edit'),
+	indentController.updateIndent,
+);
+
+router.get(
+	'/:id/workflow',
 	checkPermission('indent', 'view'),
-	indentController.verifyAndApproveIndent,
+	indentController.getIndentWorkflow,
 );
 
 router.get(
@@ -70,6 +124,14 @@ router.get(
 	'/lastestIndentId',
 	checkPermission('indent', 'view'),
 	indentController.getNextIndentId,
+);
+
+// Must be registered after every other literal-segment GET route above (e.g.
+// /lastestIndentId) — as a single :id param it would otherwise greedily match them.
+router.get(
+	'/:id',
+	checkPermission('indent', 'view'),
+	indentController.getIndentById,
 );
 
 router.delete(

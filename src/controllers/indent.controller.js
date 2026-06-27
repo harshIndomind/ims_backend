@@ -107,14 +107,119 @@ exports.verifyIndentQuantity = catchAsync(async (req, res) => {
 	});
 });
 
-exports.verifyAndApproveIndent = catchAsync(async (req, res) => {
+exports.verifyIndent = catchAsync(async (req, res) => {
 	const { id } = req.params;
 	const { items } = req.body;
-	console.log('verifyAndApproveIndent ', items);
+	const data = await indentService.verifyIndent(req, id, items);
+
+	res.status(StatusCodes.OK).json({
+		message: 'Indent verified successfully',
+		data,
+	});
+});
+
+exports.approveIndent = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { items } = req.body;
 	const data = await indentService.approveIndent(req, id, items);
 
 	res.status(StatusCodes.OK).json({
 		message: 'Indent approved successfully',
+		data,
+	});
+});
+
+exports.reissueIndent = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const data = await indentService.reissuePendingQuantity(req, id);
+
+	res.status(StatusCodes.OK).json({
+		message: 'Indent re-issue checked successfully',
+		data,
+	});
+});
+
+exports.rejectIndent = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { remarks } = req.body;
+	const data = await indentService.rejectIndent(req, id, remarks);
+
+	res.status(StatusCodes.OK).json({
+		message: 'Indent rejected successfully',
+		data,
+	});
+});
+
+exports.cancelIndent = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { remarks } = req.body;
+	const data = await indentService.cancelIndent(req, id, remarks);
+
+	res.status(StatusCodes.OK).json({
+		message: 'Indent cancelled successfully',
+		data,
+	});
+});
+
+exports.reopenIndent = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { remarks } = req.body;
+	const data = await indentService.reopenIndent(req, id, remarks);
+
+	res.status(StatusCodes.OK).json({
+		message: 'Indent reopened successfully',
+		data,
+	});
+});
+
+exports.archiveIndent = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { remarks } = req.body;
+	const data = await indentService.archiveIndent(req, id, remarks);
+
+	res.status(StatusCodes.OK).json({
+		message: 'Indent archived successfully',
+		data,
+	});
+});
+
+exports.restoreIndent = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { remarks } = req.body;
+	const data = await indentService.restoreIndent(req, id, remarks);
+
+	res.status(StatusCodes.OK).json({
+		message: 'Indent restored successfully',
+		data,
+	});
+});
+
+exports.updateIndent = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const data = await indentService.updateIndent(req, id, req.body);
+
+	res.status(StatusCodes.OK).json({
+		message: 'Indent updated successfully',
+		data,
+	});
+});
+
+exports.getIndentById = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const data = await indentService.getIndentById(req, id);
+
+	res.status(StatusCodes.OK).json({
+		message: 'Indent fetched successfully',
+		data,
+	});
+});
+
+exports.getIndentWorkflow = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const data = await indentService.getIndentWorkflow(req, id);
+
+	res.status(StatusCodes.OK).json({
+		message: 'Indent workflow fetched successfully',
 		data,
 	});
 });
