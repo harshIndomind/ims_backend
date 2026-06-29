@@ -26,6 +26,7 @@ const {
 	MasterTermsCondition,
 	MasterUnit,
 	Department,
+	MasterPlaceOfUse,
 } = require('../models/index');
 const {
 	generateInvoiceHTMLPDF,
@@ -520,10 +521,11 @@ exports.getPurchaseOrderById = async (req) => {
 			{
 				model: Indent,
 				as: 'indent',
-				attributes: ['id', 'unit_id', 'department_id', 'period_id'],
+				attributes: ['id', 'unit_id', 'department_id', 'period_id', 'place_of_use_id'],
 				include: [
 					{ model: MasterUnit, as: 'unit', attributes: ['id', 'unitName', 'unitCd'] },
 					{ model: Department, as: 'department', attributes: ['id', 'name'] },
+					{ model: MasterPlaceOfUse, as: 'placeOfUse' },
 				],
 			},
 		],
@@ -735,7 +737,7 @@ exports.generateInvoiceHtml = async (req) => {
 				{ model: MasterTermsCondition, as: 'deliveryTerm' },
 				{ model: MasterTermsCondition, as: 'pfTerm' },
 				{ model: MasterTermsCondition, as: 'ldClauseTerm' },
-				{ model: Indent, as: 'indent', include: [{ model: MasterUnit, as: 'unit' }] },
+				{ model: Indent, as: 'indent', include: [{ model: MasterUnit, as: 'unit' }, { model: MasterPlaceOfUse, as: 'placeOfUse' }] },
 			],
 		});
 

@@ -32,4 +32,5 @@ module.exports = {
     paymentRequisitionRepository: require('./payment-requisition.repository'),
     workOrderRepository: require('./work-order.repository'),
     workOrderItemsRepository: require('./work-order-items.repository'),
+    masterPlaceOfUseRepository: require('./masterPlaceOfUse.repository'),
 }

@@ -82,10 +82,19 @@ exports.createIndent = async (req, payload) => {
 				throw new AppError(errorMessage, StatusCodes.BAD_REQUEST);
 			}
 		}
-
+		
 		// 🔹 Create Indent
 		const indent = await IndentRepository.create(
-			{ ...indentPayload, unit_id: unit, department_id: 1, createdBy, org_id: user.org_id },
+			{
+				...indentPayload,
+				unit_id: unit,
+				department_id: 1,
+				// place_of_use_id is optional; the form sends '' when unselected, which
+				// MySQL rejects as an invalid integer literal for this column
+				place_of_use_id: indentPayload.place_of_use_id ? Number(indentPayload.place_of_use_id) : null,
+				createdBy,
+				org_id: user.org_id,
+			},
 			{ transaction },
 		);
 
@@ -174,6 +183,7 @@ exports.createIndent = async (req, payload) => {
 				{ association: 'department' },
 				{ association: 'period' },
 				{ association: 'remark' },
+				{ association: 'placeOfUse' },
 				{
 					association: 'IndentItems',
 					include: [
@@ -328,6 +338,7 @@ exports.getAllIndents = async (req) => {
 			{ association: 'department' },
 			{ association: 'period' },
 			{ association: 'remark' },
+			{ association: 'placeOfUse' },
 			{
 				model: IndentItem,
 				as: 'IndentItems',
@@ -393,6 +404,7 @@ exports.verifyIndentQuantity = async (req, indent_ids) => {
 				{ association: 'department' },
 				{ association: 'period' },
 				{ association: 'remark' },
+				{ association: 'placeOfUse' },
 				{
 					association: 'IndentItems',
 					include: [
@@ -438,6 +450,7 @@ async function fetchIndentForWorkflowAction(id) {
 			{ association: 'department' },
 			{ association: 'period' },
 			{ association: 'remark' },
+			{ association: 'placeOfUse' },
 			{
 				association: 'IndentItems',
 				include: [
