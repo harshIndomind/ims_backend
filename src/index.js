@@ -168,6 +168,10 @@ async function prepareAndStartServer() {
 		`${apiPrefix}/v1/master/units`,
 		require('./routes/v1/masterUnit.routes'),
 	);
+	app.use(
+		`${apiPrefix}/v1/master/place-of-use`,
+		require('./routes/v1/masterPlaceOfUse.routes'),
+	);
 
 	app.use(
 		`${apiPrefix}/v1/departments`,

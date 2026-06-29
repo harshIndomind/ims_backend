@@ -28,6 +28,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'unit_id',
 				as: 'unit',
 			});
+			Indent.belongsTo(models.MasterPlaceOfUse, {
+				foreignKey: 'place_of_use_id',
+				as: 'placeOfUse',
+			});
 		}
 	}
 	Indent.init(
@@ -48,6 +52,10 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.ENUM('item-wise', 'value-wise'),
 			},
 			unit_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
+			place_of_use_id: {
 				type: DataTypes.INTEGER,
 				allowNull: true,
 			},
