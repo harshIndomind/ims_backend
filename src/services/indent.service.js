@@ -217,6 +217,7 @@ exports.getAllIndents = async (req) => {
 		fromDate,
 		toDate,
 		selectedPeriodId,
+		selectedUnitId,
 		selectedDepartmentId,
 		selectedStatusId,
 		selectedBudgetTypeId,
@@ -265,10 +266,12 @@ exports.getAllIndents = async (req) => {
 	}
 
 	const periodId = Number(selectedPeriodId);
+	const unitId = Number(selectedUnitId);
 	const departmentId = Number(selectedDepartmentId);
 	const budgetId = Number(selectedBudgetId);
 
 	if (periodId > 0) where.period_id = periodId;
+	if (unitId > 0) where.unit_id = unitId;
 	if (departmentId > 0) where.department_id = departmentId;
 	if (indentNo) where.indent_no = indentNo;
 
@@ -715,15 +718,14 @@ exports.approveIndent = async (req, id, items) => {
 };
 
 /**
- * Re-issue: balance_indent_qty is the qty that was approved as backorder but never issued
- * (it's separate from qty_for_purchase_order, which only tracks how much of that backorder
- * is still open for a PO — see purchase-order.service.js). Once stock for a short item shows
- * up later (typically after a PO is placed and received via GRN), this re-runs the same
- * verify/allocate call approveIndent uses, against whatever's still in balance_indent_qty,
- * and issues as much as VCP now has available. Safe to call repeatedly — an item with
- * nothing pending, or no stock yet, is just a no-op for that item.
+ * Shared by previewReissue and reissuePendingQuantity: fetches the approved indent and
+ * its items still owed (balance_indent_qty > 0), and builds the request payload VCP's
+ * verify-stock expects. For serial items, the stored serial_items still includes ones
+ * already issued at approval time; VCP's verify-stock requires every serial it's handed
+ * to currently be unsold (it throws if any aren't), so only the not-yet-issued serials
+ * may be sent here.
  */
-exports.reissuePendingQuantity = async (req, indentId) => {
+async function getPendingReissueItems(indentId) {
 	const indent = await fetchIndentForWorkflowAction(indentId);
 
 	if (indent.status !== 'approved') {
@@ -736,15 +738,68 @@ exports.reissuePendingQuantity = async (req, indentId) => {
 	const pendingItems = (indent.IndentItems || []).filter(
 		(i) => parseFloat(i.balance_indent_qty || 0) > 0,
 	);
+
+	// Request exactly what's still owed — VCP decides how much of that is actually available now.
+	const plainPendingItems = pendingItems.map((i) => {
+		const plain = i.get({ plain: true });
+		if (plain.stock_type === 'serial') {
+			plain.serial_items = (plain.serial_items || []).filter((s) => !s.is_issued);
+		}
+		return { ...plain, qty: parseFloat(i.balance_indent_qty) };
+	});
+
+	return { indent, pendingItems, plainPendingItems };
+}
+
+/**
+ * Preview stage: dry-run only against VCP (no stock mutation) — lets the user see how
+ * much of an already-approved indent's pending balance is actually available right now
+ * before committing to a re-issue. Mirrors verifyIndent's advisory dry run.
+ */
+exports.previewReissue = async (req, indentId) => {
+	const { pendingItems, plainPendingItems } = await getPendingReissueItems(indentId);
+	if (pendingItems.length === 0) {
+		return { indent_id: indentId, items: [] };
+	}
+
+	const { allocationResults } = await verifyIndentQuantityWithProductServices(
+		req,
+		plainPendingItems,
+		false,
+	);
+	const allocationMap = new Map(allocationResults.map((a) => [a.product_id, a]));
+
+	const items = pendingItems.map((item) => {
+		const allocation = allocationMap.get(item.product_id);
+		return {
+			product_id: item.product_id,
+			item_name: item.item_name,
+			pending_qty: parseFloat(item.balance_indent_qty),
+			available_now: parseFloat(allocation?.issued_qty || 0),
+			still_short: parseFloat(allocation?.qty_for_purchase_order || 0),
+		};
+	});
+
+	return { indent_id: indentId, items };
+};
+
+/**
+ * Re-issue: balance_indent_qty is the qty that was approved as backorder but never issued
+ * (it's separate from qty_for_purchase_order, which only tracks how much of that backorder
+ * is still open for a PO — see purchase-order.service.js). Once stock for a short item shows
+ * up later (typically after a PO is placed and received via GRN), this re-runs the same
+ * verify/allocate call approveIndent uses, against whatever's still in balance_indent_qty,
+ * and issues as much as VCP now has available. Safe to call repeatedly — an item with
+ * nothing pending, or no stock yet, is just a no-op for that item. This is a deliberate,
+ * user-initiated action (see previewReissue above) — not triggered automatically by GRN
+ * creation, so cancelling a GRN can never leave a re-issue dangling against stock that's
+ * no longer there.
+ */
+exports.reissuePendingQuantity = async (req, indentId) => {
+	const { pendingItems, plainPendingItems } = await getPendingReissueItems(indentId);
 	if (pendingItems.length === 0) {
 		return { indent_id: indentId, reissued: [] };
 	}
-
-	// Request exactly what's still owed — VCP decides how much of that is actually available now.
-	const plainPendingItems = pendingItems.map((i) => ({
-		...i.get({ plain: true }),
-		qty: parseFloat(i.balance_indent_qty),
-	}));
 
 	const reissueIdempotencyKey = `INDENT-${indentId}-REISSUE-${crypto.randomUUID()}`;
 	const { allocationResults } = await verifyIndentQuantityWithProductServices(

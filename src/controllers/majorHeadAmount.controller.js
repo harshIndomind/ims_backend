@@ -18,6 +18,7 @@ exports.updateMasterMajorHeadAmount = catchAsync(async (req, res) => {
 	const { id } = req.params;
 
 	const data = await masterMajorHeadAmountService.updateMasterMajorHeadAmount(
+		req,
 		id,
 		req.body,
 	);
@@ -58,7 +59,7 @@ exports.getMasterMajorHeadAmountById = catchAsync(async (req, res) => {
 exports.deleteMasterMajorHeadAmount = catchAsync(async (req, res) => {
 	const { id } = req.params;
 
-	await masterMajorHeadAmountService.deleteMasterMajorHeadAmount(id);
+	await masterMajorHeadAmountService.deleteMasterMajorHeadAmount(req, id);
 
 	res.status(StatusCodes.OK).json({
 		message: 'Master Major Head deleted successfully',

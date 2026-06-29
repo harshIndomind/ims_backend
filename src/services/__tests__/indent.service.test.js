@@ -245,4 +245,73 @@ describe('reissuePendingQuantity', () => {
 		expect(sentBody.indents[0].qty).toBe(6);
 		expect(sentBody.allocateQuantity).toBe(true);
 	});
+
+	it('only sends VCP the not-yet-issued serials for a serial-type pending item', async () => {
+		const item = makeIndentItem({
+			product_id: 1,
+			stock_type: 'serial',
+			qty_issued: 5,
+			balance_indent_qty: 1,
+			serial_items: [
+				{ serial_no: 'A', is_issued: 1 },
+				{ serial_no: 'B', is_issued: 1 },
+				{ serial_no: 'C', is_issued: 0 },
+			],
+		});
+		indentRepo.findById.mockResolvedValue(approvedIndent(item));
+		fetch.mockResolvedValueOnce(vcpJsonResponse([{ product_id: 1, issued_qty: 1, issuedSerials: ['C'] }]));
+
+		const req = { cookies: { accessToken: 'tok' }, user: { id: 1 } };
+		await indentService.reissuePendingQuantity(req, 1);
+
+		const sentBody = JSON.parse(fetch.mock.calls[0][1].body);
+		expect(sentBody.indents[0].serial_items).toEqual([{ serial_no: 'C', is_issued: 0 }]);
+	});
+});
+
+describe('previewReissue', () => {
+	function approvedIndent(item) {
+		return {
+			id: 1,
+			status: 'approved',
+			IndentItems: [item],
+			update: jest.fn().mockResolvedValue(undefined),
+		};
+	}
+
+	it('is a no-op when nothing has a positive balance_indent_qty', async () => {
+		const item = makeIndentItem({ product_id: 1, qty_issued: 4, balance_indent_qty: 0 });
+		indentRepo.findById.mockResolvedValue(approvedIndent(item));
+
+		const result = await indentService.previewReissue({ cookies: {}, user: {} }, 1);
+
+		expect(result).toEqual({ indent_id: 1, items: [] });
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
+	it('rejects when the indent is not approved', async () => {
+		const item = makeIndentItem({ product_id: 1, balance_indent_qty: 6 });
+		indentRepo.findById.mockResolvedValue({ id: 1, status: 'in_progress', IndentItems: [item] });
+
+		await expect(indentService.previewReissue({ cookies: {}, user: {} }, 1)).rejects.toThrow(/not approved/);
+	});
+
+	it('dry-runs only — does not mutate stock or persist anything, reports availability', async () => {
+		const item = makeIndentItem({ product_id: 1, item_name: 'Widget', qty_issued: 4, balance_indent_qty: 6 });
+		indentRepo.findById.mockResolvedValue(approvedIndent(item));
+		fetch.mockResolvedValueOnce(
+			vcpJsonResponse([{ product_id: 1, issued_qty: 2, qty_for_purchase_order: 4, issuedSerials: [] }]),
+		);
+
+		const req = { cookies: { accessToken: 'tok' }, user: { id: 1 } };
+		const result = await indentService.previewReissue(req, 1);
+
+		const sentBody = JSON.parse(fetch.mock.calls[0][1].body);
+		expect(sentBody.allocateQuantity).toBe(false);
+		expect(item.update).not.toHaveBeenCalled();
+		expect(result).toEqual({
+			indent_id: 1,
+			items: [{ product_id: 1, item_name: 'Widget', pending_qty: 6, available_now: 2, still_short: 4 }],
+		});
+	});
 });

@@ -16,7 +16,6 @@ const {
 	VCP_SERVICE_PRODUCT_ENDPOINT,
 	S2S_COMM_KEY,
 } = require('../config/serverConfig');
-const indentService = require('./indent.service');
 
 async function callVcpStockEndpoint(req, path, body) {
 	const URL = `${VCP_SERVICE_API_BASE_URL}${VCP_SERVICE_PRODUCT_ENDPOINT}${path}`;
@@ -116,6 +115,7 @@ exports.createGRN = async (req) => {
 			product_id: poItem.product_id,
 			batch_id: poItem.batch_id || null,
 			qty: parseFloat(input.received_qty || 0),
+			selected_uom_id: poItem.selected_uom_id || null,
 			serial_nos: input.serial_nos || undefined,
 			rate: parseFloat(poItem.price) || null,
 			reference_id: purchase_order_id,
@@ -157,23 +157,10 @@ exports.createGRN = async (req) => {
 
 		await transaction.commit();
 
-		// Best-effort: stock has already landed in VCP and the GRN is recorded — a failure
-		// here must not undo either. Any items that don't get picked up (re-issue throws,
-		// or simply still have no available stock) stay pending and can be re-issued later,
-		// either by another GRN or the manual POST /indents/:id/reissue endpoint.
-		if (po.indent_id) {
-			try {
-				await indentService.reissuePendingQuantity(req, po.indent_id);
-			} catch (reissueError) {
-				logger.error('Re-issue after GRN failed — GRN recorded, indent left pending for manual/next-GRN re-issue', {
-					purchase_order_id,
-					indent_id: po.indent_id,
-					grn_id: grn.id,
-					reissueError,
-				});
-			}
-		}
-
+		// Re-issuing any pending indent qty against this PO's indent is a deliberate,
+		// user-initiated action (POST /indents/:id/reissue/preview then /reissue) — not
+		// triggered automatically here, so a GRN can be cancelled without silently leaving
+		// an indent's re-issue un-reversed against stock that's no longer there.
 		return grn;
 	} catch (scmError) {
 		await transaction.rollback();
@@ -186,6 +173,7 @@ exports.createGRN = async (req) => {
 					product_id: poItem.product_id,
 					batch_id: poItem.batch_id || null,
 					qty: parseFloat(input.received_qty || 0),
+					selected_uom_id: poItem.selected_uom_id || null,
 					serial_nos: input.serial_nos || undefined,
 					reference_id: purchase_order_id,
 					reference_line_id: poItem.id,
@@ -230,7 +218,13 @@ exports.cancelGRN = async (req, id) => {
 	const { org_id } = req.user;
 	const grn = await GoodsReceiptNote.findOne({
 		where: { id, org_id },
-		include: [{ model: GoodsReceiptNoteItem, as: 'items' }],
+		include: [
+			{
+				model: GoodsReceiptNoteItem,
+				as: 'items',
+				include: [{ model: PurchaseOrderItem, as: 'purchaseOrderItem', attributes: ['id', 'selected_uom_id'] }],
+			},
+		],
 	});
 	if (!grn) throw new AppError('Goods Receipt Note not found', StatusCodes.NOT_FOUND);
 	if (grn.status === 'cancelled') {
@@ -241,6 +235,7 @@ exports.cancelGRN = async (req, id) => {
 		product_id: item.product_id,
 		batch_id: item.batch_id || null,
 		qty: parseFloat(item.received_qty || 0),
+		selected_uom_id: item.purchaseOrderItem?.selected_uom_id || null,
 		serial_nos: item.serial_nos || undefined,
 		reference_id: grn.purchase_order_id,
 		reference_line_id: item.purchase_order_item_id,

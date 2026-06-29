@@ -45,6 +45,12 @@ router.post(
 );
 
 router.post(
+	'/:id/reissue/preview',
+	checkPermission('indent', 'approve'),
+	indentController.previewReissue,
+);
+
+router.post(
 	'/:id/reissue',
 	checkPermission('indent', 'approve'),
 	indentController.reissueIndent,

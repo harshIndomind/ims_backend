@@ -7,6 +7,7 @@ const {
 	MasterPeriod,
 	MasterMajorHeadAmount,
 	MasterSubHead,
+	Budget,
 	organization,
 } = require('../models/index');
 const {
@@ -15,7 +16,10 @@ const {
 const {
 	getAmountByMajorHeadAndPeriodAndSubHead,
 } = require('../services/budget.service');
+const auditLogService = require('./auditLog.service');
 const { fn, col } = require('sequelize');
+
+const ENTITY_TYPE = 'sub_head_amount';
 
 /**
  * Create
@@ -34,6 +38,27 @@ exports.createSubHeadAmount = async (req, payload) => {
 		throw new AppError(
 			'Major head id, period id, sub head id and amount are required',
 			StatusCodes.BAD_REQUEST,
+		);
+	}
+
+	const subHead = await MasterSubHead.findByPk(sub_head_id);
+	if (!subHead) {
+		throw new AppError('Sub head not found', StatusCodes.NOT_FOUND);
+	}
+	if (Number(subHead.major_head_id) !== Number(major_head_id)) {
+		throw new AppError(
+			'Selected sub head does not belong to the selected major head',
+			StatusCodes.BAD_REQUEST,
+		);
+	}
+
+	const existing = await masterSubHeadAmountRepo.getAmountByMajorHeadAndPeriod({
+		where: { org_id, major_head_id, period_id, sub_head_id },
+	});
+	if (existing) {
+		throw new AppError(
+			'A sub head amount already exists for this major head, period and sub head combination',
+			StatusCodes.CONFLICT,
 		);
 	}
 
@@ -89,6 +114,14 @@ exports.createSubHeadAmount = async (req, payload) => {
 		amount: subHeadAmountData.amount,
 	});
 
+	await auditLogService.record({
+		req,
+		entityType: ENTITY_TYPE,
+		entityId: subHeadAmountData.id,
+		action: 'create',
+		newState: subHeadAmountData.toJSON(),
+	});
+
 	return subHeadAmountData;
 };
 
@@ -111,6 +144,21 @@ exports.updateSubHeadAmount = async (req, payload) => {
 	if (!masterMajorHeadAmount) {
 		logger.warn('Sub head amount not found for update', { id });
 		throw new AppError('Sub head amount not found', StatusCodes.NOT_FOUND);
+	}
+
+	const before = masterMajorHeadAmount.toJSON();
+
+	if (Number(sub_head_id) !== Number(masterMajorHeadAmount.sub_head_id)) {
+		const subHead = await MasterSubHead.findByPk(sub_head_id);
+		if (!subHead) {
+			throw new AppError('Sub head not found', StatusCodes.NOT_FOUND);
+		}
+		if (Number(subHead.major_head_id) !== Number(major_head_id)) {
+			throw new AppError(
+				'Selected sub head does not belong to the selected major head',
+				StatusCodes.BAD_REQUEST,
+			);
+		}
 	}
 
 	const budgetData = await getAmountByMajorHeadAndPeriodAndSubHead(
@@ -167,6 +215,15 @@ exports.updateSubHeadAmount = async (req, payload) => {
 
 	logger.info('Sub head amount updated', {
 		id,
+	});
+
+	await auditLogService.recordChange({
+		req,
+		entityType: ENTITY_TYPE,
+		entityId: masterMajorHeadAmount.id,
+		action: 'update',
+		before,
+		after: masterMajorHeadAmount.toJSON(),
 	});
 
 	return masterMajorHeadAmount;
@@ -297,7 +354,7 @@ exports.getSubHeadAmountById = async (req, id) => {
 /**
  * Delete
  */
-exports.deleteSubHeadAmount = async (id) => {
+exports.deleteSubHeadAmount = async (req, id) => {
 	const masterMajorHeadAmount = await masterSubHeadAmountRepo.findById(id);
 
 	if (!masterMajorHeadAmount) {
@@ -305,9 +362,29 @@ exports.deleteSubHeadAmount = async (id) => {
 		throw new AppError('Sub head amount not found', StatusCodes.NOT_FOUND);
 	}
 
+	// Budgets.sub_head_amount_id is ON DELETE CASCADE off this table — deleting
+	// unguarded would silently wipe out any budgets already created against it.
+	const budgetCount = await Budget.count({ where: { sub_head_amount_id: id } });
+	if (budgetCount > 0) {
+		throw new AppError(
+			'Cannot delete — budgets are already using this sub-head allocation',
+			StatusCodes.UNPROCESSABLE_ENTITY,
+		);
+	}
+
+	const before = masterMajorHeadAmount.toJSON();
+
 	await masterSubHeadAmountRepo.delete(masterMajorHeadAmount);
 
 	logger.info('Sub head amount deleted', { id });
+
+	await auditLogService.record({
+		req,
+		entityType: ENTITY_TYPE,
+		entityId: Number(id),
+		action: 'delete',
+		previousState: before,
+	});
 
 	return true;
 };

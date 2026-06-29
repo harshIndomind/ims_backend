@@ -129,6 +129,16 @@ exports.approveIndent = catchAsync(async (req, res) => {
 	});
 });
 
+exports.previewReissue = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const data = await indentService.previewReissue(req, id);
+
+	res.status(StatusCodes.OK).json({
+		message: 'Re-issue availability previewed successfully',
+		data,
+	});
+});
+
 exports.reissueIndent = catchAsync(async (req, res) => {
 	const { id } = req.params;
 	const data = await indentService.reissuePendingQuantity(req, id);
