@@ -25,6 +25,7 @@ const {
 	PaymentRequisition,
 	MasterTermsCondition,
 	MasterUnit,
+	MasterPlaceOfUse,
 } = require('../models/index');
 const {
 	generateInvoiceHTMLPDF,
@@ -515,7 +516,8 @@ exports.getPurchaseOrderById = async (req) => {
 			{
 				model: Indent,
 				as: 'indent',
-				attributes: ['id', 'department_id', 'period_id'],
+				attributes: ['id', 'department_id', 'period_id', 'place_of_use_id'],
+				include: [{ model: MasterPlaceOfUse, as: 'placeOfUse' }],
 			},
 		],
 		order: [['createdAt', 'DESC']],
@@ -726,7 +728,7 @@ exports.generateInvoiceHtml = async (req) => {
 				{ model: MasterTermsCondition, as: 'deliveryTerm' },
 				{ model: MasterTermsCondition, as: 'pfTerm' },
 				{ model: MasterTermsCondition, as: 'ldClauseTerm' },
-				{ model: Indent, as: 'indent', include: [{ model: MasterUnit, as: 'unit' }] },
+				{ model: Indent, as: 'indent', include: [{ model: MasterUnit, as: 'unit' }, { model: MasterPlaceOfUse, as: 'placeOfUse' }] },
 			],
 		});
 
