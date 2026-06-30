@@ -8,12 +8,6 @@ const {
 } = require('../repository/index');
 const logger = require('../utils/logger');
 const { sequelize } = require('../models/index');
-const productClient = require('../grpc/clients/product.client');
-const productUomClient = require('../grpc/clients/productUom.client');
-const promisifyGrpc = require('../utils/promisifyGrpc');
-
-const getProductById = promisifyGrpc(productClient, 'GetProductById');
-const getProductUomById = promisifyGrpc(productUomClient, 'GetProductUomById');
 const { Op, where } = require('sequelize');
 const {
 	User,
@@ -689,35 +683,6 @@ function checkForDuplicateSerials(productItems) {
 		}
 	}
 	return { status: false, duplicateSerials }; // No duplicates
-}
-
-async function uomConversion(qty, product_id, selected_unit_id) {
-	const product = await getProductById({ productId: product_id });
-	console.log('Product from VCP:', product);
-	// 2️⃣ Find conversion ratio
-	let conversionRatio = 1; // default for base unit
-
-	const selectUnit = await getProductUomById({ id: selected_unit_id });
-	console.log('Product UOM from VCP:', selectUnit);
-
-	if (selectUnit.unit_id !== product.unit_id) {
-		const uom = product.uoms.find((u) => u.id === selected_unit_id);
-		if (!uom) throw new Error('Invalid UOM selected for this product');
-
-		// uom.qty means "1 base unit = uom.qty of this unit"
-		// So 1 GMS = 1 / 1000 KGS
-		conversionRatio = 1 / parseFloat(uom.qty);
-	}
-
-	print(conversionRatio, 'conversionRatio => ');
-	// 3️⃣ Calculate base unit quantity to deduct
-	const deductedQtyInBase = parseFloat(qty) * conversionRatio;
-	print(deductedQtyInBase, 'deductedQtyInBase => ');
-
-	return deductedQtyInBase;
-	// 4️⃣ Update product stock
-	// product.available_qty -= deductedQtyInBase;
-	// await product.save();
 }
 
 exports.generateInvoiceHtml = async (req) => {
