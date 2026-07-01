@@ -258,7 +258,7 @@ exports.getAllIndents = async (req) => {
 	if (selectedStatusId === 'no') where.status = { [Op.in]: ['draft', 'in_progress'] };
 	if (selectedStatusId === 'rejected') where.status = 'rejected';
 	if (selectedStatusId === 'cancelled') where.status = 'cancelled';
-	if (selectedBudgetTypeId != 'all') where.budgetType = selectedBudgetTypeId;
+	if (selectedBudgetTypeId && selectedBudgetTypeId != 'all') where.budgetType = selectedBudgetTypeId;
 
 	if (fromDate && toDate) {
 		const from_date = parseDate(fromDate);
@@ -558,7 +558,7 @@ exports.verifyIndent = async (req, id, items) => {
 	return fetchIndentForWorkflowAction(id);
 };
 
-exports.approveIndent = async (req, id, items) => {
+exports.approveIndent = async (req, id, items, lastDate) => {
 	const user = req.user;
 	const approvedBy = actorSnapshot(user);
 
@@ -693,6 +693,7 @@ exports.approveIndent = async (req, id, items) => {
 				status: instance.status,
 				approved_by: approvedBy,
 				approved_at: new Date(),
+				last_date: lastDate || new Date(),
 			},
 			{ transaction },
 		);
@@ -1015,13 +1016,78 @@ exports.updateIndent = async (req, id, payload) => {
 	const before = indent.get({ plain: true });
 	const { selectedIndents, item, unit, ...indentPayload } = payload;
 
+	if (selectedIndents !== undefined && (!Array.isArray(selectedIndents) || selectedIndents.length === 0)) {
+		throw new AppError('At least one item is required to update an indent.', StatusCodes.BAD_REQUEST);
+	}
+
 	const transaction = await sequelize.transaction();
 	try {
 		await IndentRepository.updateById(
 			id,
-			{ ...indentPayload, ...(unit ? { unit_id: unit } : {}) },
+			{
+				...indentPayload,
+				...(unit ? { unit_id: unit } : {}),
+				// place_of_use_id is optional; the form sends '' when unselected, which
+				// MySQL rejects as an invalid integer literal for this column (see createIndent).
+				...('place_of_use_id' in indentPayload
+					? { place_of_use_id: indentPayload.place_of_use_id ? Number(indentPayload.place_of_use_id) : null }
+					: {}),
+			},
 			{ transaction },
 		);
+
+		// Item-level edits (qty/price/discount/add/delete) only ever reach this far in the
+		// payload — replace the whole IndentItems set rather than diffing, mirroring
+		// createIndent's item-creation shape. Safe because updateIndent is only reachable
+		// while the indent is still editable (draft / rejected / pre-verify in_progress —
+		// see workflowEngine.isEditable), i.e. before verify/approve have ever written
+		// qty_issued/balance_indent_qty/etc. onto these rows, so there's nothing of value to
+		// preserve across the replace. IndentSerialItems cascade-delete via FK on destroy.
+		if (Array.isArray(selectedIndents) && selectedIndents.length > 0) {
+			await IndentItem.destroy({ where: { indent_id: id }, transaction });
+
+			for (const i of selectedIndents) {
+				const indentItem = await IndentItemRepository.create(
+					{
+						indent_id: id,
+						budget_id: i.budget_id,
+						model_id: i.model || null,
+						product_id: Number(i.product_id),
+						batch_id: Number(i.batch_id) || null,
+						item_name: i.product_name,
+						item_code: i.product_code,
+						uom_id: i.selected_uom_id || null,
+						uom_name: i.selected_uom_unit || null,
+						qty: i.qty,
+						requested_qty: i.qty,
+						avg_rate: i.price,
+						discount: i.discount,
+						amount: i.total,
+						issue_date: i.issue_date,
+						days: i.days,
+						specification: i.specification,
+						stock_type: i.stock_type,
+						productSnapshot: i || null,
+					},
+					{ transaction },
+				);
+
+				if (i.stock_type === 'serial' && i.selectedSerials?.length) {
+					await Promise.all(
+						i.selectedSerials.map((serialNo) =>
+							IndentSerialRepository.create(
+								{
+									indent_item_id: indentItem.id,
+									product_id: i.product_id,
+									serial_no: serialNo.trim(),
+								},
+								{ transaction },
+							),
+						),
+					);
+				}
+			}
+		}
 
 		// If editing a Rejected indent, restart the workflow per the definition's config
 		// rather than leaving it stuck in a terminal state with stale stage history.
@@ -1071,6 +1137,10 @@ exports.deleteIndent = async (req, id) => {
 
 	if (!indent) {
 		throw new AppError(`Indent with ID ${id} not found`, StatusCodes.NOT_FOUND);
+	}
+
+	if (indent.status === 'approved') {
+		throw new AppError('Approved indents cannot be deleted', StatusCodes.BAD_REQUEST);
 	}
 
 	// If already verified, stock was deducted in VCP — roll it back first.

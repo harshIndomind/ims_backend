@@ -109,6 +109,12 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.DATE,
 				allowNull: true,
 			},
+			// Approver-supplied deadline by which the approved items must be issued;
+			// distinct from approved_at, which is just the system timestamp of the action.
+			last_date: {
+				type: DataTypes.DATEONLY,
+				allowNull: true,
+			},
 			rejected_by: {
 				type: DataTypes.JSON,
 				allowNull: true,

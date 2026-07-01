@@ -224,8 +224,13 @@ async function prepareAndStartServer() {
 	);
 	app.use(
 		`${apiPrefix}/v1/master/term-categories`,
-		require('./routes/v1//masterTermCategory.routes'),  
-	);	
+		require('./routes/v1//masterTermCategory.routes'),
+	);
+
+	app.use(
+		`${apiPrefix}/v1/workflow-definitions`,
+		require('./routes/v1/workflow-definitions.routes'),
+	);
 
 	app.get('/', (req, res) => {
 		res.status(200).json({ status: true, message: '✅ Its working.' });

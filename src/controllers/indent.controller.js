@@ -120,8 +120,8 @@ exports.verifyIndent = catchAsync(async (req, res) => {
 
 exports.approveIndent = catchAsync(async (req, res) => {
 	const { id } = req.params;
-	const { items } = req.body;
-	const data = await indentService.approveIndent(req, id, items);
+	const { items, last_date } = req.body;
+	const data = await indentService.approveIndent(req, id, items, last_date);
 
 	res.status(StatusCodes.OK).json({
 		message: 'Indent approved successfully',

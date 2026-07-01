@@ -889,6 +889,7 @@ async function calculateSaleInvoice(invoice) {
 					}
 					return '0.00';
 				})(),
+				uomDisplay: item.uomSnapshot?.unit?.name || item.uomSnapshot?.unit?.code || 'N/A',
 			};
 		}),
 		additionalRemarks: invoiceData.remarks,
