@@ -113,12 +113,14 @@ exports.generateExcel = async (data, filePath) => {
 			'Qty Issue',
 			'Actual Qty Issue',
 			'Qty Pending',
+			'Stock at Indent',
+			'Pending Re-issue',
 			'Last Date',
 			'Requirement Date',
 			'Budget ID',
 			'Details',
 		]);
-		
+
 		itemHeader.eachCell((cell) => {
 			cell.font = { bold: true };
 			cell.fill = {
@@ -127,8 +129,8 @@ exports.generateExcel = async (data, filePath) => {
 				fgColor: { argb: 'FFD9EAF7' },
 			};
 		});
-		
-		worksheet.mergeCells(`L${itemHeader.number}:P${itemHeader.number}`);
+
+		worksheet.mergeCells(`N${itemHeader.number}:R${itemHeader.number}`);
 
 		// 🔷 ITEMS
 		indent.IndentItems.forEach((item) => {
@@ -141,12 +143,14 @@ exports.generateExcel = async (data, filePath) => {
 				item.qty_issued,
 				item.qty_updated_by_verifier,
 				item.qty_for_purchase_order,
+				item.qty_in_stock,
+				item.balance_indent_qty,
 				new Date(item.issue_date).toLocaleDateString(),
 				item.days ? new Date(item.days).toLocaleDateString() : '',
 				item.budget?.budget_id,
 				indent.drawing_details || 'N/A',
 			]);
-			worksheet.mergeCells(`L${row.number}:P${row.number}`);
+			worksheet.mergeCells(`N${row.number}:R${row.number}`);
 		});
 
 		// 🔻 SPACE BETWEEN INDENTS

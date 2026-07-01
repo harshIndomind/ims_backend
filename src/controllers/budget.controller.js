@@ -22,7 +22,7 @@ exports.updateBudget = catchAsync(async (req, res) => {
 	const { id } = req.params;
 	console.log('req.body ', req.body);
 
-	const data = await budgetService.updateBudget(id, req.body);
+	const data = await budgetService.updateBudget(req, id, req.body);
 
 	res.status(StatusCodes.OK).json({
 		message: 'Budget updated successfully',
@@ -50,7 +50,7 @@ exports.getBudgetById = catchAsync(async (req, res) => {
 exports.deleteBudget = catchAsync(async (req, res) => {
 	const { id } = req.params;
 
-	await budgetService.deleteBudget(id);
+	await budgetService.deleteBudget(req, id);
 
 	res.status(StatusCodes.OK).json({
 		message: 'Budget deleted successfully',
@@ -60,15 +60,18 @@ exports.deleteBudget = catchAsync(async (req, res) => {
 exports.getAmountByMajorHeadAndPeriodAndSubHead = catchAsync(
 	async (req, res) => {
 		const { major_head_id, period_id, subhead_id } = req.params;
+		const { exclude_budget_id } = req.query;
 		logger.info('Sanctioned Amount Controller', {
 			major_head_id,
 			period_id,
 			subhead_id,
+			exclude_budget_id,
 		});
 		const data = await budgetService.getAmountByMajorHeadAndPeriodAndSubHead(
 			major_head_id,
 			period_id,
 			subhead_id,
+			exclude_budget_id,
 		);
 
 		res.status(StatusCodes.OK).json({
@@ -80,7 +83,7 @@ exports.getAmountByMajorHeadAndPeriodAndSubHead = catchAsync(
 
 exports.approveBudget = catchAsync(async (req, res) => {
 	const { ids } = req.body;
-	const data = await budgetService.approveBudget(ids, req.user.id);
+	const data = await budgetService.approveBudget(req, ids, req.user.id);
 
 	res.status(StatusCodes.OK).json({
 		message: 'Budgets approved successfully',

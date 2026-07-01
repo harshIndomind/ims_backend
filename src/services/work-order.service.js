@@ -18,6 +18,7 @@ const {
 	PaymentRequisition,
 	MasterTermsCondition,
 	MasterUnit,
+	Department,
 	MasterPlaceOfUse,
 } = require('../models/index');
 const {
@@ -402,9 +403,13 @@ exports.getAllWorkOrders = async (req) => {
 			{
 				model: Indent,
 				as: 'indent',
-				attributes: ['id', 'unit_id'],
+				attributes: ['id', 'unit_id', 'department_id'],
 				where: unit_id ? { unit_id: Number(unit_id) } : undefined,
 				required: !!unit_id,
+				include: [
+					{ model: MasterUnit, as: 'unit', attributes: ['id', 'unitName', 'unitCd'] },
+					{ model: Department, as: 'department', attributes: ['id', 'name'] },
+				],
 			},
 		],
 		order: [['createdAt', 'DESC']],
@@ -437,8 +442,12 @@ exports.getWorkOrderById = async (req) => {
 			{
 				model: Indent,
 				as: 'indent',
-				attributes: ['id', 'department_id', 'period_id', 'place_of_use_id'],
-				include: [{ model: MasterPlaceOfUse, as: 'placeOfUse' }],
+				attributes: ['id', 'unit_id', 'department_id', 'period_id', 'place_of_use_id'],
+				include: [
+					{ model: MasterUnit, as: 'unit', attributes: ['id', 'unitName', 'unitCd'] },
+					{ model: Department, as: 'department', attributes: ['id', 'name'] },
+					{ model: MasterPlaceOfUse, as: 'placeOfUse' },
+				],
 			},
 		],
 		order: [['createdAt', 'DESC']],

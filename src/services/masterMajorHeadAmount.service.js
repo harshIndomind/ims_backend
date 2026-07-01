@@ -8,7 +8,10 @@ const {
 	MasterSubHeadAmount,
 	organization,
 } = require('../models/index');
+const auditLogService = require('./auditLog.service');
 const { fn, col } = require('sequelize');
+
+const ENTITY_TYPE = 'major_head_amount';
 /**
  * Create
  */
@@ -27,6 +30,16 @@ exports.createMasterMajorHeadAmount = async (req, payload) => {
 		);
 	}
 
+	const existing = await masterMajorHeadAmountRepo.getAmountByMajorHeadAndPeriod({
+		where: { org_id, major_head_id, period_id },
+	});
+	if (existing) {
+		throw new AppError(
+			'A major head amount already exists for this major head and period',
+			StatusCodes.CONFLICT,
+		);
+	}
+
 	const majorHeadAmount = await masterMajorHeadAmountRepo.create({
 		org_id,
 		major_head_id,
@@ -41,13 +54,21 @@ exports.createMasterMajorHeadAmount = async (req, payload) => {
 		amount: majorHeadAmount.amount,
 	});
 
+	await auditLogService.record({
+		req,
+		entityType: ENTITY_TYPE,
+		entityId: majorHeadAmount.id,
+		action: 'create',
+		newState: majorHeadAmount.toJSON(),
+	});
+
 	return majorHeadAmount;
 };
 
 /**
  * Update
  */
-exports.updateMasterMajorHeadAmount = async (id, payload) => {
+exports.updateMasterMajorHeadAmount = async (req, id, payload) => {
 	const { major_head_id, period_id, amount } = payload;
 
 	const masterMajorHeadAmount = await masterMajorHeadAmountRepo.findById(id);
@@ -70,6 +91,8 @@ exports.updateMasterMajorHeadAmount = async (id, payload) => {
 		);
 	}
 
+	const before = masterMajorHeadAmount.toJSON();
+
 	await masterMajorHeadAmountRepo.update(masterMajorHeadAmount, {
 		major_head_id,
 		period_id,
@@ -78,6 +101,15 @@ exports.updateMasterMajorHeadAmount = async (id, payload) => {
 
 	logger.info('Master Major Head amount updated', {
 		id,
+	});
+
+	await auditLogService.recordChange({
+		req,
+		entityType: ENTITY_TYPE,
+		entityId: masterMajorHeadAmount.id,
+		action: 'update',
+		before,
+		after: masterMajorHeadAmount.toJSON(),
 	});
 
 	return masterMajorHeadAmount;
@@ -170,7 +202,7 @@ exports.getMasterMajorHeadAmountById = async (id) => {
 /**
  * Delete
  */
-exports.deleteMasterMajorHeadAmount = async (id) => {
+exports.deleteMasterMajorHeadAmount = async (req, id) => {
 	const masterMajorHeadAmount = await masterMajorHeadAmountRepo.findById(id);
 
 	if (!masterMajorHeadAmount) {
@@ -181,9 +213,33 @@ exports.deleteMasterMajorHeadAmount = async (id) => {
 		);
 	}
 
+	// MasterSubHeadAmounts.major_head_amount_id is ON DELETE CASCADE, and Budgets'
+	// sub_head_amount_id is in turn ON DELETE CASCADE off MasterSubHeadAmounts — so
+	// deleting this row unguarded would silently wipe out sub-head allocations and any
+	// budgets already created against them. Block it the same way update is blocked.
+	const subHeadCount = await MasterSubHeadAmount.count({
+		where: { major_head_amount_id: id },
+	});
+	if (subHeadCount > 0) {
+		throw new AppError(
+			'Cannot delete — sub-heads have already been allocated from this major head amount',
+			StatusCodes.UNPROCESSABLE_ENTITY,
+		);
+	}
+
+	const before = masterMajorHeadAmount.toJSON();
+
 	await masterMajorHeadAmountRepo.delete(masterMajorHeadAmount);
 
 	logger.info('Master Major Head Amount deleted', { id });
+
+	await auditLogService.record({
+		req,
+		entityType: ENTITY_TYPE,
+		entityId: Number(id),
+		action: 'delete',
+		previousState: before,
+	});
 
 	return true;
 };

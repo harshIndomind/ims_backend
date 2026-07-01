@@ -461,6 +461,7 @@
                             <th rowspan="2">Name of Product / Service</th>
                             <th rowspan="2">HSN / SAC</th>
                             <th rowspan="2">Qty</th>
+                            <th rowspan="2">UOM</th>
                             <th rowspan="2">Rate</th>
                             <th rowspan="2">Disc. (%)</th>
                             <th rowspan="2">Taxable Value</th>
@@ -504,6 +505,7 @@
 
         <td style="text-align:center;"><%= item.hsn_sac_code || '' %></td>
         <td style="text-align:center;"><%= item.qty %></td>
+        <td style="text-align:center;"><%= item.uomDisplay || 'N/A' %></td>
         <td style="text-align:right;"><%= parseFloat(item.price).toFixed(2) %></td>
         <td style="text-align:right;"><%= parseFloat(item.itemDiscountPercentage).toFixed(2) %></td>
         <td style="text-align:right;"><%= parseFloat(item.totalTaxable).toFixed(2) %></td>
@@ -524,6 +526,7 @@
     <th colspan="2" style="text-align:right;">Total</th>
     <th></th>
     <th style="text-align:right;"><%= parseFloat(invoice.totalQuantity).toFixed(2) %></th>
+    <th></th>
     <th></th>
     <th style="text-align:right;"><%= parseFloat(invoice.totalDiscountAmount).toFixed(2) %></th>
     <th style="text-align:right;"><%= parseFloat(invoice.total_taxable).toFixed(2) %></th>

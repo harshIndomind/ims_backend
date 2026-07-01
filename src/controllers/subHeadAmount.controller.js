@@ -42,7 +42,7 @@ exports.getSubHeadAmountById = catchAsync(async (req, res) => {
 exports.deleteSubHeadAmount = catchAsync(async (req, res) => {
 	const { id } = req.params;
 
-	await masterSubHeadAmountService.deleteSubHeadAmount(id);
+	await masterSubHeadAmountService.deleteSubHeadAmount(req, id);
 
 	res.status(StatusCodes.OK).json({
 		message: 'Sub head amount deleted successfully',

@@ -20,8 +20,11 @@ const {
 const {
 	getAmountByMajorHeadAndPeriod,
 } = require('./masterMajorHeadAmount.service');
+const auditLogService = require('./auditLog.service');
 const { fn, col, Op, literal } = require('sequelize');
 const parseDate = require('../utils/parse-date');
+
+const ENTITY_TYPE = 'budget';
 
 const validateBudgetPayload = (payload) => {
 	if (payload.budgetType === 'item-wise') {
@@ -49,20 +52,43 @@ exports.createBudget = async (req, payload) => {
 		await budgetRepo.updateById(budget.id, { budget_id: budgetID });
 	}
 
-	return budgetRepo.findById(budget.id);
+	const created = await budgetRepo.findById(budget.id);
+
+	await auditLogService.record({
+		req,
+		entityType: ENTITY_TYPE,
+		entityId: created.id,
+		action: 'create',
+		newState: created.toJSON(),
+	});
+
+	return created;
 };
 
-exports.updateBudget = async (id, payload) => {
+exports.updateBudget = async (req, id, payload) => {
 	const budget = await budgetRepo.findById(id);
 
 	if (!budget) {
 		throw new AppError('Budget not found', StatusCodes.NOT_FOUND);
 	}
 
+	const before = budget.toJSON();
+
 	const mergedType = payload.budgetType ?? budget.budgetType;
 	validateBudgetPayload({ ...budget.dataValues, ...payload, budgetType: mergedType });
 
-	return budgetRepo.updateById(id, payload);
+	const updated = await budgetRepo.updateById(id, payload);
+
+	await auditLogService.recordChange({
+		req,
+		entityType: ENTITY_TYPE,
+		entityId: Number(id),
+		action: 'update',
+		before,
+		after: updated.toJSON(),
+	});
+
+	return updated;
 };
 
 exports.getAllBudgets = async (req) => {
@@ -73,6 +99,7 @@ exports.getAllBudgets = async (req) => {
 		fromDate,
 		toDate,
 		selectedPeriodId,
+		selectedUnitId,
 		selectedDepartmentId,
 		selectedStatusId,
 		selectedCostCenterId,
@@ -102,12 +129,14 @@ exports.getAllBudgets = async (req) => {
 	};
 
 	const periodId = Number(selectedPeriodId);
+	const unitId = Number(selectedUnitId);
 	const departmentId = Number(selectedDepartmentId);
 	const costCenterId = Number(selectedCostCenterId);
 
 	if (selectedBudgetTypeId != 'all') where.budgetType = selectedBudgetTypeId;
 	if (selectedStatusId != 'all') where.is_lock = selectedStatusId === 'lock' ? 1 : 0;
 	if (periodId > 0) where.period_id = periodId;
+	if (unitId > 0) where.unit_id = unitId;
 	if (departmentId > 0) where.department_id = departmentId;
 	if (costCenterId > 0) where.cost_center_id = costCenterId;
 	if (budgetId) where.budget_id = budgetId; 
@@ -198,14 +227,24 @@ exports.getBudgetById = async (id) => {
 	return budget;
 };
 
-exports.deleteBudget = async (id) => {
+exports.deleteBudget = async (req, id) => {
 	const budget = await budgetRepo.findById(id);
 
 	if (!budget) {
 		throw new AppError('Budget not found', StatusCodes.NOT_FOUND);
 	}
 
+	const before = budget.toJSON();
+
 	await budgetRepo.deleteById(id);
+
+	await auditLogService.record({
+		req,
+		entityType: ENTITY_TYPE,
+		entityId: Number(id),
+		action: 'delete',
+		previousState: before,
+	});
 };
 
 const getSubAmountByMajorHeadAndPeriod = async (major_head_id, period_id) => {
@@ -243,6 +282,7 @@ exports.getAmountByMajorHeadAndPeriodAndSubHead = async (
 	major_head_id,
 	period_id,
 	sub_head_id,
+	exclude_budget_id,
 ) => {
 	if (!major_head_id || !period_id || !sub_head_id) {
 		throw new AppError(
@@ -263,6 +303,10 @@ exports.getAmountByMajorHeadAndPeriodAndSubHead = async (
 			as: 'budgets',
 			attributes: [],
 			required: false,
+			// Excludes the budget being edited from its own "amount used" total, so the
+			// returned final_amount is the true ceiling available to that budget — the
+			// caller no longer has to re-add its own contribution back on top of this.
+			where: exclude_budget_id ? { id: { [Op.ne]: exclude_budget_id } } : undefined,
 		},
 	];
 
@@ -272,7 +316,7 @@ exports.getAmountByMajorHeadAndPeriodAndSubHead = async (
 	});
 };
 
-exports.approveBudget = async (budget_ids, approved_by) => {
+exports.approveBudget = async (req, budget_ids, approved_by) => {
 	if (!budget_ids || !Array.isArray(budget_ids) || budget_ids.length === 0) {
 		throw new AppError(
 			'budget_ids must be a non-empty array',
@@ -298,6 +342,8 @@ exports.approveBudget = async (budget_ids, approved_by) => {
 			);
 		}
 
+		const before = budget.toJSON();
+
 		const updatedBudget = await budgetRepo.updateById(id, {
 			sanc_by: 'yes',
 			is_lock: 0,
@@ -306,6 +352,16 @@ exports.approveBudget = async (budget_ids, approved_by) => {
 		});
 
 		logger.info('Budget approved successfully', { id, approved_by, approved_at });
+
+		await auditLogService.recordChange({
+			req,
+			entityType: ENTITY_TYPE,
+			entityId: Number(id),
+			action: 'approve',
+			before,
+			after: updatedBudget.toJSON(),
+		});
+
 		updatedBudgets.push(updatedBudget);
 	}
 

@@ -24,6 +24,7 @@ exports.findLastCreated = async () => {
 exports.findAll = async (where = {}, options = {}) => {
 	return Indent.findAndCountAll({
 		where,
+		distinct: true,
 		...options,
 	});
 };

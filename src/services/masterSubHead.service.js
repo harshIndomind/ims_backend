@@ -2,7 +2,8 @@ const AppError = require('../utils/AppError');
 const { StatusCodes } = require('http-status-codes');
 const { masterSubHeadRepo } = require('../repository/index');
 const logger = require('../utils/logger');
-const { organization, MasterMajorHead } = require('../models/index');
+const { organization, MasterMajorHead, MasterSubHeadAmount } = require('../models/index');
+const { Op } = require('sequelize');
 
 /**
  * Create
@@ -65,11 +66,22 @@ exports.updateMasterSubHead = async (id, payload) => {
  */
 exports.getAllMasterSubHead = async (req) => {
 	const { org_id } = req.user;
-	const { limit, offset, major_head_id } = req.query;
+	const { limit, offset, major_head_id, period_id } = req.query;
 
 	const where = { org_id };
 	if (major_head_id) {
 		where.major_head_id = Number(major_head_id);
+	}
+
+	if (period_id) {
+		const amountWhere = { org_id, period_id: Number(period_id) };
+		if (major_head_id) amountWhere.major_head_id = Number(major_head_id);
+		const amounts = await MasterSubHeadAmount.findAll({
+			where: amountWhere,
+			attributes: ['sub_head_id'],
+		});
+		const subHeadIds = amounts.map((a) => a.sub_head_id);
+		where.id = { [Op.in]: subHeadIds };
 	}
 
 	const options = {};
@@ -77,7 +89,7 @@ exports.getAllMasterSubHead = async (req) => {
 		options.limit = Number(limit);
 		options.offset = Number(offset);
 	}
-	logger.info('Fetching all Sub Heads', { major_head_id });
+	logger.info('Fetching all Sub Heads', { major_head_id, period_id });
 	return await masterSubHeadRepo.findAll(
 		where,
 		{

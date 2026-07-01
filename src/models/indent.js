@@ -94,6 +94,51 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.JSON,
 				allowNull: true,
 			},
+			// Denormalized read-model columns mirroring workflow_instances, kept in sync by
+			// workflowEngine.service.js calls in indent.service.js — the workflow tables remain
+			// the source of truth. These exist only so list/export `WHERE` filters stay simple.
+			status: {
+				type: DataTypes.ENUM('draft', 'in_progress', 'approved', 'rejected', 'cancelled'),
+				defaultValue: 'draft',
+			},
+			approved_by: {
+				type: DataTypes.JSON,
+				allowNull: true,
+			},
+			approved_at: {
+				type: DataTypes.DATE,
+				allowNull: true,
+			},
+			// Approver-supplied deadline by which the approved items must be issued;
+			// distinct from approved_at, which is just the system timestamp of the action.
+			last_date: {
+				type: DataTypes.DATEONLY,
+				allowNull: true,
+			},
+			rejected_by: {
+				type: DataTypes.JSON,
+				allowNull: true,
+			},
+			rejected_at: {
+				type: DataTypes.DATE,
+				allowNull: true,
+			},
+			rejection_remarks: {
+				type: DataTypes.TEXT,
+				allowNull: true,
+			},
+			cancelled_by: {
+				type: DataTypes.JSON,
+				allowNull: true,
+			},
+			cancelled_at: {
+				type: DataTypes.DATE,
+				allowNull: true,
+			},
+			cancellation_remarks: {
+				type: DataTypes.TEXT,
+				allowNull: true,
+			},
 			createdBy: {
 				type: DataTypes.JSON,
 				allowNull: true,

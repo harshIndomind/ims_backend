@@ -17,6 +17,7 @@ const { init } = require('./utils/socket');
 // const {consumeAdminEvents} = require('./shared/consumeEvent');
 const { connect } = require('./config/rabbitmq');
 const { startConsumer } = require('./events/consumer');
+const { registerWorkflowNotificationHandler } = require('./events/handlers/workflowNotification.handler');
 const helmet = require('helmet');
 
 const limiter = rateLimit({
@@ -203,6 +204,16 @@ async function prepareAndStartServer() {
 		`${apiPrefix}/v1/purchase-orders`,
 		require('./routes/v1/purchase-order.routes'),
 	);
+	// Feature flag for in-progress modules pending verification before merge to tg-uat
+	// (see scm-frontend's lib/featureFlags.ts for the matching client-side gate).
+	// Set ENABLE_WIP_MODULES=true locally to test; route stays unmounted (404)
+	// everywhere else until verified. Currently gates: GRN (Goods Receipt Note).
+	if (process.env.ENABLE_WIP_MODULES === 'true') {
+		app.use(
+			`${apiPrefix}/v1/goods-receipt-notes`,
+			require('./routes/v1/grn.routes'),
+		);
+	}
 	app.use(
 		`${apiPrefix}/v1/work-orders`,
 		require('./routes/v1/work-order.routes'),
@@ -213,8 +224,13 @@ async function prepareAndStartServer() {
 	);
 	app.use(
 		`${apiPrefix}/v1/master/term-categories`,
-		require('./routes/v1//masterTermCategory.routes'),  
-	);	
+		require('./routes/v1//masterTermCategory.routes'),
+	);
+
+	app.use(
+		`${apiPrefix}/v1/workflow-definitions`,
+		require('./routes/v1/workflow-definitions.routes'),
+	);
 
 	app.get('/', (req, res) => {
 		res.status(200).json({ status: true, message: '✅ Its working.' });
@@ -238,6 +254,7 @@ async function prepareAndStartServer() {
 
 			await connect();
 			await startConsumer();
+			registerWorkflowNotificationHandler();
 
 			server.listen(PORT, () => {
 				console.log(`${envLabel} server running on ${BASE_URL}`);

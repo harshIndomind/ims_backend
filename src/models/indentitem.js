@@ -116,6 +116,19 @@ module.exports = (sequelize, DataTypes) => {
 				allowNull: true,
 				defaultValue: 0,
 			},
+			// Stock level at the moment verify/approve checked VCP — frozen, never recomputed.
+			qty_in_stock: {
+				type: DataTypes.DOUBLE,
+				allowNull: true,
+				defaultValue: 0,
+			},
+			// Live remaining qty still open for PO; qty_for_purchase_order stays frozen as the
+			// original backorder amount, this is what PO create/update/delete actually mutate.
+			balance_indent_qty: {
+				type: DataTypes.DOUBLE,
+				allowNull: true,
+				defaultValue: 0,
+			},
 			days: {
 				type: DataTypes.DATEONLY,
 				allowNull: true,
