@@ -30,6 +30,11 @@ const USERS = [
 		role_code: 'indent_verifier',
 	},
 	{
+		name: 'Indent Approver',
+		email: 'indent.approver@email.com',
+		role_code: 'indent_approver',
+	},
+	{
 		name: 'PR Creator',
 		email: 'pr.creator@email.com',
 		role_code: 'payment_requisition_creator',

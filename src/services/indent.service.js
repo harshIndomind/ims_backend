@@ -16,7 +16,8 @@ const {
 	Budget,
 	IndentSerialItem,
 	IndentItem,
-	MasterUnit
+	MasterUnit,
+	IndentDocument,
 } = require('../models/index');
 const AppError = require('../utils/AppError');
 const { Op, literal } = require('sequelize');
@@ -458,6 +459,11 @@ async function fetchIndentForWorkflowAction(id) {
 					{ model: Budget, as: 'budget' },
 				],
 			},
+			{
+				model: IndentDocument,
+				as: 'IndentDocuments',
+				attributes: ['id', 'file_name', 'file_key', 'file_type', 'file_size', 'storage_type', 'uploaded_by', 'createdAt'],
+			},
 		],
 	});
 	if (!indent) {
@@ -649,11 +655,13 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 			const allocation = allocationMap.get(i.product_id);
 			const dryRun = dryRunMap.get(i.product_id);
 			const issuedQty = allocation?.issued_qty || 0;
+			const baseIssuedQty = allocation?.base_issued_qty ?? issuedQty;
 			const purchaseQty = dryRun?.qty_for_purchase_order || 0;
 
 			await i.update(
 				{
 					qty_issued: issuedQty,
+					base_qty_issued: baseIssuedQty,
 					qty_for_purchase_order: purchaseQty,
 					minimum_stock_quantity: dryRun?.minimum_stock_quantity || 0,
 					checkMinimumStock: dryRun?.checkMinimumStock || false,
@@ -832,10 +840,12 @@ exports.reissuePendingQuantity = async (req, indentId) => {
 			const newlyIssued = parseFloat(allocation?.issued_qty || 0);
 			if (newlyIssued <= 0) continue;
 
+			const newlyIssuedBase = parseFloat(allocation?.base_issued_qty ?? allocation?.issued_qty ?? 0);
 			const updatedBalance = parseFloat(item.balance_indent_qty) - newlyIssued;
 			await item.update(
 				{
 					qty_issued: parseFloat(item.qty_issued || 0) + newlyIssued,
+					base_qty_issued: parseFloat(item.base_qty_issued || 0) + newlyIssuedBase,
 					balance_indent_qty: updatedBalance,
 				},
 				{ transaction },
@@ -930,7 +940,9 @@ exports.cancelIndent = async (req, id, remarks) => {
 							organization_id: indent.org_id,
 							indent_id: indent.id,
 							stock_type: item.stock_type,
-							base_issued_qty: item.qty_issued,
+							// base_qty_issued holds base-UOM qty (set at approval/re-issue).
+							// qty_issued is in selected UOM — wrong for VCP rollback-stock.
+							base_issued_qty: item.base_qty_issued ?? item.qty_issued,
 							batch_id: item.batch_id,
 							issuedSerials: item.serial_items
 								.filter((s) => s.is_issued)
@@ -1153,7 +1165,9 @@ exports.deleteIndent = async (req, id) => {
 				organization_id: indent.org_id,
 				indent_id: indent.id,
 				stock_type: item.stock_type,
-				base_issued_qty: item.qty_issued,
+				// base_qty_issued holds base-UOM qty (set at approval/re-issue).
+				// qty_issued is in selected UOM — wrong for VCP rollback-stock.
+				base_issued_qty: item.base_qty_issued ?? item.qty_issued,
 				batch_id: item.batch_id,
 				issuedSerials: item.serial_items
 					.filter((s) => s.is_issued)
