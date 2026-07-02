@@ -89,7 +89,7 @@ exports.createIndent = async (req, payload) => {
 			{
 				...indentPayload,
 				unit_id: unit,
-				department_id: 1,
+				department_id: indentPayload.department_id || null,
 				// place_of_use_id is optional; the form sends '' when unselected, which
 				// MySQL rejects as an invalid integer literal for this column
 				place_of_use_id: indentPayload.place_of_use_id ? Number(indentPayload.place_of_use_id) : null,
