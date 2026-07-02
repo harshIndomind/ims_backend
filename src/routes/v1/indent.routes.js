@@ -1,5 +1,7 @@
 const router = require('express').Router();
 const indentController = require('../../controllers/indent.controller');
+const indentDocumentController = require('../../controllers/indentDocument.controller');
+const { upload: indentDocUpload } = require('../../middlewares/indentDocumentUpload');
 const checkPermission = require('../../middlewares/checkPermission');
 const verifyToken = require('../../middlewares/verifyToken');
 
@@ -130,6 +132,26 @@ router.get(
 	'/lastestIndentId',
 	checkPermission('indent', 'view'),
 	indentController.getNextIndentId,
+);
+
+// Document upload/list/delete — must sit before the bare /:id GET below
+router.post(
+	'/:id/documents',
+	checkPermission('indent', 'view'),
+	indentDocUpload.array('documents', 10),
+	indentDocumentController.uploadDocuments,
+);
+
+router.get(
+	'/:id/documents',
+	checkPermission('indent', 'view'),
+	indentDocumentController.getDocuments,
+);
+
+router.delete(
+	'/:id/documents/:docId',
+	checkPermission('indent', 'edit'),
+	indentDocumentController.deleteDocument,
 );
 
 // Must be registered after every other literal-segment GET route above (e.g.

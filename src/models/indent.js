@@ -32,6 +32,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'place_of_use_id',
 				as: 'placeOfUse',
 			});
+			Indent.hasMany(models.IndentDocument, {
+				foreignKey: 'indent_id',
+				as: 'IndentDocuments',
+			});
 		}
 	}
 	Indent.init(

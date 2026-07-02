@@ -97,6 +97,13 @@ module.exports = (sequelize, DataTypes) => {
 				allowNull: true,
 				defaultValue: 0,
 			},
+			// Base-UOM qty issued (for VCP rollback). qty_issued is in the selected UOM;
+			// rollback-stock expects base UOM, so we store them separately.
+			base_qty_issued: {
+				type: DataTypes.DOUBLE,
+				allowNull: true,
+				defaultValue: 0,
+			},
 			minimum_stock_quantity: {
 				type: DataTypes.DOUBLE,
 				allowNull: true,
