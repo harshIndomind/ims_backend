@@ -21,6 +21,28 @@ const {
 	Department,
 	MasterPlaceOfUse,
 } = require('../models/index');
+const workflowEngine = require('./workflowEngine.service');
+const auditLogService = require('./auditLog.service');
+const { createWorkflowDocumentService } = require('./workflowDocument.factory');
+
+const DOCUMENT_TYPE = 'work_order';
+
+async function fetchWorkOrderForWorkflow(id) {
+	const wo = await workOrderRepository.findOne({
+		where: { id },
+		include: [
+			{ model: WorkOrderItem, as: 'items' },
+			{ model: Indent, as: 'indent', attributes: ['id', 'unit_id', 'department_id'] },
+		],
+	});
+	if (!wo) throw new AppError(`Work Order with ID ${id} not found`, StatusCodes.NOT_FOUND);
+	return wo;
+}
+
+const woWorkflow = createWorkflowDocumentService({
+	documentType: DOCUMENT_TYPE,
+	fetchById: (id) => fetchWorkOrderForWorkflow(id),
+});
 const {
 	generateInvoiceHTMLPDF,
 	generateInvoiceHTML,
@@ -100,7 +122,7 @@ exports.createWorkOrder = async (req) => {
 			customFields: [customField1, customField2],
 			remarks: additionalRemarks,
 			same_state: state_same,
-			status: 'pending',
+			status: 'draft',
 			remainingAmount: grandTotal,
 			wo_qc_check,
 			price_term_id,
@@ -131,6 +153,24 @@ exports.createWorkOrder = async (req) => {
 		};
 
 		const workOrder = await workOrderRepository.create(woObject, { transaction });
+
+		const instance = await workflowEngine.startInstance({
+			req,
+			documentType: DOCUMENT_TYPE,
+			documentId: workOrder.id,
+			orgId: req.user.org_id,
+			transaction,
+		});
+		await workOrderRepository.update(workOrder, { status: instance.status }, { transaction });
+
+		await auditLogService.record({
+			req,
+			entityType: DOCUMENT_TYPE,
+			entityId: workOrder.id,
+			action: 'create',
+			newState: { woNo: woObject.woNo },
+			transaction,
+		});
 
 		for (const item of productItems) {
 			const woItemObject = {
@@ -664,11 +704,12 @@ async function calculateWorkOrderInvoice(workOrder) {
 		productItems: invoiceData.items.map((item) => {
 			const snapshot = item.productSnapshot;
 			console.log("snapshot ", snapshot);
-			
+
 			return {
 				...item,
 				item_type: snapshot?.item_type,
 				product_name: snapshot?.name,
+				uomDisplay: item.uomSnapshot?.unit?.name || item.uomSnapshot?.unit?.code || snapshot?.baseUnit?.name || snapshot?.baseUnit?.code || '',
 				batches: [],
 				serials: [],
 				taxRate: invoiceData.same_state
@@ -1026,7 +1067,7 @@ exports.exportWorkOrders = async (req) => {
 				const productName = safeStr(snap.name ?? '');
 				const productCode = safeStr(snap.uniqueProductId ?? snap.product_code ?? snap.sku ?? '');
 				const hsnCode = safeStr(item.hsn_sac_code ?? snap.hsn_code ?? snap.hsn_sac_code ?? '');
-				const uomCode = safeStr(uomSnap.code ?? uomSnap.name ?? uomSnap.short_name ?? '');
+				const uomCode = safeStr(uomSnap.unit?.name ?? uomSnap.unit?.code ?? uomSnap.code ?? uomSnap.name ?? uomSnap.short_name ?? snap.baseUnit?.name ?? snap.baseUnit?.code ?? '');
 
 				borderRow(itemSheet.addRow({
 					sr: itemSrNo++,
@@ -1063,4 +1104,74 @@ exports.exportWorkOrders = async (req) => {
 		fileName,
 		path: `${baseUrl}/storage/work-orders/${fileName}`,
 	};
+};
+
+exports.approveWorkOrder = async (req, id, remarks) => {
+	const wo = await fetchWorkOrderForWorkflow(id);
+	await woWorkflow.assertCanAct(req, wo);
+
+	const stageNameBeforeAction = (
+		await workflowEngine.getInstanceWithStages({ documentType: DOCUMENT_TYPE, documentId: id })
+	).instance.currentStage?.stage_name ?? null;
+
+	const transaction = await sequelize.transaction();
+	try {
+		const instance = await workflowEngine.advanceStage({
+			req,
+			documentType: DOCUMENT_TYPE,
+			documentId: id,
+			action: 'approved',
+			transaction,
+		});
+
+		await wo.update(
+			{
+				status: instance.status,
+				approved_by: { id: req.user.id, name: req.user.name, email: req.user.email },
+				approved_at: new Date(),
+			},
+			{ transaction },
+		);
+
+		await auditLogService.record({
+			req,
+			entityType: DOCUMENT_TYPE,
+			entityId: id,
+			action: 'approved',
+			remarks,
+			workflowStageName: stageNameBeforeAction,
+			transaction,
+		});
+
+		await transaction.commit();
+	} catch (error) {
+		await transaction.rollback();
+		throw error;
+	}
+
+	return fetchWorkOrderForWorkflow(id);
+};
+
+exports.rejectWorkOrder = async (req, id, remarks) => {
+	return woWorkflow.reject(req, id, remarks);
+};
+
+exports.cancelWorkOrder = async (req, id, remarks) => {
+	return woWorkflow.cancel(req, id, remarks);
+};
+
+exports.reopenWorkOrder = async (req, id, remarks) => {
+	return woWorkflow.reopen(req, id, remarks);
+};
+
+exports.archiveWorkOrder = async (req, id, remarks) => {
+	return woWorkflow.archive(req, id, remarks);
+};
+
+exports.restoreWorkOrder = async (req, id, remarks) => {
+	return woWorkflow.restore(req, id, remarks);
+};
+
+exports.getWorkOrderWorkflow = async (req, id) => {
+	return woWorkflow.getWorkflow(req, id);
 };

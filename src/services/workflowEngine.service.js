@@ -778,6 +778,7 @@ async function getTimeline({ documentType, documentId }) {
 module.exports = {
 	resolveDefinition,
 	activateNewVersion,
+	findInstance,
 	startInstance,
 	getInstanceWithStages,
 	getHistory,

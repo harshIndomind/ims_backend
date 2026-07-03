@@ -96,3 +96,57 @@ exports.downloadInvoicePdf = catchAsync(async (req, res) => {
 		res.status(500).json({ message: err.message || 'Failed to generate HTML' });
 	}
 });
+
+exports.submitPurchaseOrder = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const data = await purchaseOrderService.submitPurchaseOrder(req, id);
+	res.status(200).json({ message: 'Purchase Order submitted for approval', data });
+});
+
+exports.approvePurchaseOrder = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { remarks } = req.body;
+	const data = await purchaseOrderService.approvePurchaseOrder(req, id, remarks);
+	res.status(200).json({ message: 'Purchase Order approved successfully', data });
+});
+
+exports.rejectPurchaseOrder = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { remarks } = req.body;
+	const data = await purchaseOrderService.rejectPurchaseOrder(req, id, remarks);
+	res.status(200).json({ message: 'Purchase Order rejected successfully', data });
+});
+
+exports.cancelPurchaseOrder = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { remarks } = req.body;
+	const data = await purchaseOrderService.cancelPurchaseOrder(req, id, remarks);
+	res.status(200).json({ message: 'Purchase Order cancelled successfully', data });
+});
+
+exports.reopenPurchaseOrder = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { remarks } = req.body;
+	const data = await purchaseOrderService.reopenPurchaseOrder(req, id, remarks);
+	res.status(200).json({ message: 'Purchase Order reopened successfully', data });
+});
+
+exports.archivePurchaseOrder = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { remarks } = req.body;
+	const data = await purchaseOrderService.archivePurchaseOrder(req, id, remarks);
+	res.status(200).json({ message: 'Purchase Order archived successfully', data });
+});
+
+exports.restorePurchaseOrder = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { remarks } = req.body;
+	const data = await purchaseOrderService.restorePurchaseOrder(req, id, remarks);
+	res.status(200).json({ message: 'Purchase Order restored successfully', data });
+});
+
+exports.getPurchaseOrderWorkflow = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const data = await purchaseOrderService.getPurchaseOrderWorkflow(req, id);
+	res.status(200).json({ message: 'Purchase Order workflow fetched successfully', data });
+});

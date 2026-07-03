@@ -10,6 +10,7 @@ const {
 	MasterSubHead,
 	MasterSubHeadAmount,
 	Budget,
+	IndentItem,
 	organization,
 	Department,
 	CostCenter,
@@ -25,6 +26,26 @@ const { fn, col, Op, literal } = require('sequelize');
 const parseDate = require('../utils/parse-date');
 
 const ENTITY_TYPE = 'budget';
+
+const validateBudgetDateInPeriod = async (date, period_id) => {
+	if (!date || !period_id) return;
+
+	const period = await MasterPeriod.findByPk(period_id, {
+		attributes: ['id', 'from_date', 'end_date', 'period_short'],
+	});
+	if (!period || !period.from_date || !period.end_date) return;
+
+	// Normalize to YYYY-MM-DD for safe string comparison (avoids timezone drift)
+	const budgetDateStr =
+		typeof date === 'string' ? date.split('T')[0] : new Date(date).toISOString().split('T')[0];
+
+	if (budgetDateStr < period.from_date || budgetDateStr > period.end_date) {
+		throw new AppError(
+			`Budget date must be within the period range (${period.from_date} to ${period.end_date})`,
+			StatusCodes.BAD_REQUEST,
+		);
+	}
+};
 
 const validateBudgetPayload = (payload) => {
 	if (payload.budgetType === 'item-wise') {
@@ -44,6 +65,7 @@ const validateBudgetPayload = (payload) => {
 
 exports.createBudget = async (req, payload) => {
 	validateBudgetPayload(payload);
+	await validateBudgetDateInPeriod(payload.date, payload.period_id);
 	const { org_id } = req.user;
 	const budget = await budgetRepo.create({ ...payload, org_id });
 
@@ -72,10 +94,24 @@ exports.updateBudget = async (req, id, payload) => {
 		throw new AppError('Budget not found', StatusCodes.NOT_FOUND);
 	}
 
+	// Prevent update if any indent has been raised against this budget
+	const indentCount = await IndentItem.count({ where: { budget_id: id } });
+	if (indentCount > 0) {
+		throw new AppError(
+			'This budget has linked indents and cannot be updated',
+			StatusCodes.BAD_REQUEST,
+		);
+	}
+
 	const before = budget.toJSON();
 
 	const mergedType = payload.budgetType ?? budget.budgetType;
 	validateBudgetPayload({ ...budget.dataValues, ...payload, budgetType: mergedType });
+
+	// Validate effective date (from payload or existing record) against period bounds
+	const effectiveDate = payload.date ?? budget.date;
+	const effectivePeriodId = payload.period_id ?? budget.period_id;
+	await validateBudgetDateInPeriod(effectiveDate, effectivePeriodId);
 
 	const updated = await budgetRepo.updateById(id, payload);
 
@@ -212,6 +248,14 @@ exports.getAllBudgets = async (req) => {
 
 exports.getBudgetById = async (id) => {
 	const budget = await budgetRepo.findById(id, {
+		attributes: {
+			include: [
+				[
+					literal('(SELECT COUNT(*) FROM `IndentItems` WHERE `budget_id` = `Budget`.`id`)'),
+					'indent_count',
+				],
+			],
+		},
 		include: [
 			{ association: 'majorHead' },
 			{ association: 'subHead' },

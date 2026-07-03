@@ -1155,9 +1155,10 @@ exports.deleteIndent = async (req, id) => {
 		throw new AppError('Approved indents cannot be deleted', StatusCodes.BAD_REQUEST);
 	}
 
-	// If already verified, stock was deducted in VCP — roll it back first.
+	// If already verified AND not already cancelled (cancel already rolled back VCP stock),
+	// stock was deducted in VCP — roll it back first.
 	// Service items never had stock deducted, so they're excluded here.
-	if (indent.isVerified && Array.isArray(indent.IndentItems) && indent.IndentItems.length > 0) {
+	if (indent.status !== 'cancelled' && indent.isVerified && Array.isArray(indent.IndentItems) && indent.IndentItems.length > 0) {
 		const allocationResults = indent.IndentItems
 			.filter((item) => item.productSnapshot?.item_type !== 'service')
 			.map((item) => ({

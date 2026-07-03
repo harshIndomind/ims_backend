@@ -52,3 +52,51 @@ exports.downloadInvoicePdf = catchAsync(async (req, res) => {
 	const pdfUrl = await workOrderService.downloadInvoicePdf(req);
 	res.json({ pdfUrl });
 });
+
+exports.approveWorkOrder = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { remarks } = req.body;
+	const data = await workOrderService.approveWorkOrder(req, id, remarks);
+	res.status(200).json({ message: 'Work Order approved successfully', data });
+});
+
+exports.rejectWorkOrder = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { remarks } = req.body;
+	const data = await workOrderService.rejectWorkOrder(req, id, remarks);
+	res.status(200).json({ message: 'Work Order rejected successfully', data });
+});
+
+exports.cancelWorkOrder = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { remarks } = req.body;
+	const data = await workOrderService.cancelWorkOrder(req, id, remarks);
+	res.status(200).json({ message: 'Work Order cancelled successfully', data });
+});
+
+exports.reopenWorkOrder = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { remarks } = req.body;
+	const data = await workOrderService.reopenWorkOrder(req, id, remarks);
+	res.status(200).json({ message: 'Work Order reopened successfully', data });
+});
+
+exports.archiveWorkOrder = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { remarks } = req.body;
+	const data = await workOrderService.archiveWorkOrder(req, id, remarks);
+	res.status(200).json({ message: 'Work Order archived successfully', data });
+});
+
+exports.restoreWorkOrder = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { remarks } = req.body;
+	const data = await workOrderService.restoreWorkOrder(req, id, remarks);
+	res.status(200).json({ message: 'Work Order restored successfully', data });
+});
+
+exports.getWorkOrderWorkflow = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const data = await workOrderService.getWorkOrderWorkflow(req, id);
+	res.status(200).json({ message: 'Work Order workflow fetched successfully', data });
+});

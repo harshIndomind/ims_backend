@@ -144,8 +144,40 @@ module.exports = (sequelize, DataTypes) => {
 				defaultValue: false,
 			},
 			status: {
-				type: DataTypes.ENUM(['pending', 'completed']),
-				defaultValue: 'pending',
+				type: DataTypes.ENUM(['draft', 'in_progress', 'approved', 'rejected', 'cancelled', 'pending', 'completed']),
+				defaultValue: 'draft',
+			},
+			approved_by: {
+				type: DataTypes.JSON,
+				allowNull: true,
+			},
+			approved_at: {
+				type: DataTypes.DATE,
+				allowNull: true,
+			},
+			rejected_by: {
+				type: DataTypes.JSON,
+				allowNull: true,
+			},
+			rejected_at: {
+				type: DataTypes.DATE,
+				allowNull: true,
+			},
+			rejection_remarks: {
+				type: DataTypes.TEXT,
+				allowNull: true,
+			},
+			cancelled_by: {
+				type: DataTypes.JSON,
+				allowNull: true,
+			},
+			cancelled_at: {
+				type: DataTypes.DATE,
+				allowNull: true,
+			},
+			cancellation_remarks: {
+				type: DataTypes.TEXT,
+				allowNull: true,
 			},
 			paymentStatus: {
 				type: DataTypes.STRING,

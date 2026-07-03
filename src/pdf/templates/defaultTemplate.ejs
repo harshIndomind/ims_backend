@@ -334,16 +334,30 @@
             pointer-events: none;
             user-select: none;
             z-index: 0;
-            /* stays behind content */
+        }
+
+        .watermark-draft {
+            position: absolute;
+            top: 40%;
+            left: 50%;
+            transform: translate(-50%, -50%) rotate(-30deg);
+            font-size: 120px;
+            color: rgba(30, 100, 200, 0.10);
+            font-weight: 900;
+            pointer-events: none;
+            user-select: none;
+            z-index: 0;
         }
     </style>
 </head>
 
 <body>
     <div class="invoice-section">
-        <% if (invoice.paymentStatus==='CANCELLED' ) { %>
+        <% if (invoice.status === 'draft') { %>
+            <div class="watermark-draft">DRAFT</div>
+        <% } else if (invoice.paymentStatus === 'CANCELLED') { %>
             <div class="watermark">CANCELLED</div>
-            <% } %>
+        <% } %>
                 <div class="header">
                     <div class="header-left">
                         <% if(invoice.businessLogo){ %>
