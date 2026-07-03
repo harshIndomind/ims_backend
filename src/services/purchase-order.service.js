@@ -31,6 +31,28 @@ const { VCP_SERVICE_API_BASE_URL, BASE_URL } = require('../config/serverConfig')
 const { generateSignedUrl } = require('../utils/s3Bucket');
 const ExcelJS = require('exceljs');
 const path = require('path');
+const workflowEngine = require('./workflowEngine.service');
+const auditLogService = require('./auditLog.service');
+const { createWorkflowDocumentService } = require('./workflowDocument.factory');
+
+const DOCUMENT_TYPE = 'purchase_order';
+
+async function fetchPurchaseOrderForWorkflow(id) {
+	const po = await purchaseOrderRepository.findOne({
+		where: { id },
+		include: [
+			{ model: PurchaseOrderItem, as: 'items' },
+			{ model: Indent, as: 'indent', attributes: ['id', 'unit_id', 'department_id'] },
+		],
+	});
+	if (!po) throw new AppError(`Purchase Order with ID ${id} not found`, StatusCodes.NOT_FOUND);
+	return po;
+}
+
+const poWorkflow = createWorkflowDocumentService({
+	documentType: DOCUMENT_TYPE,
+	fetchById: (id) => fetchPurchaseOrderForWorkflow(id),
+});
 
 exports.createPurchaseOrder = async (req, payload) => {
 	const transaction = await sequelize.transaction();
@@ -107,7 +129,7 @@ exports.createPurchaseOrder = async (req, payload) => {
 			customFields: [customField1, customField2],
 			remarks: additionalRemarks,
 			same_state: state_same,
-			status: 'pending',
+			status: 'draft',
 			remainingAmount: grandTotal,
 			po_qc_check,
 			price_term_id,
@@ -128,6 +150,15 @@ exports.createPurchaseOrder = async (req, payload) => {
 		};
 
 		const purchaseOrder = await purchaseOrderRepository.create(poObject, {
+			transaction,
+		});
+
+		await auditLogService.record({
+			req,
+			entityType: DOCUMENT_TYPE,
+			entityId: purchaseOrder.id,
+			action: 'create',
+			newState: { poNo: poObject.poNo },
 			transaction,
 		});
 
@@ -260,7 +291,6 @@ exports.updatePurchaseOrder = async (req) => {
 			customFields: [customField1, customField2],
 			remarks: additionalRemarks,
 			same_state: state_same,
-			status: 'pending',
 			remainingAmount: grandTotal,
 			po_qc_check,
 			price_term_id,
@@ -279,6 +309,9 @@ exports.updatePurchaseOrder = async (req) => {
 				? parseFloat(((parseFloat(purchaseOrderDetail.retention) / 100) * parseFloat(grandTotal || 0)).toFixed(2))
 				: null,
 		};
+
+		// status is intentionally omitted from the update payload — the workflow engine
+		// is the sole owner of status transitions after creation.
 
 		const purchaseOrder = await purchaseOrderRepository.findById(id, {
 			transaction,
@@ -586,17 +619,18 @@ exports.deletePurchaseOrder = async (req) => {
 	const transaction = await sequelize.transaction();
 
 	try {
+		logger.warn('First');
 		const purchaseOrder = await purchaseOrderRepository.findById(id, {
 			include: [{ model: PurchaseOrderItem, as: 'items' }],
 			transaction,
 		});
-
+		logger.warn('second');
 		if (!purchaseOrder) {
 			await transaction.rollback();
 			logger.warn('Purchase Order not found for delete', { id });
 			throw new AppError('Purchase Order not found', StatusCodes.NOT_FOUND);
 		}
-
+		logger.warn('third');
 		for (const item of purchaseOrder.items) {
 			await IndentItemRepository.increment(
 				{ qty_for_purchase_order: parseFloat(item.qty) },
@@ -609,18 +643,19 @@ exports.deletePurchaseOrder = async (req) => {
 				},
 			);
 		}
-
+		logger.warn('fourth');
 		await PaymentRequisition.destroy({ where: { po_id: id }, transaction });
-
+		logger.warn('five');
 		await purchaseOrderRepository.delete(purchaseOrder);
 
 		logger.info('Purchase Order deleted', { id });
-
+		logger.warn('six');
 		await transaction.commit();
 		return true;
 	} catch (error) {
 		if (transaction && !transaction.finished) {
 			try {
+				logger.warn('First', {error});
 				await transaction.rollback();
 				return false;
 			} catch (rbErr) {
@@ -889,7 +924,7 @@ async function calculateSaleInvoice(invoice) {
 					}
 					return '0.00';
 				})(),
-				uomDisplay: item.uomSnapshot?.unit?.name || item.uomSnapshot?.unit?.code || 'N/A',
+				uomDisplay: item.uomSnapshot?.unit?.name || item.uomSnapshot?.unit?.code || item.productSnapshot?.baseUnit?.name || item.productSnapshot?.baseUnit?.code || 'N/A',
 			};
 		}),
 		additionalRemarks: invoiceData.remarks,
@@ -1264,7 +1299,7 @@ exports.exportPurchaseOrders = async (req) => {
 				const productName = safeStr(snap.name ?? '');
 				const productCode = safeStr(snap.uniqueProductId ?? snap.product_code ?? snap.sku ?? '');
 				const hsnCode = safeStr(item.hsn_sac_code ?? snap.hsn_code ?? snap.hsn_sac_code ?? '');
-				const uomCode = safeStr(uomSnap.code ?? uomSnap.name ?? uomSnap.short_name ?? '');
+				const uomCode = safeStr(uomSnap.unit?.name ?? uomSnap.unit?.code ?? uomSnap.code ?? uomSnap.name ?? uomSnap.short_name ?? snap.baseUnit?.name ?? snap.baseUnit?.code ?? '');
 
 				borderRow(itemSheet.addRow({
 					sr: itemSrNo++,
@@ -1302,4 +1337,109 @@ exports.exportPurchaseOrders = async (req) => {
 		fileName,
 		path: `${baseUrl}/storage/purchase-orders/${fileName}`,
 	};
+};
+
+exports.submitPurchaseOrder = async (req, id) => {
+	const po = await fetchPurchaseOrderForWorkflow(id);
+	if (po.status !== 'draft') {
+		throw new AppError('Only draft Purchase Orders can be submitted for approval', StatusCodes.BAD_REQUEST);
+	}
+
+	const transaction = await sequelize.transaction();
+	try {
+		const instance = await workflowEngine.startInstance({
+			req,
+			documentType: DOCUMENT_TYPE,
+			documentId: po.id,
+			orgId: po.org_id,
+			transaction,
+		});
+
+		await po.update({ status: instance.status }, { transaction });
+
+		await auditLogService.record({
+			req,
+			entityType: DOCUMENT_TYPE,
+			entityId: id,
+			action: 'submitted',
+			transaction,
+		});
+
+		await transaction.commit();
+	} catch (error) {
+		await transaction.rollback();
+		throw error;
+	}
+
+	return fetchPurchaseOrderForWorkflow(id);
+};
+
+exports.approvePurchaseOrder = async (req, id, remarks) => {
+	const po = await fetchPurchaseOrderForWorkflow(id);
+	await poWorkflow.assertCanAct(req, po);
+
+	const stageNameBeforeAction = (
+		await workflowEngine.getInstanceWithStages({ documentType: DOCUMENT_TYPE, documentId: id })
+	).instance.currentStage?.stage_name ?? null;
+
+	const transaction = await sequelize.transaction();
+	try {
+		const instance = await workflowEngine.advanceStage({
+			req,
+			documentType: DOCUMENT_TYPE,
+			documentId: id,
+			action: 'approved',
+			transaction,
+		});
+
+		await po.update(
+			{
+				status: instance.status,
+				approved_by: { id: req.user.id, name: req.user.name, email: req.user.email },
+				approved_at: new Date(),
+			},
+			{ transaction },
+		);
+
+		await auditLogService.record({
+			req,
+			entityType: DOCUMENT_TYPE,
+			entityId: id,
+			action: 'approved',
+			remarks,
+			workflowStageName: stageNameBeforeAction,
+			transaction,
+		});
+
+		await transaction.commit();
+	} catch (error) {
+		await transaction.rollback();
+		throw error;
+	}
+
+	return fetchPurchaseOrderForWorkflow(id);
+};
+
+exports.rejectPurchaseOrder = async (req, id, remarks) => {
+	return poWorkflow.reject(req, id, remarks);
+};
+
+exports.cancelPurchaseOrder = async (req, id, remarks) => {
+	return poWorkflow.cancel(req, id, remarks);
+};
+
+exports.reopenPurchaseOrder = async (req, id, remarks) => {
+	return poWorkflow.reopen(req, id, remarks);
+};
+
+exports.archivePurchaseOrder = async (req, id, remarks) => {
+	return poWorkflow.archive(req, id, remarks);
+};
+
+exports.restorePurchaseOrder = async (req, id, remarks) => {
+	return poWorkflow.restore(req, id, remarks);
+};
+
+exports.getPurchaseOrderWorkflow = async (req, id) => {
+	return poWorkflow.getWorkflow(req, id);
 };

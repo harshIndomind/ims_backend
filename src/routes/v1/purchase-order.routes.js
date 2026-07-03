@@ -2,17 +2,28 @@ const express = require('express');
 const router = express.Router();
 const purchaseController = require('../../controllers/purchase-order.controller');
 const verifyToken = require('../../middlewares/verifyToken');
+const checkPermission = require('../../middlewares/checkPermission');
 
 router.use(verifyToken);
 
 router.get('/generate-po-number', purchaseController.generatePoNumber);
-router.get('/export', purchaseController.exportPurchaseOrders);
-router.post('/', purchaseController.createPurchaseOrder);
-router.get('/', purchaseController.getAllPurchaseOrders);
-router.get('/:id', purchaseController.getPurchaseOrderById);
-router.put('/:id', purchaseController.updatePurchaseOrder);
-router.delete('/:id', purchaseController.deletePurchaseOrder);
-router.post('/:id/html', purchaseController.generateInvoiceHtml);
-router.post('/:id/pdf', purchaseController.downloadInvoicePdf);
-    
+router.get('/export', checkPermission('purchase-order', 'export'), purchaseController.exportPurchaseOrders);
+router.post('/', checkPermission('purchase-order', 'create'), purchaseController.createPurchaseOrder);
+router.get('/', checkPermission('purchase-order', 'view'), purchaseController.getAllPurchaseOrders);
+
+router.post('/:id/submit', checkPermission('purchase-order', 'edit'), purchaseController.submitPurchaseOrder);
+router.post('/:id/approve', checkPermission('purchase-order', 'approve'), purchaseController.approvePurchaseOrder);
+router.post('/:id/reject', checkPermission('purchase-order', 'reject'), purchaseController.rejectPurchaseOrder);
+router.post('/:id/cancel', checkPermission('purchase-order', 'cancel'), purchaseController.cancelPurchaseOrder);
+router.post('/:id/reopen', checkPermission('purchase-order', 'reopen'), purchaseController.reopenPurchaseOrder);
+router.post('/:id/archive', checkPermission('purchase-order', 'archive'), purchaseController.archivePurchaseOrder);
+router.post('/:id/restore', checkPermission('purchase-order', 'archive'), purchaseController.restorePurchaseOrder);
+router.get('/:id/workflow', checkPermission('purchase-order', 'view'), purchaseController.getPurchaseOrderWorkflow);
+router.post('/:id/html', checkPermission('purchase-order', 'view'), purchaseController.generateInvoiceHtml);
+router.post('/:id/pdf', checkPermission('purchase-order', 'view'), purchaseController.downloadInvoicePdf);
+
+router.get('/:id', checkPermission('purchase-order', 'view'), purchaseController.getPurchaseOrderById);
+router.put('/:id', checkPermission('purchase-order', 'edit'), purchaseController.updatePurchaseOrder);
+router.delete('/:id', checkPermission('purchase-order', 'delete'), purchaseController.deletePurchaseOrder);
+
 module.exports = router;

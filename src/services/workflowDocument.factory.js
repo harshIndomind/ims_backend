@@ -79,7 +79,8 @@ function createWorkflowDocumentService({
 		const stageName = await currentStageNameFor(id);
 		const transaction = await sequelize.transaction();
 		try {
-			await workflowEngine.rejectInstance({ req, documentType, documentId: id, remarks, transaction });
+			const rejectedInstance = await workflowEngine.rejectInstance({ req, documentType, documentId: id, remarks, transaction });
+			await doc.update({ status: rejectedInstance.status }, { transaction });
 
 			if (hooks.withinTransaction) await hooks.withinTransaction(doc, transaction);
 
@@ -120,7 +121,8 @@ function createWorkflowDocumentService({
 		const stageName = await currentStageNameFor(id);
 		const transaction = await sequelize.transaction();
 		try {
-			await workflowEngine.cancelInstance({ req, documentType, documentId: id, remarks, transaction });
+			const cancelledInstance = await workflowEngine.cancelInstance({ req, documentType, documentId: id, remarks, transaction });
+			await doc.update({ status: cancelledInstance.status }, { transaction });
 
 			if (hooks.withinTransaction) await hooks.withinTransaction(doc, transaction);
 
@@ -155,6 +157,7 @@ function createWorkflowDocumentService({
 		const transaction = await sequelize.transaction();
 		try {
 			const instance = await workflowEngine.reopenInstance({ req, documentType, documentId: id, remarks, transaction });
+			await doc.update({ status: instance.status }, { transaction });
 
 			if (hooks.withinTransaction) await hooks.withinTransaction(doc, instance, transaction);
 
@@ -231,9 +234,20 @@ function createWorkflowDocumentService({
 	}
 
 	async function getWorkflow(req, id) {
+		const instance = await workflowEngine.findInstance(documentType, id);
+		if (!instance) {
+			return {
+				timeline: [],
+				history: [],
+				currentStage: null,
+				displayStatus: null,
+				isEditable: true,
+				isArchived: false,
+			};
+		}
+
 		const timeline = await workflowEngine.getTimeline({ documentType, documentId: id });
 		const history = await workflowEngine.getHistory({ documentType, documentId: id });
-		const { instance } = await workflowEngine.getInstanceWithStages({ documentType, documentId: id });
 		const currentStageName = instance.currentStage?.stage_name ?? null;
 
 		return {
