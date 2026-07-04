@@ -402,11 +402,15 @@ exports.updatePurchaseOrder = async (req) => {
 exports.getAllPurchaseOrders = async (req) => {
 	const { org_id, role } = req.user;
 
-	const { from_date, to_date, unit_id } = req.query;
+	const { from_date, to_date, unit_id, due_date_from, due_date_to, payment_status } = req.query;
 	const limit = req.query.limit ? parseInt(req.query.limit) : undefined;
 	const offset = req.query.offset ? parseInt(req.query.offset) : undefined;
 
-	const whereClause = { org_id };
+	if (!org_id && role !== 'Admin') {
+		throw new AppError(`You don't authorize to access this api.`);
+	}
+
+	const andConditions = [{ org_id }];
 
 	if (from_date || to_date) {
 		const fromDate = new Date(from_date);
@@ -415,15 +419,31 @@ exports.getAllPurchaseOrders = async (req) => {
 			throw new AppError('Invalid date range');
 		}
 		toDate.setHours(23, 59, 59, 999);
-		whereClause.createdAt = { [Op.between]: [fromDate, toDate] };
+		andConditions.push({ createdAt: { [Op.between]: [fromDate, toDate] } });
 	}
 
-	if (!org_id && role !== 'Admin') {
-		throw new AppError(`You don't authorize to access this api.`);
+	if (due_date_from || due_date_to) {
+		const dueDateWhere = {};
+		if (due_date_from) {
+			const d = new Date(due_date_from);
+			d.setHours(0, 0, 0, 0);
+			dueDateWhere[Op.gte] = d;
+		}
+		if (due_date_to) {
+			const d = new Date(due_date_to);
+			d.setHours(23, 59, 59, 999);
+			dueDateWhere[Op.lte] = d;
+		}
+		andConditions.push({ dueDate: dueDateWhere });
+	}
+
+	if (payment_status) {
+		const statuses = payment_status.split(',').map((s) => s.trim()).filter(Boolean);
+		if (statuses.length > 0) andConditions.push({ paymentStatus: { [Op.in]: statuses } });
 	}
 
 	const findOptions = {
-		where: whereClause,
+		where: { [Op.and]: andConditions },
 		attributes: [
 			'id',
 			'poPrefix',
