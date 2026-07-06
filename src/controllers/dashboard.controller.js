@@ -8,9 +8,13 @@ const {
 	MasterMajorHeadAmount,
 	MasterSubHead,
 	MasterSubHeadAmount,
+	Budget,
+	Indent,
+	PurchaseOrder,
+	PaymentRequisition,
 } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
-const { Op, fn, col } = require('sequelize');
+const { Op, fn, col, literal } = require('sequelize');
 
 async function getOrganizationsCount() {
 	const count = await organization.count();
@@ -186,5 +190,109 @@ exports.getDashboardChartsData = catchAsync(async (req, res) => {
 		status: true,
 		message: 'Dashboard charts data fetched successfully',
 		data: uploadStats,
+	});
+});
+
+exports.getDashboardSummary = catchAsync(async (req, res) => {
+	const { org_id } = req.user;
+	const { period_id, unit_id, department_id } = req.query;
+
+	// Build base where clauses
+	const base = { org_id };
+	if (period_id)     base.period_id     = Number(period_id);
+	if (unit_id)       base.unit_id       = Number(unit_id);
+	if (department_id) base.department_id = Number(department_id);
+
+	const budgetWhere = { ...base };
+	const indentWhere = { ...base };
+	// PO has no period_id / unit_id columns — filter only by org
+	const poWhere = { org_id };
+
+	// Head-amount where (no unit/dept)
+	const headWhere = { org_id };
+	if (period_id) headWhere.period_id = Number(period_id);
+
+	const [
+		// Budget
+		budgetTotal,
+		budgetApproved,
+		budgetLocked,
+		budgetAmount,
+		// Indent
+		indentTotal,
+		indentApproved,
+		indentInProgress,
+		// PO
+		poTotal,
+		poApproved,
+		poGrandTotal,
+		// PR
+		prTotal,
+		prPending,
+		prApproved,
+		// Heads
+		majorHeadCount,
+		majorHeadAmount,
+		subHeadCount,
+		subHeadAmount,
+	] = await Promise.all([
+		// Budget
+		Budget.count({ where: budgetWhere }),
+		Budget.count({ where: { ...budgetWhere, sanc_by: 'yes' } }),
+		Budget.count({ where: { ...budgetWhere, is_lock: true } }),
+		Budget.sum('amount', { where: budgetWhere }),
+		// Indent
+		Indent.count({ where: indentWhere }),
+		Indent.count({ where: { ...indentWhere, status: 'approved' } }),
+		Indent.count({ where: { ...indentWhere, status: 'in_progress' } }),
+		// PO
+		PurchaseOrder.count({ where: poWhere }),
+		PurchaseOrder.count({ where: { ...poWhere, status: 'approved' } }),
+		PurchaseOrder.sum('grandTotal', { where: poWhere }),
+		// PR
+		PaymentRequisition.count({ where: { org_id } }),
+		PaymentRequisition.count({ where: { org_id, status: 'PENDING' } }),
+		PaymentRequisition.count({ where: { org_id, status: 'APPROVED' } }),
+		// Heads (period-filtered)
+		MasterMajorHead.count({ where: { org_id } }),
+		MasterMajorHeadAmount.sum('amount', { where: headWhere }),
+		MasterSubHead.count({ where: { org_id } }),
+		MasterSubHeadAmount.sum('amount', { where: headWhere }),
+	]);
+
+	res.status(200).json({
+		status: true,
+		message: 'Dashboard summary fetched successfully',
+		data: {
+			budget: {
+				total: budgetTotal,
+				approved: budgetApproved,
+				pending: budgetTotal - budgetApproved,
+				locked: budgetLocked,
+				totalAmount: budgetAmount || 0,
+			},
+			indent: {
+				total: indentTotal,
+				approved: indentApproved,
+				inProgress: indentInProgress,
+				pending: indentTotal - indentApproved - indentInProgress,
+			},
+			purchaseOrder: {
+				total: poTotal,
+				approved: poApproved,
+				totalValue: poGrandTotal || 0,
+			},
+			paymentRequisition: {
+				total: prTotal,
+				pending: prPending,
+				approved: prApproved,
+			},
+			heads: {
+				majorHeadCount,
+				majorHeadAmount: majorHeadAmount || 0,
+				subHeadCount,
+				subHeadAmount: subHeadAmount || 0,
+			},
+		},
 	});
 });

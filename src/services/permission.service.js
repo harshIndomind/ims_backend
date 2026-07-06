@@ -6,49 +6,28 @@ class PermissionService {
 	}
 
 	async create(data) {
-		try {
-			const role = await this.permissionRepository.create(data);
-			return role;
-		} catch (error) {
-			throw error;
-		}
+		const role = await this.permissionRepository.create(data);
+		return role;
 	}
 
 	async update(id, data) {
-		try {
-			const roleUpdate = await this.permissionRepository.update(id, data);
-
-			return roleUpdate;
-		} catch (error) {
-			return error;
-		}
+		const roleUpdate = await this.permissionRepository.update(id, data);
+		return roleUpdate;
 	}
 
 	async delete(id) {
-		try {
-			const role = await this.permissionRepository.delete(id);
-			return role;
-		} catch (error) {
-			return error;
-		}
+		const role = await this.permissionRepository.delete(id);
+		return role;
 	}
 
-	async getAllPermissions(data) {
-		try {
-			const roles = await this.permissionRepository.allPermissions();
-			return roles;
-		} catch (error) {
-			return error;
-		}
+	async getAllPermissions() {
+		const roles = await this.permissionRepository.allPermissions();
+		return roles;
 	}
 
 	async getPermissionById(id) {
-		try {
-			const role = await this.permissionRepository.permissionById(id);
-			return role;
-		} catch (error) {
-			return error;
-		}
+		const role = await this.permissionRepository.permissionById(id);
+		return role;
 	}
 }
 

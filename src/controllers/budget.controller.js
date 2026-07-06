@@ -36,6 +36,13 @@ exports.getAllBudgets = catchAsync(async (req, res) => {
 	res.status(StatusCodes.OK).json({ data });
 });
 
+exports.searchBudgets = catchAsync(async (req, res) => {
+	const { org_id } = req.user;
+	const { search, limit } = req.query;
+	const data = await budgetService.searchBudgets({ org_id, search, limit });
+	res.status(StatusCodes.OK).json({ data });
+});
+
 exports.getBudgetById = catchAsync(async (req, res) => {
 	const { id } = req.params;
 

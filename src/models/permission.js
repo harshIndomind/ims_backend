@@ -24,6 +24,7 @@ module.exports = (sequelize, DataTypes) => {
 
 			Permission.belongsTo(models.Menu, {
 				foreignKey: 'menu_id',
+				as: 'menu',
 			});
 
 			Permission.belongsToMany(models.Role, {
@@ -51,8 +52,6 @@ module.exports = (sequelize, DataTypes) => {
 			sequelize,
 			modelName: 'Permission',
 			tableName: 'Permissions',
-			underscored: true,
-
 		},
 	);
 	return Permission;
