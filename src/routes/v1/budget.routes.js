@@ -49,6 +49,11 @@ router.get(
 );
 
 router.get(
+	'/search',
+	checkPermission('budget', 'view'),
+	budgetController.searchBudgets,
+);
+router.get(
 	'/:id',
 	checkPermission('budget', 'view'),
 	budgetController.getBudgetById,

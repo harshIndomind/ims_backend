@@ -294,7 +294,26 @@ exports.createPaymentRequisition = async (req, payload) => {
 
 exports.getAllPaymentRequisitions = async (req) => {
 	const { org_id } = req.user;
-	const data = await paymentRequisitionRepo.findAll({ org_id });
+	const { fromDate, toDate, status, requisitionAgainst, requisitionType, requisitionNo, limit, offset } = req.query;
+
+	const where = { org_id };
+
+	if (fromDate && toDate) {
+		const parseDate = require('../utils/parse-date');
+		const from = parseDate(fromDate);
+		const to = parseDate(toDate);
+		to.setDate(to.getDate() + 1);
+		where.requisition_date = { [Op.gte]: from, [Op.lt]: to };
+	}
+	if (status && status !== 'all') where.status = status;
+	if (requisitionAgainst && requisitionAgainst !== 'all') where.requisition_against = requisitionAgainst;
+	if (requisitionType && requisitionType !== 'all') where.requisition_type = requisitionType;
+	if (requisitionNo) where.requisition_no = { [Op.like]: `%${requisitionNo}%` };
+
+	const data = await paymentRequisitionRepo.findAll(where, {
+		limit: limit ? Number(limit) : undefined,
+		offset: offset ? Number(offset) : undefined,
+	});
 	return data;
 };
 

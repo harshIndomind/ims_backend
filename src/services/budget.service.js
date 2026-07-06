@@ -458,3 +458,15 @@ exports.getAllApprovedBudgets = async (req) => {
 		},
 	);
 };
+
+exports.searchBudgets = async ({ org_id, search = '', limit = 20 }) => {
+	return Budget.findAll({
+		where: {
+			org_id,
+			...(search ? { budget_id: { [Op.like]: `%${search}%` } } : {}),
+		},
+		attributes: ['id', 'budget_id', 'budgetType'],
+		order: [['budget_id', 'ASC']],
+		limit: Number(limit),
+	});
+};

@@ -120,7 +120,11 @@ exports.updateMasterMajorHeadAmount = async (req, id, payload) => {
  */
 exports.getAllMasterMajorHeadAmount = async (req) => {
 	const { org_id } = req.user;
-	const { limit, offset } = req.query;
+	const { limit, offset, period_id, major_head_id } = req.query;
+
+	const where = { org_id };
+	if (period_id)     where.period_id     = Number(period_id);
+	if (major_head_id) where.major_head_id = Number(major_head_id);
 
 	const options = {};
 	if (limit) {
@@ -129,7 +133,7 @@ exports.getAllMasterMajorHeadAmount = async (req) => {
 	}
 	logger.info('Fetching all Master Major Head Amounts');
 	const result = await masterMajorHeadAmountRepo.findAll({
-		where: { org_id },
+		where,
 		...options,
 		attributes: {
 			include: [

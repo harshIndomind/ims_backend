@@ -95,17 +95,15 @@ exports.assignRoleMenus = catchAsync(async (req, res) => {
 exports.getAssignedMenus = async (req, res) => {
 	try {
 		const { roleId } = req.params;
-		console.log('roleId => ', roleId);
 
 		const role = await Role.findByPk(roleId, {
 			include: {
 				model: Menu,
 				as: 'menus',
 				attributes: ['id'],
-				through: { attributes: [] }, // skip RoleMenus join table data
+				through: { attributes: [] },
 			},
 		});
-		console.log('getAssignedMenus => ', role);
 
 		if (!role) {
 			return res.status(404).json({ message: 'Role not found' });
