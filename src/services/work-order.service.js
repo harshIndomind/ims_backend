@@ -179,6 +179,7 @@ exports.createWorkOrder = async (req) => {
 				budget_id: item.budget_id,
 				productSnapshot: item.productSnapshot,
 				uomSnapshot: item.uomSnapshot || null,
+				taxSnapshot: item.taxSnapshot || null,
 				budget_no: item.budget_no,
 				batch_id: item.batch_id || null,
 				hsn_sac_code: item.hsn_sac_code || null,
@@ -327,6 +328,7 @@ exports.updateWorkOrder = async (req) => {
 				budget_id: item.budget_id,
 				productSnapshot: item.productSnapshot,
 				uomSnapshot: item.uomSnapshot || null,
+				taxSnapshot: item.taxSnapshot || null,
 				budget_no: item.budget_no,
 				batch_id: Number(item.batch_id) || null,
 				hsn_sac_code: item.hsn_sac_code || null,
@@ -732,9 +734,14 @@ async function calculateWorkOrderInvoice(workOrder) {
 				uomDisplay: item.uomSnapshot?.unit?.name || item.uomSnapshot?.unit?.code || snapshot?.baseUnit?.name || snapshot?.baseUnit?.code || '',
 				batches: [],
 				serials: [],
-				taxRate: invoiceData.same_state
-					? item.tax ? item.tax.rate / 2 : '0'
-					: item.tax ? item.tax.rate : '0',
+				taxRate: (() => {
+					const rate = item.taxSnapshot?.rate ?? item.tax?.rate;
+					if (invoiceData.same_state) {
+						return rate ? rate / 2 : '0';
+					} else {
+						return rate ?? '0';
+					}
+				})(),
 				totalTaxable: (() => {
 					const priceAfterDiscount =
 						item.discount_price_type === 'percentage'
