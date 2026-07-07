@@ -14,6 +14,7 @@ const {
 	organization,
 	PurchaseOrder,
 	PurchaseOrderItem,
+	IndentItem,
 	Indent,
 	Role,
 	PaymentRequisition,
@@ -90,13 +91,8 @@ exports.createPurchaseOrder = async (req, payload) => {
 			payment_term_amount
 		} = req.body;
 
-		for (const item of productItems) {
-			if (Number(item.qty) > Number(item.qty_for_purchase_order)) {
-				throw new AppError(
-					`${item.productSnapshot.name} qty ${item.qty} should not be greater than P.O Order qty ${item.qty_for_purchase_order}`,
-				);
-			}
-		}
+		const indentForBudget = await Indent.findOne({ where: { id: indent_id }, attributes: ['budgetType'], transaction });
+		validateItemsLimits(productItems, indentForBudget?.budgetType);
 
 		const isSerialDuplicate = checkForDuplicateSerials(productItems);
 
@@ -169,6 +165,7 @@ exports.createPurchaseOrder = async (req, payload) => {
 				budget_id: item.budget_id,
 				productSnapshot: item.productSnapshot,
 				uomSnapshot: item.uomSnapshot || null,
+				taxSnapshot: item.taxSnapshot || null,
 				budget_no: item.budget_no,
 				batch_id: item.batch_id || null,
 				hsn_sac_code: item.hsn_sac_code || null,
@@ -195,12 +192,12 @@ exports.createPurchaseOrder = async (req, payload) => {
 				{ transaction },
 			);
 
-			await IndentItemRepository.increment(
-				{ qty_for_purchase_order: -parseFloat(item.qty) },
-				{
-					where: { indent_id: indent_id, product_id: item.product_id },
-					transaction,
-				},
+			await applyIndentQtyDelta(
+				-parseFloat(item.qty),
+				indent_id,
+				item.product_id,
+				Number(item.selected_uom_id) > 0 ? Number(item.selected_uom_id) : null,
+				transaction,
 			);
 		}
 
@@ -252,13 +249,8 @@ exports.updatePurchaseOrder = async (req) => {
 			payment_term_amount
 		} = req.body;
 
-		for (const item of productItems) {
-			if (Number(item.qty) > Number(item.qty_for_purchase_order)) {
-				throw new AppError(
-					`${item.productSnapshot.name} qty ${item.qty} should not be greater than P.O Order qty ${item.qty_for_purchase_order}`,
-				);
-			}
-		}
+		const indentForBudget = await Indent.findOne({ where: { id: indent_id }, attributes: ['budgetType'], transaction });
+		validateItemsLimits(productItems, indentForBudget?.budgetType);
 
 		const isSerialDuplicate = checkForDuplicateSerials(productItems);
 
@@ -325,6 +317,32 @@ exports.updatePurchaseOrder = async (req) => {
 			transaction,
 		});
 
+		// Fetch all current PO items so we can detect additions and removals.
+		const existingItems = await PurchaseOrderItem.findAll({
+			where: { purchase_order_id: purchaseOrder.id },
+			transaction,
+		});
+		const existingById = new Map(existingItems.map((e) => [e.id, e]));
+
+		// IDs present in the new payload — used to detect removed items.
+		const payloadIds = new Set(
+			productItems.filter((i) => i.id).map((i) => Number(i.id)),
+		);
+
+		// Restore qty_for_purchase_order for items being removed (in DB but not in payload).
+		for (const existing of existingItems) {
+			if (!payloadIds.has(existing.id)) {
+				await applyIndentQtyDelta(
+					parseFloat(existing.qty),
+					indent_id,
+					existing.product_id,
+					existing.selected_uom_id ?? null,
+					transaction,
+				);
+				await existing.destroy({ transaction });
+			}
+		}
+
 		for (const item of productItems) {
 			const poItemsObject = {
 				purchase_order_id: purchaseOrder.id,
@@ -332,6 +350,7 @@ exports.updatePurchaseOrder = async (req) => {
 				budget_id: item.budget_id,
 				productSnapshot: item.productSnapshot,
 				uomSnapshot: item.uomSnapshot || null,
+				taxSnapshot: item.taxSnapshot || null,
 				budget_no: item.budget_no,
 				batch_id: Number(item.batch_id) || null,
 				hsn_sac_code: item.hsn_sac_code || null,
@@ -354,38 +373,28 @@ exports.updatePurchaseOrder = async (req) => {
 				specification: item.specification,
 			};
 
-			const purchaseOrderItem = await purchaseOrderItemsRepository.findOne({
-				where: {
-					purchase_order_id: purchaseOrder.id,
-					product_id: item.product_id,
-				},
-				transaction,
-			});
-
-			if (!purchaseOrderItem) {
-				throw new AppError('Purchase order item not found.');
+			if (item.id && existingById.has(Number(item.id))) {
+				// Existing item — restore the old qty then apply the new qty.
+				const existing = existingById.get(Number(item.id));
+				await applyIndentQtyDelta(
+					parseFloat(existing.qty),
+					indent_id,
+					existing.product_id,
+					existing.selected_uom_id ?? null,
+					transaction,
+				);
+				await purchaseOrderItemsRepository.update(existing, poItemsObject, { transaction });
+			} else {
+				// New item added during update.
+				await purchaseOrderItemsRepository.create(poItemsObject, { transaction });
 			}
 
-			await IndentItemRepository.increment(
-				{ qty_for_purchase_order: parseFloat(purchaseOrderItem.qty) },
-				{
-					where: { indent_id: indent_id, product_id: item.product_id },
-					transaction,
-				},
-			);
-
-			await purchaseOrderItemsRepository.update(
-				purchaseOrderItem,
-				poItemsObject,
-				{ transaction },
-			);
-
-			await IndentItemRepository.increment(
-				{ qty_for_purchase_order: -parseFloat(item.qty) },
-				{
-					where: { indent_id: indent_id, product_id: item.product_id },
-					transaction,
-				},
+			await applyIndentQtyDelta(
+				-parseFloat(item.qty),
+				indent_id,
+				item.product_id,
+				Number(item.selected_uom_id) > 0 ? Number(item.selected_uom_id) : null,
+				transaction,
 			);
 		}
 
@@ -652,15 +661,12 @@ exports.deletePurchaseOrder = async (req) => {
 		}
 		logger.warn('third');
 		for (const item of purchaseOrder.items) {
-			await IndentItemRepository.increment(
-				{ qty_for_purchase_order: parseFloat(item.qty) },
-				{
-					where: {
-						indent_id: purchaseOrder.indent_id,
-						product_id: item.product_id,
-					},
-					transaction,
-				},
+			await applyIndentQtyDelta(
+				parseFloat(item.qty),
+				purchaseOrder.indent_id,
+				item.product_id,
+				item.selected_uom_id ?? null,
+				transaction,
 			);
 		}
 		logger.warn('fourth');
@@ -723,6 +729,62 @@ exports.getPurchaseOrderNo = async (req) => {
 	return newPurchaseOrderNumber.toString().padStart(4, '0');
 };
 
+// Apply a base-unit delta to every IndentItem row for a product, scaling each row's
+// delta by its own uomSnapshot.qty so that qty_for_purchase_order stays in that row's UOM.
+async function applyIndentQtyDelta(uomDelta, indent_id, product_id, uom_id, transaction) {
+	const row = await IndentItem.findOne({
+		where: { indent_id, product_id, uom_id: uom_id ?? null },
+		transaction,
+	});
+	if (!row) return;
+	await IndentItemRepository.increment(
+		{ qty_for_purchase_order: uomDelta },
+		{ where: { id: row.id }, transaction },
+	);
+}
+
+function validateItemsLimits(productItems, budgetType) {
+	// Reject same product + same UOM (different UOM for the same product is allowed).
+	const uomSeen = new Set();
+	for (const item of productItems) {
+		const uomKey = `${item.product_id}:${item.selected_uom_id ?? 'base'}`;
+		if (uomSeen.has(uomKey)) {
+			const name = item.productSnapshot?.name || `product ${item.product_id}`;
+			throw new AppError(
+				`${name}: duplicate UOM — each product may appear only once per UOM on a PO`,
+			);
+		}
+		uomSeen.add(uomKey);
+	}
+
+	// Value-wise indents are controlled by amount, not qty — skip the qty cap.
+	if (budgetType === 'value-wise') return;
+
+	// Group items by product; sum their base-unit qty (selected qty / uomSnapshot.qty).
+	// qty_for_purchase_order is stored in each row's own UOM, so divide by uomQty to get base.
+	const byProduct = {};
+	for (const item of productItems) {
+		const uomQty = parseFloat(item.uomSnapshot?.qty) || 1;
+		const baseQty = parseFloat(item.qty) / uomQty;
+		const key = String(item.product_id);
+		if (!byProduct[key]) {
+			byProduct[key] = {
+				name: item.productSnapshot?.name || `product ${item.product_id}`,
+				limit: Number(item.qty_for_purchase_order) / uomQty,
+				totalBaseQty: 0,
+			};
+		}
+		byProduct[key].totalBaseQty += baseQty;
+	}
+	for (const { name, limit, totalBaseQty } of Object.values(byProduct)) {
+		if (totalBaseQty > limit) {
+			throw new AppError(
+				`${name}: total base-unit qty ${totalBaseQty.toFixed(3)} exceeds available indent qty ${limit}`,
+			);
+		}
+	}
+}
+
 function checkForDuplicateSerials(productItems) {
 	const serialSet = new Set();
 	const duplicateSerials = [];
@@ -765,7 +827,7 @@ exports.generateInvoiceHtml = async (req) => {
 			return res.status(404).json({ message: 'Purchase order not found' });
 
 		const response = await calculateSaleInvoice(purchaseOrder);
-		console.log('response ', response);
+		logger.debug('response ', response);
 		// return
 		const copyTitles = {
 			original: 'ORIGINAL FOR RECIPIENT',
@@ -922,10 +984,11 @@ async function calculateSaleInvoice(invoice) {
 				// 	return 0;
 				// })(),
 				taxRate: (() => {
+					const rate = item.taxSnapshot?.rate ?? item.tax?.rate;
 					if (invoiceData.same_state) {
-						return item.tax ? item.tax.rate / 2 : '0';
+						return rate ? rate / 2 : '0';
 					} else {
-						return item.tax ? item.tax.rate : '0';
+						return rate ?? '0';
 					}
 				})(),
 				totalTaxable: (() => {
@@ -1445,6 +1508,33 @@ exports.rejectPurchaseOrder = async (req, id, remarks) => {
 };
 
 exports.cancelPurchaseOrder = async (req, id, remarks) => {
+	if (!remarks || !remarks.trim()) {
+		throw new AppError('A cancellation reason is required', StatusCodes.BAD_REQUEST);
+	}
+
+	const po = await fetchPurchaseOrderForWorkflow(id);
+
+	// Draft POs have no workflow instance (never submitted) — cancel directly
+	if (po.status === 'draft') {
+		const transaction = await sequelize.transaction();
+		try {
+			await po.update({ status: 'cancelled', cancellation_remarks: remarks }, { transaction });
+			await auditLogService.record({
+				req,
+				entityType: DOCUMENT_TYPE,
+				entityId: id,
+				action: 'cancelled',
+				remarks,
+				transaction,
+			});
+			await transaction.commit();
+		} catch (error) {
+			await transaction.rollback();
+			throw error;
+		}
+		return fetchPurchaseOrderForWorkflow(id);
+	}
+
 	return poWorkflow.cancel(req, id, remarks);
 };
 

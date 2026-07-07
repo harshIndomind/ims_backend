@@ -329,7 +329,7 @@
             left: 50%;
             transform: translate(-50%, -50%) rotate(-30deg);
             font-size: 120px;
-            color: rgba(255, 0, 0, 0.12);
+            color: rgba(220, 38, 38, 0.22);
             font-weight: 900;
             pointer-events: none;
             user-select: none;
@@ -355,7 +355,7 @@
     <div class="invoice-section">
         <% if (invoice.status === 'draft') { %>
             <div class="watermark-draft">DRAFT</div>
-        <% } else if (invoice.paymentStatus === 'CANCELLED') { %>
+        <% } else if (invoice.status === 'cancelled') { %>
             <div class="watermark">CANCELLED</div>
         <% } %>
                 <div class="header">
@@ -488,14 +488,14 @@
                                     <% } %>
                                         <th rowspan="2">Amount</th>
                         </tr>
-                        <% if (invoice.state_same) { %>
+                        <% if (invoice.same_state) { %>
                             <tr>
                                 <th>%</th>
                                 <th>Amount</th>
                                 <th>%</th>
                                 <th>Amount</th>
                             </tr>
-                            <% } %>
+                        <% } %>
                     </thead>
 
                     <tbody>
