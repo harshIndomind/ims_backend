@@ -783,7 +783,6 @@ exports.previewReissue = async (req, indentId) => {
 	if (pendingItems.length === 0) {
 		return { indent_id: indentId, items: [] };
 	}
-
 	const { allocationResults } = await verifyIndentQuantityWithProductServices(
 		req,
 		plainPendingItems,
@@ -1286,18 +1285,20 @@ exports.getConsumedBudgetByBudgetId = async (req, budgetId) => {
 	const referenceDate = req.query.date ? new Date(req.query.date) : new Date();
 	const phaseResult = getPhaseQuantityDateWise(budget, referenceDate);
 	if (!phaseResult) return null;
-
 	const { value: phase_amount, phaseDate, phasePeriod } = phaseResult;
 
-	// [2026-06-03] Scope to current phase only — Phase-isolated rule.
-	// startDate is null for Phase 1 (no lower bound), otherwise it's the previous phase's end date.
+	// Scope to current phase only — Phase-isolated rule.
+	// Filter by the parent Indent's indent_date (the business date), not IndentItem.createdAt
+	// (the DB insert timestamp). Using createdAt caused items to be missed when the indent_date
+	// fell within a phase but the row was inserted after the phase end date.
 	const { startDate, endDate } = getPhaseRange(budget, phasePeriod);
-	const createdAtFilter = startDate
+	const indentDateFilter = startDate
 		? { [Op.gt]: startDate, [Op.lte]: endDate }
 		: { [Op.lte]: endDate };
 
 	const existingItems = await IndentItem.findAll({
-		where: { budget_id: budgetId, createdAt: createdAtFilter },
+		where: { budget_id: budgetId },
+		include: [{ model: Indent, as: 'indent', where: { indent_date: indentDateFilter }, attributes: [], required: true }],
 	});
 
 	const consumed_amount = existingItems.reduce((sum, i) => sum + Number(i.amount || 0), 0);
@@ -1491,13 +1492,15 @@ async function validateBudgetPhaseOnCreate(selectedIndents, indentDate, budgetTy
 		const { value: phaseAmount, phasePeriod } = phaseResult;
 
 		// Scope consumed query to the current phase's date window (phase-isolated rule)
+		// Filter by Indent.indent_date (business date), not IndentItem.createdAt.
 		const { startDate, endDate } = getPhaseRange(budget, phasePeriod);
-		const createdAtFilter = startDate
+		const indentDateFilter = startDate
 			? { [Op.gt]: startDate, [Op.lte]: endDate }
 			: { [Op.lte]: endDate };
 
 		const previousItems = await IndentItem.findAll({
-			where: { budget_id: budgetId, createdAt: createdAtFilter },
+			where: { budget_id: budgetId },
+			include: [{ model: Indent, as: 'indent', where: { indent_date: indentDateFilter }, attributes: [], required: true }],
 		});
 		const previouslyConsumedAmount = previousItems.reduce(
 			(sum, i) => sum + Number(i.amount || 0), 0,
@@ -1573,7 +1576,7 @@ async function validateIndentBudgetAmount(indent, allocationMap) {
 		// We exclude the current indent (indent_id != indent.id) to avoid double-counting
 		// its items, which are already summed in currentIndentAmount above.
 		const { startDate, endDate } = getPhaseRange(budget, phasePeriod);
-		const createdAtFilter = startDate
+		const indentDateFilter = startDate
 			? { [Op.gt]: startDate, [Op.lte]: endDate }
 			: { [Op.lte]: endDate };
 
@@ -1581,8 +1584,8 @@ async function validateIndentBudgetAmount(indent, allocationMap) {
 			where: {
 				budget_id: budgetId,
 				indent_id: { [Op.ne]: indent.id },
-				createdAt: createdAtFilter,
 			},
+			include: [{ model: Indent, as: 'indent', where: { indent_date: indentDateFilter }, attributes: [], required: true }],
 		});
 		const previouslyConsumedAmount = previousItems.reduce(
 			(sum, i) => sum + Number(i.amount || 0),
