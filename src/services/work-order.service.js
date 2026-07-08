@@ -1133,6 +1133,41 @@ exports.exportWorkOrders = async (req) => {
 	};
 };
 
+exports.submitWorkOrder = async (req, id) => {
+	const wo = await fetchWorkOrderForWorkflow(id);
+	if (wo.status !== 'draft') {
+		throw new AppError('Only draft Work Orders can be submitted for approval', StatusCodes.BAD_REQUEST);
+	}
+
+	const transaction = await sequelize.transaction();
+	try {
+		const instance = await workflowEngine.startInstance({
+			req,
+			documentType: DOCUMENT_TYPE,
+			documentId: wo.id,
+			orgId: wo.org_id,
+			transaction,
+		});
+
+		await wo.update({ status: instance.status }, { transaction });
+
+		await auditLogService.record({
+			req,
+			entityType: DOCUMENT_TYPE,
+			entityId: id,
+			action: 'submitted',
+			transaction,
+		});
+
+		await transaction.commit();
+	} catch (error) {
+		await transaction.rollback();
+		throw error;
+	}
+
+	return fetchWorkOrderForWorkflow(id);
+};
+
 exports.approveWorkOrder = async (req, id, remarks) => {
 	const wo = await fetchWorkOrderForWorkflow(id);
 	await woWorkflow.assertCanAct(req, wo);

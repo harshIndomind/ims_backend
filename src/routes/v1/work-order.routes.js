@@ -11,6 +11,7 @@ router.get('/export', checkPermission('work-order', 'export'), workOrderControll
 router.post('/', checkPermission('work-order', 'create'), workOrderController.createWorkOrder);
 router.get('/', checkPermission('work-order', 'view'), workOrderController.getAllWorkOrders);
 
+router.post('/:id/submit', checkPermission('work-order', 'edit'), workOrderController.submitWorkOrder);
 router.post('/:id/approve', checkPermission('work-order', 'approve'), workOrderController.approveWorkOrder);
 router.post('/:id/reject', checkPermission('work-order', 'reject'), workOrderController.rejectWorkOrder);
 router.post('/:id/cancel', checkPermission('work-order', 'cancel'), workOrderController.cancelWorkOrder);

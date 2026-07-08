@@ -53,6 +53,12 @@ exports.downloadInvoicePdf = catchAsync(async (req, res) => {
 	res.json({ pdfUrl });
 });
 
+exports.submitWorkOrder = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const data = await workOrderService.submitWorkOrder(req, id);
+	res.status(200).json({ message: 'Work Order submitted for approval', data });
+});
+
 exports.approveWorkOrder = catchAsync(async (req, res) => {
 	const { id } = req.params;
 	const { remarks } = req.body;
