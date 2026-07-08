@@ -187,17 +187,9 @@ exports.createPurchaseOrder = async (req, payload) => {
 						: null,
 				specification: item.specification,
 			};
-			const purchaseOrderItems = await purchaseOrderItemsRepository.create(
+			await purchaseOrderItemsRepository.create(
 				poItemsObject,
 				{ transaction },
-			);
-
-			await applyIndentQtyDelta(
-				-parseFloat(item.qty),
-				indent_id,
-				item.product_id,
-				Number(item.selected_uom_id) > 0 ? Number(item.selected_uom_id) : null,
-				transaction,
 			);
 		}
 
@@ -329,16 +321,9 @@ exports.updatePurchaseOrder = async (req) => {
 			productItems.filter((i) => i.id).map((i) => Number(i.id)),
 		);
 
-		// Restore qty_for_purchase_order for items being removed (in DB but not in payload).
+		// Remove items that are no longer in the payload.
 		for (const existing of existingItems) {
 			if (!payloadIds.has(existing.id)) {
-				await applyIndentQtyDelta(
-					parseFloat(existing.qty),
-					indent_id,
-					existing.product_id,
-					existing.selected_uom_id ?? null,
-					transaction,
-				);
 				await existing.destroy({ transaction });
 			}
 		}
@@ -374,28 +359,12 @@ exports.updatePurchaseOrder = async (req) => {
 			};
 
 			if (item.id && existingById.has(Number(item.id))) {
-				// Existing item — restore the old qty then apply the new qty.
 				const existing = existingById.get(Number(item.id));
-				await applyIndentQtyDelta(
-					parseFloat(existing.qty),
-					indent_id,
-					existing.product_id,
-					existing.selected_uom_id ?? null,
-					transaction,
-				);
 				await purchaseOrderItemsRepository.update(existing, poItemsObject, { transaction });
 			} else {
 				// New item added during update.
 				await purchaseOrderItemsRepository.create(poItemsObject, { transaction });
 			}
-
-			await applyIndentQtyDelta(
-				-parseFloat(item.qty),
-				indent_id,
-				item.product_id,
-				Number(item.selected_uom_id) > 0 ? Number(item.selected_uom_id) : null,
-				transaction,
-			);
 		}
 
 		await transaction.commit();
@@ -660,14 +629,17 @@ exports.deletePurchaseOrder = async (req) => {
 			throw new AppError('Purchase Order not found', StatusCodes.NOT_FOUND);
 		}
 		logger.warn('third');
-		for (const item of purchaseOrder.items) {
-			await applyIndentQtyDelta(
-				parseFloat(item.qty),
-				purchaseOrder.indent_id,
-				item.product_id,
-				item.selected_uom_id ?? null,
-				transaction,
-			);
+		// Only restore indent qty if the PO was submitted (delta was applied on submit).
+		if (purchaseOrder.status !== 'draft') {
+			for (const item of purchaseOrder.items) {
+				await applyIndentQtyDelta(
+					parseFloat(item.qty),
+					purchaseOrder.indent_id,
+					item.product_id,
+					item.selected_uom_id ?? null,
+					transaction,
+				);
+			}
 		}
 		logger.warn('fourth');
 		await PaymentRequisition.destroy({ where: { po_id: id }, transaction });
@@ -895,8 +867,6 @@ async function calculateSaleInvoice(invoice) {
 
 	const state = await getState(invoiceData.vendorInfo.state_id);
 
-	const orgRole = await Role.findOne({where: {code: 'org_admin'}, attributes: ['id']});
-		
 	const userData = await User.findOne({
 		where: { org_id: invoiceData.org_id },
 		include: [
@@ -909,7 +879,7 @@ async function calculateSaleInvoice(invoice) {
 				as: 'userRoles',
 				through: { attributes: [] },
 				attributes: ['id', 'name', 'code'],
-				where: orgRole.id,
+				where: { code: 'org_admin' },
 			},
 		],
 	});
@@ -962,7 +932,7 @@ async function calculateSaleInvoice(invoice) {
 				...item,
 				item_type: snapshot.item_type,
 				product_name: snapshot.name,
-				batches: snapshot.stock_type === 'batch' ? batchData : [],
+				batches: [],
 				// serials: serialsData?.map((s) => ({
 				// 	...s,
 				// 	label: s.serial_no,
@@ -1439,6 +1409,16 @@ exports.submitPurchaseOrder = async (req, id) => {
 		});
 
 		await po.update({ status: instance.status }, { transaction });
+
+		for (const item of po.items) {
+			await applyIndentQtyDelta(
+				-parseFloat(item.qty),
+				po.indent_id,
+				item.product_id,
+				item.selected_uom_id ?? null,
+				transaction,
+			);
+		}
 
 		await auditLogService.record({
 			req,

@@ -515,6 +515,10 @@
             <br><small><strong>Description:</strong></small><br>
             <small><%= item.note %></small>
           <% } %>
+          <% if (item?.specification) { %>
+            <br><small><strong>Specification:</strong></small><br>
+            <small><em><%- (item.specification || '').replace(/\n/g, '<br>') %></em></small>
+          <% } %>
         </td>
 
         <td style="text-align:center;"><%= item.hsn_sac_code || '' %></td>
