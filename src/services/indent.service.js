@@ -28,6 +28,7 @@ const crypto = require('crypto');
 const workflowEngine = require('./workflowEngine.service');
 const auditLogService = require('./auditLog.service');
 const { createWorkflowDocumentService } = require('./workflowDocument.factory');
+// const dataVisibility = require('./dataVisibility.service');
 
 const DOCUMENT_TYPE = 'indent';
 
@@ -286,18 +287,25 @@ exports.getAllIndents = async (req) => {
 	if (departmentId > 0) where.department_id = departmentId;
 	if (indentNo) where.indent_no = indentNo;
 
+	// Role-based data visibility — applied AFTER query-param filters so that
+	// non-admin users cannot bypass their department scope by sending an arbitrary
+	// selectedDepartmentId in the query string.
+	// super_admin / org_admin: no filter applied.
+	// All other roles: restricts to the user's own department_id across all units.
+	// await dataVisibility.applyIndentVisibility(where, req.user);
+
 	logger.debug("hasPurchaseQuantityIssue ", {hasPurchaseQuantityIssue});
 	logger.debug("Get All Indents Where ", {where});
 	
 	const indentItemsWhere = {};
-	if (hasPurchaseQuantityIssue == true) {
+	if (hasPurchaseQuantityIssue === 'true') {
 		indentItemsWhere['qty_for_purchase_order'] = {
 			[Op.gt]: 0,
 		};
 	}
 	// Indents still owed qty once stock comes back in (post-PO/GRN re-issue queue) —
 	// independent of qty_for_purchase_order, which only tracks open-PO balance.
-	if (hasPendingReissueQty == true) {
+	if (hasPendingReissueQty === 'true') {
 		indentItemsWhere['balance_indent_qty'] = {
 			[Op.gt]: 0,
 		};
@@ -345,7 +353,7 @@ exports.getAllIndents = async (req) => {
 				as: 'IndentItems',
 				where: indentItemsWhere,
 				// separate: false,
-				// required: true,
+				required: Object.keys(indentItemsWhere).length > 0,
 				include: [
 					{
 						model: Budget,
