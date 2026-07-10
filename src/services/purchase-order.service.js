@@ -417,7 +417,16 @@ exports.getAllPurchaseOrders = async (req) => {
 
 	if (payment_status) {
 		const statuses = payment_status.split(',').map((s) => s.trim()).filter(Boolean);
-		if (statuses.length > 0) andConditions.push({ paymentStatus: { [Op.in]: statuses } });
+		const hasCancelled = statuses.includes('CANCELLED');
+		const paymentStatuses = statuses.filter((s) => s !== 'CANCELLED');
+
+		if (hasCancelled && paymentStatuses.length > 0) {
+			andConditions.push({ [Op.or]: [{ paymentStatus: { [Op.in]: paymentStatuses } }, { status: 'cancelled' }] });
+		} else if (hasCancelled) {
+			andConditions.push({ status: 'cancelled' });
+		} else if (paymentStatuses.length > 0) {
+			andConditions.push({ paymentStatus: { [Op.in]: paymentStatuses } });
+		}
 	}
 
 	const findOptions = {
@@ -1495,7 +1504,7 @@ exports.cancelPurchaseOrder = async (req, id, remarks) => {
 	if (po.status === 'draft') {
 		const transaction = await sequelize.transaction();
 		try {
-			await po.update({ status: 'cancelled', paymentStatus: 'CANCELLED', cancellation_remarks: remarks }, { transaction });
+			await po.update({ status: 'cancelled', cancellation_remarks: remarks }, { transaction });
 			await auditLogService.record({
 				req,
 				entityType: DOCUMENT_TYPE,
@@ -1512,9 +1521,7 @@ exports.cancelPurchaseOrder = async (req, id, remarks) => {
 		return fetchPurchaseOrderForWorkflow(id);
 	}
 
-	const result = await poWorkflow.cancel(req, id, remarks);
-	await PurchaseOrder.update({ paymentStatus: 'CANCELLED' }, { where: { id, org_id: req.user.org_id } });
-	return result;
+	return poWorkflow.cancel(req, id, remarks);
 };
 
 exports.reopenPurchaseOrder = async (req, id, remarks) => {
@@ -1526,16 +1533,7 @@ exports.archivePurchaseOrder = async (req, id, remarks) => {
 };
 
 exports.restorePurchaseOrder = async (req, id, remarks) => {
-	const result = await poWorkflow.restore(req, id, remarks);
-	const po = await PurchaseOrder.findOne({ where: { id, org_id: req.user.org_id }, attributes: ['totalPaid', 'grandTotal'] });
-	if (po) {
-		const totalPaid = parseFloat(po.totalPaid) || 0;
-		const grandTotal = parseFloat(po.grandTotal) || 0;
-		const remaining = Math.max(0, grandTotal - totalPaid);
-		const paymentStatus = remaining <= 0 ? 'PAID' : totalPaid > 0 ? 'PARTIAL' : 'PENDING';
-		await PurchaseOrder.update({ paymentStatus }, { where: { id, org_id: req.user.org_id } });
-	}
-	return result;
+	return poWorkflow.restore(req, id, remarks);
 };
 
 exports.getPurchaseOrderWorkflow = async (req, id) => {

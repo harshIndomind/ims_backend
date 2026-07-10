@@ -425,7 +425,16 @@ exports.getAllWorkOrders = async (req) => {
 
 	if (payment_status) {
 		const statuses = payment_status.split(',').map((s) => s.trim()).filter(Boolean);
-		if (statuses.length > 0) andConditions.push({ paymentStatus: { [Op.in]: statuses } });
+		const hasCancelled = statuses.includes('CANCELLED');
+		const paymentStatuses = statuses.filter((s) => s !== 'CANCELLED');
+
+		if (hasCancelled && paymentStatuses.length > 0) {
+			andConditions.push({ [Op.or]: [{ paymentStatus: { [Op.in]: paymentStatuses } }, { status: 'cancelled' }] });
+		} else if (hasCancelled) {
+			andConditions.push({ status: 'cancelled' });
+		} else if (paymentStatuses.length > 0) {
+			andConditions.push({ paymentStatus: { [Op.in]: paymentStatuses } });
+		}
 	}
 
 	const findOptions = {
@@ -1210,9 +1219,7 @@ exports.rejectWorkOrder = async (req, id, remarks) => {
 };
 
 exports.cancelWorkOrder = async (req, id, remarks) => {
-	const result = await woWorkflow.cancel(req, id, remarks);
-	await WorkOrder.update({ paymentStatus: 'CANCELLED' }, { where: { id, org_id: req.user.org_id } });
-	return result;
+	return woWorkflow.cancel(req, id, remarks);
 };
 
 exports.reopenWorkOrder = async (req, id, remarks) => {
@@ -1224,16 +1231,7 @@ exports.archiveWorkOrder = async (req, id, remarks) => {
 };
 
 exports.restoreWorkOrder = async (req, id, remarks) => {
-	const result = await woWorkflow.restore(req, id, remarks);
-	const wo = await WorkOrder.findOne({ where: { id, org_id: req.user.org_id }, attributes: ['totalPaid', 'grandTotal'] });
-	if (wo) {
-		const totalPaid = parseFloat(wo.totalPaid) || 0;
-		const grandTotal = parseFloat(wo.grandTotal) || 0;
-		const remaining = Math.max(0, grandTotal - totalPaid);
-		const paymentStatus = remaining <= 0 ? 'PAID' : totalPaid > 0 ? 'PARTIAL' : 'PENDING';
-		await WorkOrder.update({ paymentStatus }, { where: { id, org_id: req.user.org_id } });
-	}
-	return result;
+	return woWorkflow.restore(req, id, remarks);
 };
 
 exports.getWorkOrderWorkflow = async (req, id) => {
