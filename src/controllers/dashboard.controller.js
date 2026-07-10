@@ -205,8 +205,35 @@ exports.getDashboardSummary = catchAsync(async (req, res) => {
 
 	const budgetWhere = { ...base };
 	const indentWhere = { ...base };
-	// PO has no period_id / unit_id columns — filter only by org
-	const poWhere = { org_id };
+
+	// PO and PR have no direct unit/dept/period columns.
+	// When filters are active, resolve them through Indent → PO → PR.
+	let poWhere = { org_id };
+	let prWhere = { org_id };
+
+	if (unit_id || department_id || period_id) {
+		const indentFilter = { org_id };
+		if (period_id)     indentFilter.period_id     = Number(period_id);
+		if (unit_id)       indentFilter.unit_id       = Number(unit_id);
+		if (department_id) indentFilter.department_id = Number(department_id);
+
+		const matchingIndentIds = (await Indent.findAll({
+			where: indentFilter,
+			attributes: ['id'],
+			raw: true,
+		})).map(r => r.id);
+
+		// Use [0] as sentinel when empty to force zero results
+		poWhere.indent_id = { [Op.in]: matchingIndentIds.length > 0 ? matchingIndentIds : [0] };
+
+		const matchingPoIds = (await PurchaseOrder.findAll({
+			where: poWhere,
+			attributes: ['id'],
+			raw: true,
+		})).map(r => r.id);
+
+		prWhere.po_id = { [Op.in]: matchingPoIds.length > 0 ? matchingPoIds : [0] };
+	}
 
 	// Head-amount where (no unit/dept)
 	const headWhere = { org_id };
@@ -245,14 +272,14 @@ exports.getDashboardSummary = catchAsync(async (req, res) => {
 		Indent.count({ where: indentWhere }),
 		Indent.count({ where: { ...indentWhere, status: 'approved' } }),
 		Indent.count({ where: { ...indentWhere, status: 'in_progress' } }),
-		// PO
+		// PO (filtered via Indent when unit/dept/period active)
 		PurchaseOrder.count({ where: poWhere }),
 		PurchaseOrder.count({ where: { ...poWhere, status: 'approved' } }),
 		PurchaseOrder.sum('grandTotal', { where: poWhere }),
-		// PR
-		PaymentRequisition.count({ where: { org_id } }),
-		PaymentRequisition.count({ where: { org_id, status: 'PENDING' } }),
-		PaymentRequisition.count({ where: { org_id, status: 'APPROVED' } }),
+		// PR (filtered via PO → Indent when unit/dept/period active)
+		PaymentRequisition.count({ where: prWhere }),
+		PaymentRequisition.count({ where: { ...prWhere, status: 'PENDING' } }),
+		PaymentRequisition.count({ where: { ...prWhere, status: 'APPROVED' } }),
 		// Heads (period-filtered)
 		MasterMajorHead.count({ where: { org_id } }),
 		MasterMajorHeadAmount.sum('amount', { where: headWhere }),
