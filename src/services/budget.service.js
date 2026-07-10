@@ -2,6 +2,7 @@ const AppError = require('../utils/AppError');
 const { StatusCodes } = require('http-status-codes');
 const { budgetRepo } = require('../repository/index');
 const logger = require('../utils/logger');
+const dataVisibility = require('./dataVisibility.service');
 const { off } = require('pdfkit');
 const {
 	MasterMajorHead,
@@ -175,9 +176,16 @@ exports.getAllBudgets = async (req) => {
 	if (unitId > 0) where.unit_id = unitId;
 	if (departmentId > 0) where.department_id = departmentId;
 	if (costCenterId > 0) where.cost_center_id = costCenterId;
-	if (budgetId) where.budget_id = budgetId; 
-	if (selectedCategoryId != 'all') where.category = selectedCategoryId; 
-	
+	if (budgetId) where.budget_id = budgetId;
+	if (selectedCategoryId != 'all') where.category = selectedCategoryId;
+
+	// Role-based data visibility — applied AFTER query-param filters so that
+	// non-admin users cannot bypass their department scope by sending an arbitrary
+	// selectedDepartmentId in the query string.
+	// super_admin / org_admin: no filter applied.
+	// All other roles: restricts to the user's own department_id across all units.
+	await dataVisibility.applyBudgetVisibility(where, req.user);
+
 	logger.debug("where ", {where})
 	const filterOptions = {
 		where,
