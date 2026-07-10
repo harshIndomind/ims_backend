@@ -439,14 +439,29 @@
             z-index: 0;
             /* stays behind content */
         }
+
+        .watermark-draft {
+            position: absolute;
+            top: 40%;
+            left: 50%;
+            transform: translate(-50%, -50%) rotate(-30deg);
+            font-size: 120px;
+            color: rgba(30, 100, 200, 0.10);
+            font-weight: 900;
+            pointer-events: none;
+            user-select: none;
+            z-index: 0;
+        }
     </style>
 </head>
 
 <body>
     <div class="invoice-section">
-        <% if (invoice.paymentStatus==='CANCELLED' ) { %>
+        <% if (invoice.status === 'draft') { %>
+            <div class="watermark-draft">DRAFT</div>
+        <% } else if (invoice.paymentStatus === 'CANCELLED') { %>
             <div class="watermark">CANCELLED</div>
-            <% } %>
+        <% } %>
                 <div class="header">
                     <div class="header-left">
                         <% if(invoice.businessLogo){ %>
@@ -547,6 +562,22 @@
                                     <%= invoice.dueDate || '' %>
                                 </span>
                             </div>
+                            <% if (invoice.start_date) { %>
+                            <div class="info-row">
+                                <strong>Start Date:</strong>
+                                <span>
+                                    <%= invoice.start_date %>
+                                </span>
+                            </div>
+                            <% } %>
+                            <% if (invoice.end_date) { %>
+                            <div class="info-row">
+                                <strong>End Date:</strong>
+                                <span>
+                                    <%= invoice.end_date %>
+                                </span>
+                            </div>
+                            <% } %>
                         </div>
                     </div>
                 </div>
@@ -634,6 +665,7 @@
     <th colspan="2" style="text-align:right;">Total</th>
     <th></th>
     <th style="text-align:right;"><%= parseFloat(invoice.totalQuantity).toFixed(2) %></th>
+    <th></th>
     <th></th>
     <th style="text-align:right;"><%= parseFloat(invoice.totalDiscountAmount).toFixed(2) %></th>
     <th style="text-align:right;"><%= parseFloat(invoice.total_taxable).toFixed(2) %></th>

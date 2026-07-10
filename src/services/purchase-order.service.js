@@ -29,7 +29,7 @@ const {
 } = require('../pdf/htmlPdfGenerator');
 const { fetch } = require('undici');
 const { VCP_SERVICE_API_BASE_URL, BASE_URL } = require('../config/serverConfig');
-const { generateSignedUrl } = require('../utils/s3Bucket');
+const { generateSignedUrl, getImageAsBase64DataUrl } = require('../utils/s3Bucket');
 const ExcelJS = require('exceljs');
 const path = require('path');
 const workflowEngine = require('./workflowEngine.service');
@@ -644,7 +644,7 @@ exports.deletePurchaseOrder = async (req) => {
 		logger.warn('fourth');
 		await PaymentRequisition.destroy({ where: { po_id: id }, transaction });
 		logger.warn('five');
-		await purchaseOrderRepository.delete(purchaseOrder);
+		await purchaseOrderRepository.delete(purchaseOrder, { transaction });
 
 		logger.info('Purchase Order deleted', { id });
 		logger.warn('six');
@@ -808,22 +808,18 @@ exports.generateInvoiceHtml = async (req) => {
 			office: 'TRIPLICATE FOR SUPPLIER',
 		};
 
-		let combinedHtml = '';
-
 		if (copies.length === 0) copies.push('original'); // default
 
-		for (const copy of copies) {
-			const title = copyTitles[copy] || 'INVOICE COPY';
-			const html = await generateInvoiceHTML(
-				{ ...response, copyTitle: title },
-				'defaultTemplate',
-			);
-			combinedHtml += `
-  <div class="preview-page">
-	${html}
-  </div>
-`;
-		}
+		const htmlParts = await Promise.all(
+			copies.map((copy) => {
+				const title = copyTitles[copy] || 'INVOICE COPY';
+				return generateInvoiceHTML({ ...response, copyTitle: title }, 'defaultTemplate');
+			}),
+		);
+
+		const combinedHtml = htmlParts
+			.map((html) => `<div class="preview-page">\n${html}\n</div>`)
+			.join('\n');
 
 		return combinedHtml;
 	} catch (err) {
@@ -865,24 +861,25 @@ async function calculateSaleInvoice(invoice) {
 			)
 		: 0;
 
-	const state = await getState(invoiceData.vendorInfo.state_id);
-
-	const userData = await User.findOne({
-		where: { org_id: invoiceData.org_id },
-		include: [
-			{
-				model: organization,
-				as: 'organization',
-			},
-			{
-				model: Role,
-				as: 'userRoles',
-				through: { attributes: [] },
-				attributes: ['id', 'name', 'code'],
-				where: { code: 'org_admin' },
-			},
-		],
-	});
+	const [state, userData] = await Promise.all([
+		getState(invoiceData.vendorInfo.state_id),
+		User.findOne({
+			where: { org_id: invoiceData.org_id },
+			include: [
+				{
+					model: organization,
+					as: 'organization',
+				},
+				{
+					model: Role,
+					as: 'userRoles',
+					through: { attributes: [] },
+					attributes: ['id', 'name', 'code'],
+					where: { code: 'org_admin' },
+				},
+			],
+		}),
+	]);
 
 	let businessLogo = null;
 	let business = null;
@@ -906,7 +903,7 @@ async function calculateSaleInvoice(invoice) {
 			}<br>`;
 	}
 	if (userData?.logo) {
-		businessLogo = await generateSignedUrl(userData.logo);
+		businessLogo = await getImageAsBase64DataUrl(userData.logo);
 	}
 	console.log('invoiceData.items ', invoiceData.items);
 	const orderReferenceNote =
@@ -1498,7 +1495,7 @@ exports.cancelPurchaseOrder = async (req, id, remarks) => {
 	if (po.status === 'draft') {
 		const transaction = await sequelize.transaction();
 		try {
-			await po.update({ status: 'cancelled', cancellation_remarks: remarks }, { transaction });
+			await po.update({ status: 'cancelled', paymentStatus: 'CANCELLED', cancellation_remarks: remarks }, { transaction });
 			await auditLogService.record({
 				req,
 				entityType: DOCUMENT_TYPE,
@@ -1515,7 +1512,9 @@ exports.cancelPurchaseOrder = async (req, id, remarks) => {
 		return fetchPurchaseOrderForWorkflow(id);
 	}
 
-	return poWorkflow.cancel(req, id, remarks);
+	const result = await poWorkflow.cancel(req, id, remarks);
+	await PurchaseOrder.update({ paymentStatus: 'CANCELLED' }, { where: { id, org_id: req.user.org_id } });
+	return result;
 };
 
 exports.reopenPurchaseOrder = async (req, id, remarks) => {
@@ -1527,7 +1526,16 @@ exports.archivePurchaseOrder = async (req, id, remarks) => {
 };
 
 exports.restorePurchaseOrder = async (req, id, remarks) => {
-	return poWorkflow.restore(req, id, remarks);
+	const result = await poWorkflow.restore(req, id, remarks);
+	const po = await PurchaseOrder.findOne({ where: { id, org_id: req.user.org_id }, attributes: ['totalPaid', 'grandTotal'] });
+	if (po) {
+		const totalPaid = parseFloat(po.totalPaid) || 0;
+		const grandTotal = parseFloat(po.grandTotal) || 0;
+		const remaining = Math.max(0, grandTotal - totalPaid);
+		const paymentStatus = remaining <= 0 ? 'PAID' : totalPaid > 0 ? 'PARTIAL' : 'PENDING';
+		await PurchaseOrder.update({ paymentStatus }, { where: { id, org_id: req.user.org_id } });
+	}
+	return result;
 };
 
 exports.getPurchaseOrderWorkflow = async (req, id) => {
