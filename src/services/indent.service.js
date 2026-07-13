@@ -664,7 +664,7 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 			const dryRun = dryRunMap.get(i.product_id);
 			const issuedQty = allocation?.issued_qty || 0;
 			const baseIssuedQty = allocation?.base_issued_qty ?? issuedQty;
-			const purchaseQty = dryRun?.qty_for_purchase_order || 0;
+			const purchaseQty = Math.max(0, parseFloat(i.qty || 0) - issuedQty);
 
 			await i.update(
 				{
@@ -854,6 +854,7 @@ exports.reissuePendingQuantity = async (req, indentId) => {
 					qty_issued: parseFloat(item.qty_issued || 0) + newlyIssued,
 					base_qty_issued: parseFloat(item.base_qty_issued || 0) + newlyIssuedBase,
 					balance_indent_qty: updatedBalance,
+					qty_updated_by_verifier: parseFloat(item.qty_updated_by_verifier || 0) + newlyIssued
 				},
 				{ transaction },
 			);

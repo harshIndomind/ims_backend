@@ -130,7 +130,7 @@ describe('approveIndent — qty_in_stock + balance_indent_qty initialization', (
 		);
 	});
 
-	it('partial stock: balance_indent_qty initializes to the same value as qty_for_purchase_order', async () => {
+	it('partial stock: approver issues all available — balance_indent_qty = original qty minus issued', async () => {
 		const item = makeIndentItem({ product_id: 1, qty: 10 });
 		setupApprove(item, {
 			dryRun: { product_id: 1, issued_qty: 4, qty_for_purchase_order: 6, total_available_quantity: 4, minimum_stock_quantity: 0, checkMinimumStock: false },
@@ -142,6 +142,24 @@ describe('approveIndent — qty_in_stock + balance_indent_qty initialization', (
 
 		expect(item.update).toHaveBeenCalledWith(
 			expect.objectContaining({ qty_issued: 4, qty_for_purchase_order: 6, qty_in_stock: 4, balance_indent_qty: 6 }),
+			expect.anything(),
+		);
+	});
+
+	it('partial stock: approver issues less than available — balance_indent_qty reflects actual shortfall', async () => {
+		// Indent: 200 qty. VCP has 100 in stock. Approver issues only 50 (not the full 100 available).
+		// balance_indent_qty must be 200 - 50 = 150, not the dry-run's qty_for_purchase_order (100).
+		const item = makeIndentItem({ product_id: 1, qty: 200 });
+		setupApprove(item, {
+			dryRun: { product_id: 1, issued_qty: 100, qty_for_purchase_order: 100, total_available_quantity: 100, minimum_stock_quantity: 0, checkMinimumStock: false },
+			allocation: { product_id: 1, issued_qty: 50, qty_for_purchase_order: 150, issuedSerials: [] },
+		});
+
+		const req = { cookies: { accessToken: 'tok' }, user: { id: 1, name: 'A', email: 'a@x.com' } };
+		await indentService.approveIndent(req, 1, [{ product_id: 1, issue_qty: 50 }]);
+
+		expect(item.update).toHaveBeenCalledWith(
+			expect.objectContaining({ qty_issued: 50, qty_for_purchase_order: 150, qty_in_stock: 100, balance_indent_qty: 150 }),
 			expect.anything(),
 		);
 	});
