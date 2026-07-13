@@ -467,12 +467,16 @@ exports.getAllApprovedBudgets = async (req) => {
 	);
 };
 
-exports.searchBudgets = async ({ org_id, search = '', limit = 20 }) => {
+exports.searchBudgets = async ({ org_id, search = '', limit = 20, user }) => {
+	const where = {
+		org_id,
+		...(search ? { budget_id: { [Op.like]: `%${search}%` } } : {}),
+	};
+
+	if (user) await dataVisibility.applyBudgetVisibility(where, user);
+
 	return Budget.findAll({
-		where: {
-			org_id,
-			...(search ? { budget_id: { [Op.like]: `%${search}%` } } : {}),
-		},
+		where,
 		attributes: ['id', 'budget_id', 'budgetType'],
 		order: [['budget_id', 'ASC']],
 		limit: Number(limit),

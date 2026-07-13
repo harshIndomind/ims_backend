@@ -50,6 +50,9 @@ router.delete(
 	UserController.destroy,
 );
 
+// ── Current user's visibility scope (self) ──────────────────────────────────
+router.get('/my-visibility', UserVisibilityController.getMyVisibility);
+
 router.get(
 	'/:id',
 	checkPermission(['users', 'profile'], 'view'),

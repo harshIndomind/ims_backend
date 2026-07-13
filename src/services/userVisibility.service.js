@@ -82,6 +82,67 @@ exports.getVisibilityTree = async (userId, orgId) => {
 	return { units: tree, lastUpdatedAt: lastMapping ?? null };
 };
 
+const ADMIN_BYPASS_ROLES = ['super_admin', 'org_admin'];
+
+/**
+ * Returns the units and departments the current user is allowed to see.
+ *
+ * Admins get every unit/department in their org.
+ * Regular users get only the pairs from their UserVisibilityMapping.
+ *
+ * @param {object} user - req.user
+ * @returns {Promise<{ units, departments, mappings }>}
+ */
+exports.getMyVisibility = async (user) => {
+	if (user.roles?.some((r) => ADMIN_BYPASS_ROLES.includes(r))) {
+		const [units, departments] = await Promise.all([
+			MasterUnit.findAll({
+				where: { org_id: user.org_id },
+				attributes: ['id', 'unitName', 'unitCd', 'unit_name'],
+				order: [['unitName', 'ASC']],
+			}),
+			Department.findAll({
+				where: { org_id: user.org_id, unit_id: { [Op.ne]: null } },
+				attributes: ['id', 'name', 'unit_id', 'depCd', 'depName'],
+				order: [['name', 'ASC']],
+			}),
+		]);
+		const mappings = departments.map((d) => ({ unit_id: d.unit_id, department_id: d.id }));
+		return {
+			units: units.map((u) => ({ id: u.id, unitName: u.unitName || u.unit_name, unitCd: u.unitCd })),
+			departments: departments.map((d) => ({ id: d.id, name: d.name, unit_id: d.unit_id, depCd: d.depCd })),
+			mappings,
+		};
+	}
+
+	const rawMappings = await userVisibilityRepository.findByUserId(user.id);
+	if (rawMappings.length === 0) {
+		return { units: [], departments: [], mappings: [] };
+	}
+
+	const unitIds = [...new Set(rawMappings.map((m) => m.unit_id))];
+	const deptIds = [...new Set(rawMappings.map((m) => m.department_id))];
+
+	const [units, departments] = await Promise.all([
+		MasterUnit.findAll({
+			where: { id: { [Op.in]: unitIds } },
+			attributes: ['id', 'unitName', 'unitCd', 'unit_name'],
+			order: [['unitName', 'ASC']],
+		}),
+		Department.findAll({
+			where: { id: { [Op.in]: deptIds } },
+			attributes: ['id', 'name', 'unit_id', 'depCd', 'depName'],
+			order: [['name', 'ASC']],
+		}),
+	]);
+
+	return {
+		units: units.map((u) => ({ id: u.id, unitName: u.unitName || u.unit_name, unitCd: u.unitCd })),
+		departments: departments.map((d) => ({ id: d.id, name: d.name, unit_id: d.unit_id, depCd: d.depCd, depName: d.depName })),
+		mappings: rawMappings.map((m) => ({ unit_id: m.unit_id, department_id: m.department_id })),
+	};
+};
+
 /**
  * Atomically replaces the user's visibility mappings.
  *
