@@ -17,9 +17,8 @@
  *      Any unit_id / department_id already set by query params is removed
  *      first (a non-admin cannot bypass their mapping by sending an
  *      arbitrary filter value from the frontend).
- *   3. If no rows exist yet (admin hasn't configured mappings for this
- *      user) → fall back to the legacy dep_cd cross-unit behaviour so
- *      existing users see data as before during the rollout period.
+ *   3. If no rows exist (or all were removed) → deny all access by injecting
+ *      `id IN ()` — a user with no mappings sees zero records.
  *
  * Usage
  * ─────
@@ -137,9 +136,11 @@ const applyVisibility = async (where, user) => {
 	// Primary: explicit mapping-based filter.
 	const mappingsApplied = await applyMappingFilter(where, user);
 
-	// Fallback: dep_cd cross-unit filter for users not yet configured.
+	// If no mappings exist for this user, deny all access rather than
+	// falling back to dep_cd — a user with all mappings removed must see nothing.
 	if (!mappingsApplied) {
-		await applyDepCdFallback(where, user);
+		const existing = where[Op.and] ? [].concat(where[Op.and]) : [];
+		where[Op.and] = [...existing, { id: { [Op.in]: [] } }];
 	}
 
 	return where;
