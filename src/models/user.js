@@ -38,6 +38,11 @@ module.exports = (sequelize, DataTypes) => {
 			User.belongsTo(models.Department, { foreignKey: 'department_id' });
 			User.belongsTo(models.Designation, { foreignKey: 'designation_id' });
 			User.belongsTo(models.MasterUnit, { foreignKey: 'unit_id', as: 'unit' });
+
+			User.hasMany(models.UserVisibilityMapping, {
+				foreignKey: 'user_id',
+				as: 'visibilityMappings',
+			});
 		}
 	}
 	User.init(

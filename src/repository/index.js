@@ -33,4 +33,5 @@ module.exports = {
     workOrderRepository: require('./work-order.repository'),
     workOrderItemsRepository: require('./work-order-items.repository'),
     masterPlaceOfUseRepository: require('./masterPlaceOfUse.repository'),
+    userVisibilityRepository: require('./user-visibility.repository'),
 }
