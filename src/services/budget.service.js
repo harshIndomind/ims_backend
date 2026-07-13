@@ -435,6 +435,8 @@ exports.getAllApprovedBudgets = async (req) => {
 	if (periodId) where.period_id = periodId;
 	if (departmentId) where.department_id = departmentId;
 
+	await dataVisibility.applyBudgetVisibility(where, req.user);
+
 	return budgetRepo.findAll(
 		{ where },
 		{
