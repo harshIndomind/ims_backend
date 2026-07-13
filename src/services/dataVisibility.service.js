@@ -10,15 +10,15 @@
  *   No filter — these roles see all records. Query params (unit_id, department_id)
  *   set by the caller are left untouched.
  *
- * All other roles — mapping-based (primary) with dep_cd fallback
+ * All other roles — mapping-based
  *   1. Load the user's rows from UserVisibilityMappings.
  *   2. If rows exist → build a Sequelize Op.or condition from every
  *      (unit_id, department_id) pair and AND it into the where clause.
- *      Any unit_id / department_id already set by query params is removed
- *      first (a non-admin cannot bypass their mapping by sending an
- *      arbitrary filter value from the frontend).
- *   3. If no rows exist (or all were removed) → deny all access by injecting
- *      `id IN ()` — a user with no mappings sees zero records.
+ *      Any unit_id / department_id already set by query params is captured
+ *      first and used to intersect the mapping pairs, so the UI filter is
+ *      respected while still enforcing the mapping boundary.
+ *   3. If no rows exist or the intersection is empty → deny all access by
+ *      injecting `literal('0 = 1')` — a user with no matching mappings sees zero records.
  *
  * Usage
  * ─────
@@ -40,7 +40,8 @@
  */
 
 const { Department, UserVisibilityMapping } = require('../models/index');
-const { Op } = require('sequelize');
+const { Op, literal } = require('sequelize');
+const logger = require('../utils/logger');
 
 /** Roles that bypass all visibility filters and see every record. */
 const ADMIN_BYPASS_ROLES = ['super_admin', 'org_admin'];
@@ -51,8 +52,10 @@ const ADMIN_BYPASS_ROLES = ['super_admin', 'org_admin'];
  * Mutates `where` to restrict to only the (unit_id, department_id) pairs
  * explicitly granted to the user via UserVisibilityMappings.
  *
- * Clears any raw unit_id / department_id the caller already placed in `where`
- * so a non-admin cannot escalate privileges by passing arbitrary filter values.
+ * If the caller already placed a unit_id or department_id in `where` (from UI
+ * filter selections), those values are captured and used to narrow the mapping
+ * pairs before building the Op.or condition — so the UI filter is honoured
+ * while still enforcing the user's mapping boundary.
  *
  * @param {object} where  - Sequelize where clause being built by the caller.
  * @param {object} user   - req.user
@@ -66,15 +69,30 @@ const applyMappingFilter = async (where, user) => {
 
 	if (mappings.length === 0) return false;
 
-	// Remove any caller-set filters — the mapping is the authoritative scope.
+	// Capture explicit UI filter selections before removing them from `where`,
+	// so we can intersect with mappings rather than silently discarding them.
+	const preSelectedUnitId = where.unit_id ? Number(where.unit_id) : null;
+	const preSelectedDeptId = where.department_id ? Number(where.department_id) : null;
+
+	// Remove raw scalars — the mapping-based Op.or takes over.
 	delete where.unit_id;
 	delete where.department_id;
 
-	// Build: AND ((unit_id = 1 AND department_id = 3) OR (unit_id = 2 AND department_id = 5) …)
-	const pairs = mappings.map((m) => ({
+	// Build pairs, intersecting with any explicit unit/department the user chose.
+	let pairs = mappings.map((m) => ({
 		unit_id: m.unit_id,
 		department_id: m.department_id,
 	}));
+
+	if (preSelectedUnitId) pairs = pairs.filter((p) => p.unit_id === preSelectedUnitId);
+	if (preSelectedDeptId) pairs = pairs.filter((p) => p.department_id === preSelectedDeptId);
+
+	if (pairs.length === 0) {
+		// No mappings match the selected filters — deny all access.
+		const existing = where[Op.and] ? [].concat(where[Op.and]) : [];
+		where[Op.and] = [...existing, literal('0 = 1')];
+		return true;
+	}
 
 	const existing = where[Op.and] ? [].concat(where[Op.and]) : [];
 	where[Op.and] = [...existing, { [Op.or]: pairs }];
@@ -140,7 +158,7 @@ const applyVisibility = async (where, user) => {
 	// falling back to dep_cd — a user with all mappings removed must see nothing.
 	if (!mappingsApplied) {
 		const existing = where[Op.and] ? [].concat(where[Op.and]) : [];
-		where[Op.and] = [...existing, { id: { [Op.in]: [] } }];
+		where[Op.and] = [...existing, literal('0 = 1')];
 	}
 
 	return where;
