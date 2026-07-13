@@ -29,7 +29,7 @@ const {
 } = require('../pdf/htmlPdfGenerator');
 const { fetch } = require('undici');
 const { VCP_SERVICE_API_BASE_URL, BASE_URL } = require('../config/serverConfig');
-const { generateSignedUrl } = require('../utils/s3Bucket');
+const { generateSignedUrl, getImageAsBase64DataUrl } = require('../utils/s3Bucket');
 const ExcelJS = require('exceljs');
 const path = require('path');
 const workflowEngine = require('./workflowEngine.service');
@@ -417,7 +417,16 @@ exports.getAllPurchaseOrders = async (req) => {
 
 	if (payment_status) {
 		const statuses = payment_status.split(',').map((s) => s.trim()).filter(Boolean);
-		if (statuses.length > 0) andConditions.push({ paymentStatus: { [Op.in]: statuses } });
+		const hasCancelled = statuses.includes('CANCELLED');
+		const paymentStatuses = statuses.filter((s) => s !== 'CANCELLED');
+
+		if (hasCancelled && paymentStatuses.length > 0) {
+			andConditions.push({ [Op.or]: [{ paymentStatus: { [Op.in]: paymentStatuses } }, { status: 'cancelled' }] });
+		} else if (hasCancelled) {
+			andConditions.push({ status: 'cancelled' });
+		} else if (paymentStatuses.length > 0) {
+			andConditions.push({ paymentStatus: { [Op.in]: paymentStatuses } });
+		}
 	}
 
 	const findOptions = {
@@ -644,7 +653,7 @@ exports.deletePurchaseOrder = async (req) => {
 		logger.warn('fourth');
 		await PaymentRequisition.destroy({ where: { po_id: id }, transaction });
 		logger.warn('five');
-		await purchaseOrderRepository.delete(purchaseOrder);
+		await purchaseOrderRepository.delete(purchaseOrder, { transaction });
 
 		logger.info('Purchase Order deleted', { id });
 		logger.warn('six');
@@ -808,22 +817,18 @@ exports.generateInvoiceHtml = async (req) => {
 			office: 'TRIPLICATE FOR SUPPLIER',
 		};
 
-		let combinedHtml = '';
-
 		if (copies.length === 0) copies.push('original'); // default
 
-		for (const copy of copies) {
-			const title = copyTitles[copy] || 'INVOICE COPY';
-			const html = await generateInvoiceHTML(
-				{ ...response, copyTitle: title },
-				'defaultTemplate',
-			);
-			combinedHtml += `
-  <div class="preview-page">
-	${html}
-  </div>
-`;
-		}
+		const htmlParts = await Promise.all(
+			copies.map((copy) => {
+				const title = copyTitles[copy] || 'INVOICE COPY';
+				return generateInvoiceHTML({ ...response, copyTitle: title }, 'defaultTemplate');
+			}),
+		);
+
+		const combinedHtml = htmlParts
+			.map((html) => `<div class="preview-page">\n${html}\n</div>`)
+			.join('\n');
 
 		return combinedHtml;
 	} catch (err) {
@@ -865,24 +870,25 @@ async function calculateSaleInvoice(invoice) {
 			)
 		: 0;
 
-	const state = await getState(invoiceData.vendorInfo.state_id);
-
-	const userData = await User.findOne({
-		where: { org_id: invoiceData.org_id },
-		include: [
-			{
-				model: organization,
-				as: 'organization',
-			},
-			{
-				model: Role,
-				as: 'userRoles',
-				through: { attributes: [] },
-				attributes: ['id', 'name', 'code'],
-				where: { code: 'org_admin' },
-			},
-		],
-	});
+	const [state, userData] = await Promise.all([
+		getState(invoiceData.vendorInfo.state_id),
+		User.findOne({
+			where: { org_id: invoiceData.org_id },
+			include: [
+				{
+					model: organization,
+					as: 'organization',
+				},
+				{
+					model: Role,
+					as: 'userRoles',
+					through: { attributes: [] },
+					attributes: ['id', 'name', 'code'],
+					where: { code: 'org_admin' },
+				},
+			],
+		}),
+	]);
 
 	let businessLogo = null;
 	let business = null;
@@ -906,7 +912,7 @@ async function calculateSaleInvoice(invoice) {
 			}<br>`;
 	}
 	if (userData?.logo) {
-		businessLogo = await generateSignedUrl(userData.logo);
+		businessLogo = await getImageAsBase64DataUrl(userData.logo);
 	}
 	console.log('invoiceData.items ', invoiceData.items);
 	const orderReferenceNote =
