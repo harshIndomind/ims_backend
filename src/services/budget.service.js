@@ -143,6 +143,7 @@ exports.getAllBudgets = async (req) => {
 		selectedBudgetTypeId,
 		selectedCategoryId,
 		budgetId,
+		sortOrder,
 	} = req.query;
 
 	if (!fromDate || !toDate) {
@@ -245,6 +246,8 @@ exports.getAllBudgets = async (req) => {
 			},
 		],
 	};
+
+	filterOptions.order = [['id', sortOrder === 'asc' ? 'ASC' : 'DESC']];
 
 	if (limit) {
 		filterOptions.limit = Number(limit);
