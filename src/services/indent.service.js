@@ -237,6 +237,7 @@ exports.getAllIndents = async (req) => {
 		hasPurchaseQuantityIssue = false,
 		hasPendingReissueQty = false,
 		selectedBudgetId,
+		sortOrder,
 	} = req.query;
 
 	// if (!fromDate || !toDate) {
@@ -373,7 +374,7 @@ exports.getAllIndents = async (req) => {
 				attributes: ['id', 'unitName', 'unitCd']
 			}
 		],
-		order: [['createdAt', 'DESC']],
+		order: [['createdAt', sortOrder === 'asc' ? 'ASC' : 'DESC']],
 	};
 
 	if (limit) {
