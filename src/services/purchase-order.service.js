@@ -713,10 +713,16 @@ exports.getPurchaseOrderNo = async (req) => {
 // Apply a base-unit delta to every IndentItem row for a product, scaling each row's
 // delta by its own uomSnapshot.qty so that qty_for_purchase_order stays in that row's UOM.
 async function applyIndentQtyDelta(uomDelta, indent_id, product_id, uom_id, transaction) {
+	const isBaseUnit = uom_id === null || uom_id === undefined || Number(uom_id) === 0;
 	const row = await IndentItem.findOne({
-		where: { indent_id, product_id, uom_id: uom_id ?? null },
+		where: {
+			indent_id,
+			product_id,
+			uom_id: isBaseUnit ? { [Op.or]: [null, 0] } : uom_id,
+		},
 		transaction,
 	});
+	logger.debug("applyIndentQtyDelta", {row});
 	if (!row) return;
 	await IndentItemRepository.increment(
 		{ qty_for_purchase_order: uomDelta },
@@ -1417,6 +1423,12 @@ exports.submitPurchaseOrder = async (req, id) => {
 		await po.update({ status: instance.status }, { transaction });
 
 		for (const item of po.items) {
+			logger.debug("PO Item Qty Deduction", {
+				qty: -parseFloat(item.qty),
+				indent_id: po.indent_id,
+				product_id: item.product_id,
+				selected_uom_id: item.selected_uom_id ?? null,
+			});
 			await applyIndentQtyDelta(
 				-parseFloat(item.qty),
 				po.indent_id,
