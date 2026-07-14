@@ -286,6 +286,14 @@ exports.deleteBudget = async (req, id) => {
 		throw new AppError('Budget not found', StatusCodes.NOT_FOUND);
 	}
 
+	const indentCount = await IndentItem.count({ where: { budget_id: id } });
+	if (indentCount > 0) {
+		throw new AppError(
+			`Cannot delete budget: it has ${indentCount} indent${indentCount > 1 ? 's' : ''} linked to it. Remove the indents first.`,
+			StatusCodes.CONFLICT,
+		);
+	}
+
 	const before = budget.toJSON();
 
 	await budgetRepo.deleteById(id);
