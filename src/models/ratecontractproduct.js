@@ -31,6 +31,10 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.DOUBLE,
 				defaultValue: 0,
 			},
+			discount: {
+				type: DataTypes.DOUBLE,
+				defaultValue: 0,
+			},
 			special_discount: {
 				type: DataTypes.DOUBLE,
 				defaultValue: 0,

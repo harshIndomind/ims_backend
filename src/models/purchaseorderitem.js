@@ -16,6 +16,14 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'purchase_order_item_id',
 				as: 'serial_items',
 			});
+			PurchaseOrderItem.belongsTo(models.RateContract, {
+				foreignKey: 'rate_contract_id',
+				as: 'rateContract',
+			});
+			PurchaseOrderItem.belongsTo(models.RateContractProduct, {
+				foreignKey: 'rate_contract_product_id',
+				as: 'rateContractProduct',
+			});
 		}
 	}
 	PurchaseOrderItem.init(
@@ -102,6 +110,18 @@ module.exports = (sequelize, DataTypes) => {
 			stock_type: DataTypes.ENUM(['normal', 'batch', 'serial']),
 			note: { type: DataTypes.TEXT, allowNull: true },
 			specification: { type: DataTypes.TEXT, allowNull: true },
+			rate_contract_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
+			rate_contract_product_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
+			rc_snapshot: {
+				type: DataTypes.JSON,
+				allowNull: true,
+			},
 			createdAt: {
 				allowNull: false,
 				type: DataTypes.DATE,

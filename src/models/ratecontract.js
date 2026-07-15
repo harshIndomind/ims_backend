@@ -24,6 +24,14 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'rate_contract_id',
 				as: 'products',
 			});
+			RateContract.belongsTo(models.RateContract, {
+				foreignKey: 'parent_rc_id',
+				as: 'parentRateContract',
+			});
+			RateContract.hasMany(models.PurchaseOrderItem, {
+				foreignKey: 'rate_contract_id',
+				as: 'purchaseOrderItems',
+			});
 		}
 	}
 	RateContract.init(
@@ -105,6 +113,36 @@ module.exports = (sequelize, DataTypes) => {
 			},
 			others: {
 				type: DataTypes.STRING,
+				allowNull: true,
+			},
+			status: {
+				type: DataTypes.ENUM('draft', 'approved', 'superseded', 'expired', 'cancelled'),
+				allowNull: false,
+				defaultValue: 'draft',
+			},
+			family_number: {
+				type: DataTypes.STRING(50),
+				allowNull: true,
+			},
+			version_number: {
+				type: DataTypes.INTEGER,
+				allowNull: false,
+				defaultValue: 1,
+			},
+			parent_rc_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
+			superseded_by_rc_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
+			approved_at: {
+				type: DataTypes.DATE,
+				allowNull: true,
+			},
+			approved_by: {
+				type: DataTypes.JSON,
 				allowNull: true,
 			},
 		},

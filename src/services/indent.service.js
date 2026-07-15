@@ -135,6 +135,7 @@ exports.createIndent = async (req, payload) => {
 						specification: i.specification,
 						stock_type: i.stock_type,
 						productSnapshot: i || null,
+						rate_contract_id: i.rate_contract_id || null,
 					},
 					{ transaction },
 				);
@@ -1089,6 +1090,7 @@ exports.updateIndent = async (req, id, payload) => {
 						specification: i.specification,
 						stock_type: i.stock_type,
 						productSnapshot: i || null,
+						rate_contract_id: i.rate_contract_id || null,
 					},
 					{ transaction },
 				);
