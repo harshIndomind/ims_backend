@@ -186,6 +186,9 @@ exports.createPurchaseOrder = async (req, payload) => {
 						? Number(item.selected_uom_id)
 						: null,
 				specification: item.specification,
+				rate_contract_id: item.rate_contract_id || null,
+				rate_contract_product_id: item.rate_contract_product_id || null,
+				rc_snapshot: item.rc_snapshot || null,
 			};
 			await purchaseOrderItemsRepository.create(
 				poItemsObject,
@@ -356,6 +359,9 @@ exports.updatePurchaseOrder = async (req) => {
 						? Number(item.selected_uom_id)
 						: null,
 				specification: item.specification,
+				rate_contract_id: item.rate_contract_id || null,
+				rate_contract_product_id: item.rate_contract_product_id || null,
+				rc_snapshot: item.rc_snapshot || null,
 			};
 
 			if (item.id && existingById.has(Number(item.id))) {

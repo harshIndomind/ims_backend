@@ -16,6 +16,16 @@ router.put(
 	checkPermission('rate-contract', 'edit'),
 	RateContractController.updateRateContract
 );
+router.patch(
+	'/:id/approve',
+	checkPermission('rate-contract', 'edit'),
+	RateContractController.approveRateContract
+);
+router.post(
+	'/:id/new-version',
+	checkPermission('rate-contract', 'create'),
+	RateContractController.createNewVersion
+);
 router.get(
 	'/',
 	checkPermission('rate-contract', 'view'),

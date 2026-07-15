@@ -63,3 +63,25 @@ exports.getRateContractByProductId = catchAsync(async (req, res) => {
 		data,
 	});
 });
+
+exports.approveRateContract = catchAsync(async (req, res) => {
+	const { id } = req.params;
+
+	const data = await rateContractService.approveRateContract(id, req.user);
+
+	res.status(StatusCodes.OK).json({
+		message: 'Rate Contract Approved Successfully',
+		data,
+	});
+});
+
+exports.createNewVersion = catchAsync(async (req, res) => {
+	const { id } = req.params;
+
+	const data = await rateContractService.createNewVersion(id, req.body, req);
+
+	res.status(StatusCodes.CREATED).json({
+		message: 'New Rate Contract Version Created Successfully',
+		data,
+	});
+});

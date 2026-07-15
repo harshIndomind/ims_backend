@@ -20,6 +20,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'indent_item_id',
 				as: 'serial_items',
 			});
+			IndentItem.belongsTo(models.RateContract, {
+				foreignKey: 'rate_contract_id',
+				as: 'rateContract',
+			});
 		}
 	}
 	IndentItem.init(
@@ -146,6 +150,10 @@ module.exports = (sequelize, DataTypes) => {
 			},
 			issue_date: {
 				type: DataTypes.DATE,
+				allowNull: true,
+			},
+			rate_contract_id: {
+				type: DataTypes.INTEGER,
 				allowNull: true,
 			},
 			createdAt: {
