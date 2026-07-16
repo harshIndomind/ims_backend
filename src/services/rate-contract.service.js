@@ -604,15 +604,25 @@ exports.getRateContractByProductId = async (product_id, { unit_id, date } = {}) 
 	// Find the most recently approved rate contract that contains this product.
 	// Only 'approved' RCs are eligible — draft/superseded/expired/cancelled are excluded
 	// so that historical documents referencing old RCs are never affected by RC lifecycle changes.
-	// Step 1: find the most recently approved RC that contains this product.
+	// Step 1: find the most recently approved RC whose date window covers `date`.
+	// The date range filter is pushed into SQL so that if the latest RC doesn't cover
+	// the requested date we still fall back to an older RC that does.
 	// Kept separate from the full include so LIMIT 1 never truncates hasMany associations.
+	const rcWhere = { status: 'approved' };
+	if (date) {
+		const checkDate = new Date(date);
+		checkDate.setHours(12, 0, 0, 0);
+		rcWhere.effective_date = { [Op.lte]: checkDate };
+		rcWhere[Op.or] = [{ end_date: null }, { end_date: { [Op.gte]: checkDate } }];
+	}
+
 	const productRecord = await RateContractProduct.findOne({
 		where: { product_id: Number(product_id) },
 		include: [
 			{
 				model: RateContract,
 				as: 'rateContract',
-				where: { status: 'approved' },
+				where: rcWhere,
 				required: true,
 				attributes: ['id', 'approved_at'],
 			},
@@ -643,20 +653,6 @@ exports.getRateContractByProductId = async (product_id, { unit_id, date } = {}) 
 		);
 
 		if (!isUnitMapped) return null;
-	}
-
-	if (date) {
-		const checkDate = new Date(date);
-		const effectiveDate = rc.effective_date ? new Date(rc.effective_date) : null;
-		const endDate = rc.end_date ? new Date(rc.end_date) : null;
-
-		if (effectiveDate) effectiveDate.setHours(0, 0, 0, 0);
-		if (endDate) endDate.setHours(23, 59, 59, 999);
-		checkDate.setHours(12, 0, 0, 0);
-
-		if ((effectiveDate && checkDate < effectiveDate) || (endDate && checkDate > endDate)) {
-			return null;
-		}
 	}
 
 	// Return rate contract with the matched product's rate data merged at the top level
