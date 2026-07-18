@@ -64,6 +64,13 @@ exports.createRateContract = async (req, payload) => {
 			);
 		}
 
+		if (effective_date && end_date && new Date(end_date) < new Date(effective_date)) {
+			throw new AppError(
+				'End Date must be on or after Effective Date',
+				StatusCodes.BAD_REQUEST,
+			);
+		}
+
 		// Block creation when an approved RC for this supplier already covers any of the same products
 		// AND its date range overlaps with the new RC's date range.
 		// Two ranges overlap when: existing.start <= new.end AND existing.end >= new.start.
@@ -352,7 +359,7 @@ exports.approveRateContract = async (id, user) => {
 	const t = await sequelize.transaction();
 
 	try {
-		const rateContract = await rateContractRepositoy.findById(id, { transaction: t });
+		const rateContract = await rateContractRepositoy.findById(id, { transaction: t, lock: t.LOCK.UPDATE });
 
 		if (!rateContract) {
 			throw new AppError('Rate Contract not found', StatusCodes.NOT_FOUND);
@@ -429,19 +436,44 @@ exports.approveRateContract = async (id, user) => {
 		if (rateContract.parent_rc_id) {
 			const parent = await rateContractRepositoy.findById(rateContract.parent_rc_id, {
 				transaction: t,
+				lock: t.LOCK.UPDATE,
 			});
 			if (parent && parent.status === 'approved') {
-				await rateContractRepositoy.update(
-					parent,
-					{
-						status: 'superseded',
-						superseded_by_rc_id: rateContract.id,
-					},
-					{ transaction: t },
-				);
+				if (rateContract.effective_date && parent.effective_date) {
+					const newStart = new Date(rateContract.effective_date);
+					const parentStart = new Date(parent.effective_date);
+					if (newStart < parentStart) {
+						throw new AppError(
+							`New version effective date (${rateContract.effective_date}) cannot be before the parent RC's effective date (${parent.effective_date}). Set the effective date to ${parent.effective_date} or later.`,
+							StatusCodes.BAD_REQUEST,
+						);
+					}
+				}
+
+				const parentUpdate = {
+					status: 'superseded',
+					superseded_by_rc_id: rateContract.id,
+				};
+
+				// If the new version starts after the parent's start date, trim the parent's
+				// end_date to one day before the new version's effective_date. Without this,
+				// approving a forward-dated new version immediately removes the parent from
+				// active lookups and leaves a gap during which no approved RC exists.
+				if (rateContract.effective_date && parent.effective_date) {
+					const newStart = new Date(rateContract.effective_date);
+					const parentStart = new Date(parent.effective_date);
+					if (newStart > parentStart) {
+						const trimmedEnd = new Date(newStart);
+						trimmedEnd.setDate(trimmedEnd.getDate() - 1);
+						parentUpdate.end_date = trimmedEnd;
+					}
+				}
+
+				await rateContractRepositoy.update(parent, parentUpdate, { transaction: t });
 				logger.info('Parent Rate Contract superseded', {
 					parent_id: parent.id,
 					new_version_id: rateContract.id,
+					trimmed_end_date: parentUpdate.end_date ?? null,
 				});
 			}
 		}
@@ -507,6 +539,16 @@ exports.createNewVersion = async (id, payload, req) => {
 			? { universal_code, name, address1, address2 }
 			: original.supplierSnapshot;
 
+		const resolvedEffectiveDate = effective_date ?? original.effective_date;
+		const resolvedEndDate = end_date ?? original.end_date;
+
+		if (resolvedEffectiveDate && resolvedEndDate && new Date(resolvedEndDate) < new Date(resolvedEffectiveDate)) {
+			throw new AppError(
+				'End Date must be on or after Effective Date',
+				StatusCodes.BAD_REQUEST,
+			);
+		}
+
 		const newRateContract = await rateContractRepositoy.create(
 			{
 				org_id,
@@ -516,8 +558,8 @@ exports.createNewVersion = async (id, payload, req) => {
 				universal_code,
 				specification,
 				discount,
-				effective_date: effective_date ?? original.effective_date,
-				end_date: end_date ?? original.end_date,
+				effective_date: resolvedEffectiveDate,
+				end_date: resolvedEndDate,
 				price_term_id,
 				gst_term_id,
 				payment_term_id,
@@ -600,7 +642,7 @@ exports.createNewVersion = async (id, payload, req) => {
 	}
 };
 
-exports.getRateContractByProductId = async (product_id, { unit_id, date } = {}) => {
+exports.getRateContractByProductId = async (product_id, { unit_id, date, org_id, supplier_id } = {}) => {
 	// Find the most recently approved rate contract that contains this product.
 	// Only 'approved' RCs are eligible — draft/superseded/expired/cancelled are excluded
 	// so that historical documents referencing old RCs are never affected by RC lifecycle changes.
@@ -609,6 +651,11 @@ exports.getRateContractByProductId = async (product_id, { unit_id, date } = {}) 
 	// the requested date we still fall back to an older RC that does.
 	// Kept separate from the full include so LIMIT 1 never truncates hasMany associations.
 	const rcWhere = { status: 'approved' };
+	// Scope to the caller's org so cross-org RCs are never returned.
+	if (org_id) rcWhere.org_id = Number(org_id);
+	// Scope to the selected vendor so the correct RC is returned when multiple
+	// vendors have active contracts for the same product.
+	if (supplier_id) rcWhere.supplier_id = Number(supplier_id);
 	if (date) {
 		const checkDate = new Date(date);
 		checkDate.setHours(12, 0, 0, 0);

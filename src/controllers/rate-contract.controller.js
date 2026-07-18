@@ -51,11 +51,13 @@ exports.deleteRateContract = catchAsync(async (req, res) => {
 
 exports.getRateContractByProductId = catchAsync(async (req, res) => {
 	const { product_id } = req.params;
-	const { unit_id, date } = req.query;
+	const { unit_id, date, supplier_id } = req.query;
 
 	const data = await rateContractService.getRateContractByProductId(product_id, {
 		unit_id,
 		date,
+		org_id: req.user.org_id,
+		supplier_id,
 	});
 
 	res.status(StatusCodes.OK).json({
