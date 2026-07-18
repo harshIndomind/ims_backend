@@ -7,7 +7,7 @@ const {
 const logger = require('../utils/logger');
 const { MasterMajorHead } = require('../models/index');
 const { organization } = require('../models/index');
-const { Budget, Indent } = require('../models/index');
+const { Budget, Indent, MasterMajorHeadAmount, MasterSubHeadAmount } = require('../models/index');
 
 /**
  * Check whether a Master Period is referenced by a Budget or an Indent.
@@ -223,6 +223,32 @@ exports.deleteMasterPeriod = async (id) => {
 	if (!MasterPeriod) {
 		logger.warn('Master Period not found for delete', { id });
 		throw new AppError('Master Period not found', StatusCodes.NOT_FOUND);
+	}
+
+	const majorHeadAmountCount = await MasterMajorHeadAmount.count({ where: { period_id: id } });
+	if (majorHeadAmountCount > 0) {
+		logger.warn('Master Period has linked major head amounts, cannot delete', { id });
+		throw new AppError(
+			'This period cannot be deleted as it has Major Head Amount records linked to it',
+			StatusCodes.BAD_REQUEST,
+		);
+	}
+
+	const subHeadAmountCount = await MasterSubHeadAmount.count({ where: { period_id: id } });
+	if (subHeadAmountCount > 0) {
+		logger.warn('Master Period has linked sub head amounts, cannot delete', { id });
+		throw new AppError(
+			'This period cannot be deleted as it has Sub Head Amount records linked to it',
+			StatusCodes.BAD_REQUEST,
+		);
+	}
+
+	if (await isMasterPeriodInUse(id)) {
+		logger.warn('Master Period in use (Budget/Indent), cannot delete', { id });
+		throw new AppError(
+			'This period cannot be deleted as it is already used in Budget, Indent, Purchase Order or Work Order',
+			StatusCodes.BAD_REQUEST,
+		);
 	}
 
 	await masterPeriodRepo.delete(MasterPeriod);
