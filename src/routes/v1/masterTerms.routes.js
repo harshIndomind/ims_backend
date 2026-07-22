@@ -1,34 +1,33 @@
 const router = require('express').Router();
 const MasterTermsController = require('../../controllers/masterTerms.controller');
 const verifyToken = require('../../middlewares/verifyToken');
-const checkRole = require('../../middlewares/checkRole');
 const checkPermission = require('../../middlewares/checkPermission');
 
 router.use(verifyToken); // all routes protected
 
 router.post(
 	'/',
-	// checkPermission('major-head', 'create'),
+	checkPermission('terms-conditions', 'create'),
 	MasterTermsController.createMasterTerms
 );
 router.put(
 	'/:id',
-	// checkPermission('major-head', 'edit'),
+	checkPermission('terms-conditions', 'edit'),
 	MasterTermsController.updateMasterTerms
 );
 router.get(
 	'/',
-	// checkPermission('major-head', 'view'),
+	checkPermission('terms-conditions', 'view'),
 	MasterTermsController.getAllMasterTerms
 );
 router.get(
 	'/:id',
-	// checkPermission('major-head', 'view'),
+	checkPermission('terms-conditions', 'view'),
 	MasterTermsController.getMasterTermsById
 );
 router.delete(
 	'/:id',
-	// checkPermission('major-head', 'delete'),
+	checkPermission('terms-conditions', 'delete'),
 	MasterTermsController.deleteMasterTerms
 );
 

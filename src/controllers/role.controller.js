@@ -7,9 +7,11 @@ const {
 	Menu,
 	RolePermission,
 	sequelize,
-	UserRole
+	UserRole,
 } = require('../models/index');
 const { permissionCache } = require('../cache/permissionCache');
+const logger = require('../utils/logger');
+const { Op } = require('sequelize');
 
 exports.create = catchAsync(async (req, res) => {
 	const role = await roleService.create(req.body);
@@ -120,36 +122,65 @@ exports.getAssignedMenus = async (req, res) => {
 exports.saveRolePermissions = async (req, res) => {
 	const roleId = req.params.id;
 	const { permissions } = req.body;
+	logger.debug('Role Id in Save Role Permissions: ', { roleId, permissions });
 
-	if (roleId === '1') {
-		return res.status(403).json({
-			message: 'Cannot modify Super Admin permissions',
-		});
+	if (!Array.isArray(permissions)) {
+		return res.status(400).json({ message: 'permissions must be an array' });
 	}
 
-	// validation
-	if (!Array.isArray(permissions)) {
-		return res.status(400).json({
-			message: 'permissions must be an array',
+	// Delegation enforcement — super_admin bypasses all checks
+	if (!req.user?.roles?.includes('super_admin')) {
+		// 1. Resolve caller's minimum role level
+		const callerRoles = await Role.findAll({
+			where: { code: { [Op.in]: req.user.roles ?? [] } },
+			attributes: ['level'],
 		});
+		if (!callerRoles.length) {
+			return res.status(403).json({ message: 'Cannot determine your role level' });
+		}
+		const callerMinLevel = Math.min(...callerRoles.map((r) => r.level));
+
+		// 2. Target role must have a strictly higher level than the caller
+		const targetRole = await Role.findByPk(roleId, { attributes: ['level', 'code'] });
+		if (!targetRole) {
+			return res.status(404).json({ message: 'Role not found' });
+		}
+		if (targetRole.level <= callerMinLevel) {
+			return res.status(403).json({
+				message: 'Cannot modify permissions for a role at or above your own level',
+			});
+		}
+
+		// 3. Every requested permission must be one the caller already holds
+		if (permissions.length > 0) {
+			const callerPermRows = await sequelize.query(
+				`SELECT DISTINCT rp.permission_id AS id
+				 FROM user_roles ur
+				 JOIN role_permissions rp ON rp.role_id = ur.role_id
+				 WHERE ur.user_id = ?`,
+				{ replacements: [req.user.id], type: sequelize.QueryTypes.SELECT },
+			);
+			const callerPermIds = new Set(callerPermRows.map((r) => r.id));
+			const unauthorized = permissions.filter((id) => !callerPermIds.has(id));
+			logger.error("unauthorized permission", {unauthorized})
+			if (unauthorized.length > 0) {
+				return res.status(403).json({
+					message: 'Cannot grant permissions you do not hold',
+				});
+			}
+		}
 	}
 
 	const transaction = await sequelize.transaction();
 
 	try {
-		// 1️⃣ Remove existing permissions of role
-		await RolePermission.destroy({
-			where: { role_id: roleId },
-			transaction,
-		});
+		await RolePermission.destroy({ where: { role_id: roleId }, transaction });
 
-		// 2️⃣ Prepare new rows
 		const rows = permissions.map((permissionId) => ({
 			role_id: roleId,
 			permission_id: permissionId,
 		}));
 
-		// 3️⃣ Insert new permissions
 		if (rows.length > 0) {
 			await RolePermission.bulkCreate(rows, { transaction });
 		}
@@ -161,21 +192,15 @@ exports.saveRolePermissions = async (req, res) => {
 			attributes: ['user_id'],
 		});
 
-		// 🧹 clear cache for affected users
 		userRoles.forEach((ur) => {
 			permissionCache.delete(ur.user_id);
 		});
 
-		res.json({
-			message: 'Role permissions saved successfully',
-		});
+		res.json({ message: 'Role permissions saved successfully' });
 	} catch (error) {
 		await transaction.rollback();
-		console.error(error);
-
-		res.status(500).json({
-			message: 'Failed to save role permissions',
-		});
+		logger.error('Failed to save role permissions', { error });
+		res.status(500).json({ message: 'Failed to save role permissions' });
 	}
 };
 

@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const UserController = require('../../controllers/user.controller');
 const UserVisibilityController = require('../../controllers/user-visibility.controller');
-const checkRole = require('../../middlewares/checkRole');
 const verifyToken = require('../../middlewares/verifyToken');
 const { uploadTo } = require('../../middlewares/multer');
 const checkPermission = require('../../middlewares/checkPermission');
