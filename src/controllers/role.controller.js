@@ -128,8 +128,10 @@ exports.saveRolePermissions = async (req, res) => {
 		return res.status(400).json({ message: 'permissions must be an array' });
 	}
 
-	// Delegation enforcement — super_admin bypasses all checks
-	if (!req.user?.roles?.includes('super_admin')) {
+	const isSuperAdmin = req.user?.roles?.includes('super_admin');
+	let callerPermIds = null;
+
+	if (!isSuperAdmin) {
 		// 1. Resolve caller's minimum role level
 		const callerRoles = await Role.findAll({
 			where: { code: { [Op.in]: req.user.roles ?? [] } },
@@ -151,30 +153,41 @@ exports.saveRolePermissions = async (req, res) => {
 			});
 		}
 
-		// 3. Every requested permission must be one the caller already holds
-		if (permissions.length > 0) {
-			const callerPermRows = await sequelize.query(
-				`SELECT DISTINCT rp.permission_id AS id
-				 FROM user_roles ur
-				 JOIN role_permissions rp ON rp.role_id = ur.role_id
-				 WHERE ur.user_id = ?`,
-				{ replacements: [req.user.id], type: sequelize.QueryTypes.SELECT },
-			);
-			const callerPermIds = new Set(callerPermRows.map((r) => r.id));
-			const unauthorized = permissions.filter((id) => !callerPermIds.has(id));
-			logger.error("unauthorized permission", {unauthorized})
-			if (unauthorized.length > 0) {
-				return res.status(403).json({
-					message: 'Cannot grant permissions you do not hold',
-				});
-			}
+		// 3. Get caller's permission set — used for delegation check and scoped destroy
+		const callerPermRows = await sequelize.query(
+			`SELECT DISTINCT rp.permission_id AS id
+			 FROM user_roles ur
+			 JOIN role_permissions rp ON rp.role_id = ur.role_id
+			 WHERE ur.user_id = ?`,
+			{ replacements: [req.user.id], type: sequelize.QueryTypes.SELECT },
+		);
+		callerPermIds = new Set(callerPermRows.map((r) => r.id));
+
+		// 4. Every requested permission must be in caller's own set
+		const unauthorized = permissions.filter((id) => !callerPermIds.has(id));
+		if (unauthorized.length > 0) {
+			return res.status(403).json({
+				message: 'Cannot grant permissions you do not hold',
+			});
 		}
 	}
 
 	const transaction = await sequelize.transaction();
 
 	try {
-		await RolePermission.destroy({ where: { role_id: roleId }, transaction });
+		if (isSuperAdmin) {
+			await RolePermission.destroy({ where: { role_id: roleId }, transaction });
+		} else {
+			// Scoped destroy: only remove permissions within caller's scope so that
+			// permissions granted by higher-level users are preserved.
+			await RolePermission.destroy({
+				where: {
+					role_id: roleId,
+					permission_id: { [Op.in]: [...callerPermIds] },
+				},
+				transaction,
+			});
+		}
 
 		const rows = permissions.map((permissionId) => ({
 			role_id: roleId,
@@ -213,7 +226,19 @@ exports.getRolePermissions = async (req, res) => {
 			attributes: ['permission_id'],
 		});
 
-		const permissionIds = rows.map((r) => r.permission_id);
+		let permissionIds = rows.map((r) => r.permission_id);
+
+		if (!req.user?.roles?.includes('super_admin')) {
+			const callerPermRows = await sequelize.query(
+				`SELECT DISTINCT rp.permission_id AS id
+				 FROM user_roles ur
+				 JOIN role_permissions rp ON rp.role_id = ur.role_id
+				 WHERE ur.user_id = ?`,
+				{ replacements: [req.user.id], type: sequelize.QueryTypes.SELECT },
+			);
+			const callerPermIds = new Set(callerPermRows.map((r) => r.id));
+			permissionIds = permissionIds.filter((id) => callerPermIds.has(id));
+		}
 
 		res.json(permissionIds);
 	} catch (error) {
