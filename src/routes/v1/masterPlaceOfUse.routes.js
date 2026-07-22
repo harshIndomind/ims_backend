@@ -1,7 +1,6 @@
 const router = require('express').Router();
 const MasterPlaceOfUseController = require('../../controllers/masterPlaceOfUse.controller');
 const verifyToken = require('../../middlewares/verifyToken');
-const checkRole = require('../../middlewares/checkRole');
 const checkPermission = require('../../middlewares/checkPermission');
 
 

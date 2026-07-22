@@ -1,7 +1,6 @@
 const router = require('express').Router();
 const MasterMajorHeadController = require('../../controllers/majorHead.controller');
 const verifyToken = require('../../middlewares/verifyToken');
-const checkRole = require('../../middlewares/checkRole');
 const checkPermission = require('../../middlewares/checkPermission');
 
 router.use(verifyToken); // all routes protected

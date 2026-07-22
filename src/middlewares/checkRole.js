@@ -2,7 +2,9 @@ const AppError = require('../utils/AppError');
 
 const checkRole = (allowedRoles) => {
   return (req, res, next) => {
-    if (!req.user || !allowedRoles.includes(req.user.role)) {
+    const userRoles = req.user?.roles ?? (req.user?.role ? [req.user.role] : []);
+    const hasRole = userRoles.some((r) => allowedRoles.includes(r));
+    if (!req.user || !hasRole) {
       return next(new AppError('Access denied! You are not authorized to perform this action', 403));
     }
     next();

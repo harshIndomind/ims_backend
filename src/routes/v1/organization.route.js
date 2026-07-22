@@ -1,7 +1,6 @@
 const router = require('express').Router();
 const OrganizationController = require('../../controllers/organization.controller');
 const verifyToken = require('../../middlewares/verifyToken');
-const checkRole = require('../../middlewares/checkRole');
 const { validate } = require('../../middlewares/validate');
 const {
 	validationCreateOrganization,

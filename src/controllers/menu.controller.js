@@ -1,8 +1,7 @@
 const { MenuService } = require('../services/index');
-const { Menu, Permission } = require('../models/index');
+const { Menu, Permission, sequelize } = require('../models/index');
 const catchAsync = require('../utils/catchAsync');
 const { Op } = require('sequelize');
-const { Console } = require('console');
 const fetchPermissions = require('../helpers/fetchPermissions');
 const logger = require('../utils/logger');
 const menuService = new MenuService();
@@ -82,55 +81,75 @@ exports.delete = catchAsync(async (req, res) => {
 	});
 });
 
-exports.getMenusWithPermissions = async (req, res) => {
-	try {
-		const menus = await Menu.findAll({
-			where: {
-				parentId: null,
-				isActive: 1,
-			},
-			attributes: ['id', 'menuName', 'slug'],
-			include: [
-				{
-					model: Menu,
-					as: 'children',
-					where: {
-						parentId: { [Op.ne]: null },
-						isActive: 1,
-					},
-					required: false,
-					attributes: ['id', 'menuName', ['menuName', 'title'], 'icon', 'url'],
-					include: [
-						{
-							model: Permission,
-							as: 'permissions',
-							attributes: ['id', 'action'],
-							required: false,
-						},
-					],
-				},
-				{
-					model: Permission,
-					as: 'permissions',
-					attributes: ['id', 'action'],
-				},
-			],
-			order: [
-				['menuName', 'ASC'], // Parent menu order
-				// [{ model: Menu, as: 'children' }, 'menuName', 'ASC'], // Child menu order
-				// [{ model: Menu, as: 'children' }, { model: Permission, as: 'permissions' }, 'action', 'ASC'], // Child permissions
-				[{ model: Permission, as: 'permissions' }, 'action', 'ASC'], // Parent permissions
-			],
-		});
+exports.getMenusWithPermissions = catchAsync(async (req, res) => {
+	const { roles } = req.user;
+	const isSuperAdmin = roles.includes('super_admin');
 
-		res.json(menus);
-	} catch (error) {
-		console.error(error);
-		res.status(500).json({
-			message: 'Failed to load menus with permissions',
-		});
+	// Build a permission ID filter for non-super-admin callers
+	let permissionWhere = null;
+	if (!isSuperAdmin) {
+		const callerPerms = await sequelize.query(
+			`SELECT DISTINCT rp.permission_id AS id
+			 FROM user_roles ur
+			 JOIN role_permissions rp ON rp.role_id = ur.role_id
+			 WHERE ur.user_id = ?`,
+			{ replacements: [req.user.id], type: sequelize.QueryTypes.SELECT },
+		);
+
+		if (!callerPerms.length) return res.json([]);
+
+		const callerPermIds = callerPerms.map((r) => r.id);
+		permissionWhere = { id: { [Op.in]: callerPermIds } };
 	}
-};
+
+	const menus = await Menu.findAll({
+		where: { parentId: null, isActive: 1 },
+		attributes: ['id', 'menuName', 'slug'],
+		include: [
+			{
+				model: Menu,
+				as: 'children',
+				where: { parentId: { [Op.ne]: null }, isActive: 1 },
+				required: false,
+				attributes: ['id', 'menuName', ['menuName', 'title'], 'icon', 'url'],
+				include: [
+					{
+						model: Permission,
+						as: 'permissions',
+						attributes: ['id', 'action'],
+						required: false,
+						...(permissionWhere && { where: permissionWhere }),
+					},
+				],
+			},
+			{
+				model: Permission,
+				as: 'permissions',
+				attributes: ['id', 'action'],
+				required: false,
+				...(permissionWhere && { where: permissionWhere }),
+			},
+		],
+		order: [
+			['menuName', 'ASC'],
+			[{ model: Permission, as: 'permissions' }, 'action', 'ASC'],
+		],
+	});
+
+	// For non-super-admins: strip menus where caller holds no permissions at all
+	if (!isSuperAdmin) {
+		const filtered = menus
+			.map((m) => m.toJSON())
+			.filter(
+				(m) =>
+					(m.permissions && m.permissions.length > 0) ||
+					(m.children && m.children.some((c) => c.permissions && c.permissions.length > 0)),
+			);
+		return res.json(filtered);
+	}
+
+	res.json(menus);
+});
 
 exports.getMenus = catchAsync(async (req, res) => {
 	// async function getMenusForUser(req, res) {

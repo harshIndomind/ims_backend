@@ -2,7 +2,6 @@ const router = require('express').Router();
 const PartnersController = require('../../controllers/partners.controller');
 const verifyToken = require('../../middlewares/verifyToken');
 const { validate } = require('../../middlewares/validate');
-const checkRole = require('../../middlewares/checkRole');
 const {
 	validationCreateVendor,
 	validationUpdateVendor,

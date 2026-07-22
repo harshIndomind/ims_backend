@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const StateController = require('../../controllers/state.controller');
-const checkRole = require('../../middlewares/checkRole');
 const verifyToken = require('../../middlewares/verifyToken');
 
 router.use(verifyToken);

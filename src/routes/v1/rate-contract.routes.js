@@ -1,7 +1,6 @@
 const router = require('express').Router();
 const RateContractController = require('../../controllers/rate-contract.controller');
 const verifyToken = require('../../middlewares/verifyToken');
-const checkRole = require('../../middlewares/checkRole');
 const checkPermission = require('../../middlewares/checkPermission');
 
 router.use(verifyToken);

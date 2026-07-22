@@ -1,7 +1,6 @@
 const router = require('express').Router();
 const productGroupController = require('../../controllers/productGroup.controller');
 const verifyToken = require('../../middlewares/verifyToken');
-const checkRole = require('../../middlewares/checkRole');
 
 router.use(verifyToken); // all routes protected
 

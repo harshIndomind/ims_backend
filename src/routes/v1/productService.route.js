@@ -1,6 +1,5 @@
 const router = require('express').Router();
 const verifyToken = require('../../middlewares/verifyToken');
-const checkRole = require('../../middlewares/checkRole');
 const productService = require('../../controllers/productService.controller');
 
 router.use(verifyToken); // all routes protected

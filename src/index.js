@@ -12,9 +12,7 @@ const { sendTestMail } = require('./utils/mailer');
 app.use('/uploads', express.static(path.join(__dirname, '/uploads')));
 const http = require('http');
 const { init } = require('./utils/socket');
-// const publishMessage = require('./publisher/publisher');
-// const { connectQueue } = require('./shared/rabbitmq');
-// const {consumeAdminEvents} = require('./shared/consumeEvent');
+
 const { connect } = require('./config/rabbitmq');
 const { startConsumer } = require('./events/consumer');
 const { registerWorkflowNotificationHandler } = require('./events/handlers/workflowNotification.handler');
@@ -80,14 +78,6 @@ async function prepareAndStartServer() {
 		`${apiPrefix}/v1/organizations`,
 		require('./routes/v1/organization.route'),
 	);
-	// app.use(
-	// 	`${apiPrefix}/v1/docs-categories`,
-	// 	require('./routes/v1/docs-category.route')
-	// );
-	// app.use(
-	// 	`${apiPrefix}/v1/docs-uploads`,
-	// 	require('./routes/v1/doc-uploads.routes')
-	// );
 	app.use(`${apiPrefix}/v1/roles`, require('./routes/v1/role.routes'));
 	app.use(`${apiPrefix}/v1/menus`, require('./routes/v1/menu.routes'));
 	app.use(
@@ -102,23 +92,8 @@ async function prepareAndStartServer() {
 		`${apiPrefix}/v1/notifications`,
 		require('./routes/v1/notifications.routes'),
 	);
-	// app.use(`${apiPrefix}/v1/partners`, require('./routes/v1/partners.route'));
-	// app.use(
-	// 	`${apiPrefix}/v1/product-groups`,
-	// 	require('./routes/v1/product-group.route')
-	// );
-	// app.use(`${apiPrefix}/v1/taxes`, require('./routes/v1/tax.routes'));
-	// app.use(`${apiPrefix}/v1/units`, require('./routes/v1/unit.routes'));
 	app.use(`${apiPrefix}/v1/countries`, require('./routes/v1/country.routes'));
 	app.use(`${apiPrefix}/v1/states`, require('./routes/v1/state.routes'));
-	// app.use(
-	// 	`${apiPrefix}/v1/product-services`,
-	// 	require('./routes/v1/productService.route')
-	// );
-	// app.use(`${apiPrefix}/v1/invoices`, require('./routes/v1/invoice.routes'));
-	// app.use(`${apiPrefix}/v1/reports`, require('./routes/v1/reports.routes'));
-	// app.use(`${apiPrefix}/v1/registration-types`, require('./routes/v1/registration-types.routes'));
-	// app.use(`${apiPrefix}/v1/credit-note`, require('./routes/v1/credit-note-invoice.routes'));
 
 	// Budget Planner
 	app.use(
@@ -259,14 +234,6 @@ async function prepareAndStartServer() {
 			server.listen(PORT, () => {
 				console.log(`${envLabel} server running on ${BASE_URL}`);
 			});
-			// try {
-			// 	await connectQueue();
-			// 	await consumeAdminEvents();
-			// 	console.log('✅ RabbitMQ connected');
-			// } catch (err) {
-			// 	console.error('❌ RabbitMQ connection failed:', err);
-			// 	// DO NOT exit — retry instead
-			// }
 		})
 		.catch((err) => {
 			console.error(`${envLabel} DB connection failed:`, err);

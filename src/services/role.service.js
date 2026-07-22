@@ -38,34 +38,29 @@ class RoleService {
 	async getAllRoles(req) {
 		try {
 			const { roles: roleCodes } = req.user;
-			const isAdmin = roleCodes.includes('org_admin');
-			const isSuperAdmin = roleCodes.includes('super_admin');
-			logger.debug("isAdmin or  isSuperAdmin", {isAdmin, isSuperAdmin})
 
-			if (isAdmin) {
-				const roles = await this.roleRepository.findAll({
-					where: {
-						code: { [Op.notIn]: ['super_admin', 'org_admin'] },
-					},
-				});
-				logger.debug("roles ", {roles})
-				return roles;
-			}
-
-			const where = {};
-			where.code = { [Op.notIn]: ['super_admin'] };
-
-			if (isSuperAdmin) {
+			// super_admin sees every role except other super_admins (level > 0)
+			if (roleCodes.includes('super_admin')) {
 				return await this.roleRepository.findAll({
-					where,
+					where: { level: { [Op.gt]: 0 } },
 				});
 			}
 
-			where.code = { [Op.notIn]: ['super_admin', 'org_admin', 'app_admin'] };
-			const roles = await this.roleRepository.findAll(id);
-			return roles;
+			// All other callers: return only roles whose level is strictly greater
+			// than the caller's minimum level (cannot manage peers or superiors)
+			const callerRoles = await Role.findAll({
+				where: { code: { [Op.in]: roleCodes } },
+				attributes: ['level'],
+			});
+			if (!callerRoles.length) return [];
+
+			const callerMinLevel = Math.min(...callerRoles.map((r) => r.level));
+
+			return await this.roleRepository.findAll({
+				where: { level: { [Op.gt]: callerMinLevel } },
+			});
 		} catch (error) {
-			return error;
+			throw error;
 		}
 	}
 

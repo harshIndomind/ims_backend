@@ -3,15 +3,14 @@ const router = express.Router();
 const MenuController = require('../../controllers/menu.controller');
 const verifyToken = require('../../middlewares/verifyToken');
 const checkRole = require('../../middlewares/checkRole');
-const checkPermission = require('../../middlewares/_checkPermission');
+const checkPermission = require('../../middlewares/checkPermission');
 
 router.use(verifyToken);
 
 router.post('/', MenuController.create);
 router.get(
   '/permissions',
-  verifyToken,
-//   checkPermission('roles', 'view'),
+  checkPermission('roles-permissions', 'view'),
   MenuController.getMenusWithPermissions
 );
 router.put('/:id', MenuController.update);

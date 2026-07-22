@@ -1,39 +1,39 @@
 const router = require('express').Router();
 const MasterUnitController = require('../../controllers/masterUnit.controller');
 const verifyToken = require('../../middlewares/verifyToken');
-const checkRole = require('../../middlewares/checkRole');
 const checkPermission = require('../../middlewares/checkPermission');
 
 router.use(verifyToken); // all routes protected
 
 router.post(
 	'/',
-	// checkPermission('major-head', 'create'),
+	checkPermission('period', 'create'),
 	MasterUnitController.createMasterUnit
 );
 router.put(
 	'/:id',
-	// checkPermission('major-head', 'edit'),
+	checkPermission('period', 'edit'),
 	MasterUnitController.updateMasterUnit
 );
 router.get(
 	'/',
-	// checkPermission('major-head', 'view'),
+	checkPermission('period', 'view'),
 	MasterUnitController.getAllMasterUnit
 );
 router.get(
 	'/:id',
-	// checkPermission('major-head', 'view'),
+	checkPermission('period', 'view'),
 	MasterUnitController.getMasterUnitById
 );
 router.delete(
 	'/:id',
-	// checkPermission('major-head', 'delete'),
+	checkPermission('period', 'delete'),
 	MasterUnitController.deleteMasterUnit
 );
 
 router.patch(
 	'/:id/toggle-status',
+	checkPermission('period', 'edit'),
 	MasterUnitController.toggleMasterUnitStatus
 );
 
