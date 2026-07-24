@@ -16,6 +16,7 @@ const {
 	sequelize,
 } = require('../models/index');
 const { generateSignedUrl } = require('../utils/s3Bucket');
+const logger = require('../utils/logger');
 
 exports.register = catchAsync(async (req, res) => {
 	const user = await AuthService.register(req.body);
@@ -29,6 +30,8 @@ exports.login = catchAsync(async (req, res) => {
 
 exports.logout = catchAsync(async (req, res) => {
 	const token = req.cookies.refreshToken;
+	logger.info('Logout requested', { hasRefreshToken: !!token });
+
 	if (token) {
 		try {
 			// ignoreExpiration: an expired refresh token still identifies a real
@@ -36,16 +39,31 @@ exports.logout = catchAsync(async (req, res) => {
 			const decoded = jwt.verify(token, JWT_REFRESH_SECRET, {
 				ignoreExpiration: true,
 			});
+			logger.debug('Logout: decoded refresh token', {
+				sub: decoded.sub,
+				jti: decoded.jti,
+				iss: decoded.iss,
+			});
 			// Only this service's own current_jti is ours to clear — a token
 			// minted by AUTH/VCP was never recorded in this service's column
 			if (decoded.iss === 'SCM') {
-				await User.update(
+				const [affected] = await User.update(
 					{ current_jti: null },
 					{ where: { uuid: decoded.sub, current_jti: decoded.jti } },
 				);
+				logger.info('Logout: session revoked', {
+					uuid: decoded.sub,
+					jti: decoded.jti,
+					revoked: affected > 0,
+				});
+			} else {
+				logger.debug('Logout: token minted by another service, skipping current_jti clear', {
+					iss: decoded.iss,
+				});
 			}
 		} catch (err) {
 			// malformed/forged token — nothing to revoke, fall through to cookie clearing
+			logger.warn('Logout: failed to verify refresh token', { error: err.message });
 		}
 	}
 
@@ -59,6 +77,7 @@ exports.logout = catchAsync(async (req, res) => {
 		secure: COOKIE_SECURE,
 		domain: COOKIE_DOMAIN,
 	});
+	logger.info('Logout: cookies cleared');
 	res.json({ message: 'Logged out successfully' });
 });
 

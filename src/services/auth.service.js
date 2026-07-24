@@ -145,9 +145,13 @@ exports.login = async ({ email, password }, res) => {
 		],
 	});
 
-	if (!user) throw new AppError('Invalid credentials', 401);
+	if (!user) {
+		logger.warn('Login failed: user not found', { email });
+		throw new AppError('Invalid credentials', 401);
+	}
 
 	if (user && !user.is_active) {
+		logger.warn('Login failed: user is not active', { uuid: user.uuid, email });
 		throw new AppError(
 			'User account is inactive. Please contact your organization to activate it.',
 			403,
@@ -155,9 +159,13 @@ exports.login = async ({ email, password }, res) => {
 	}
 
 	const isMatch = await bcrypt.compare(password, user.password);
-	if (!isMatch) throw new AppError('Invalid credentials', 401);
+	if (!isMatch) {
+		logger.warn('Login failed: invalid password', { uuid: user.uuid, email });
+		throw new AppError('Invalid credentials', 401);
+	}
 
 	if (!user.userRoles?.length) {
+		logger.warn('Login failed: no roles assigned', { uuid: user.uuid, email });
 		throw new AppError('No roles assigned to this user', 403);
 	}
 
@@ -199,6 +207,14 @@ exports.login = async ({ email, password }, res) => {
 	};
 
 	await user.update({ current_jti: jti });
+
+	logger.info('Login successful', {
+		uuid: user.uuid,
+		id: user.id,
+		email: user.email,
+		jti,
+		iss: 'SCM',
+	});
 
 	const accessToken = generateAccessToken(payload);
 	const refreshToken = generateRefreshToken(payload);
@@ -286,15 +302,19 @@ exports.getLoggedInUser = async (uuid, res) => {
 
 exports.refreshToken = async (req, res) => {
 	const token = req.cookies.refreshToken;
-	if (!token) throw new AppError('No refresh token', 401);
+	if (!token) {
+		logger.warn('Refresh failed: no refresh token cookie present');
+		throw new AppError('No refresh token', 401);
+	}
 
 	let decoded;
 	try {
 		decoded = jwt.verify(token, JWT_REFRESH_SECRET);
 	} catch (err) {
+		logger.warn('Refresh failed: invalid or expired refresh token', { error: err.message });
 		throw new AppError('Invalid or expired refresh token', 401);
 	}
-	logger.debug('User For Refresh Token', { decoded });
+	logger.debug('Refresh token requested', { sub: decoded.sub, jti: decoded.jti, iss: decoded.iss });
 
 	const user = await User.findOne({
 		where: { uuid: decoded.sub, is_active: 1 },
@@ -315,6 +335,7 @@ exports.refreshToken = async (req, res) => {
 	if (!user) {
 		// res.clearCookie('accessToken');
 		// res.clearCookie('refreshToken');
+		logger.warn('Refresh failed: user not found', { sub: decoded.sub });
 		throw new AppError('User not found', 401);
 	}
 
@@ -322,10 +343,16 @@ exports.refreshToken = async (req, res) => {
 	// minted — a token minted by AUTH/VCP (e.g. user switched apps) was never
 	// recorded in this service's current_jti, so there's nothing to compare
 	if (decoded.iss === 'SCM' && (!user.current_jti || decoded.jti !== user.current_jti)) {
+		logger.warn('Refresh failed: session has been revoked', {
+			uuid: user.uuid,
+			tokenJti: decoded.jti,
+			currentJti: user.current_jti,
+		});
 		throw new AppError('Session has been revoked', 401);
 	}
 
 	if (!user.userRoles || user.userRoles.length === 0) {
+		logger.warn('Refresh failed: no roles assigned', { uuid: user.uuid });
 		throw new AppError('No roles assigned', 403);
 	}
 
@@ -358,6 +385,12 @@ exports.refreshToken = async (req, res) => {
 		jti: decoded.jti,
 		iss: decoded.iss,
 	};
+
+	logger.info('Refresh successful: access token reissued', {
+		uuid: user.uuid,
+		jti: decoded.jti,
+		iss: decoded.iss,
+	});
 
 	return generateAccessToken(payload);
 };
