@@ -56,7 +56,6 @@ class UserRepository {
 
 	async create(data, options = {}) {
 		try {
-			console.log('existingUser ', data);
 			const existingUser = await User.findOne({ where: { email: data.email } });
 			if (existingUser) {
 				throw new AppError(

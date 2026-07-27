@@ -17,6 +17,8 @@ const { connect } = require('./config/rabbitmq');
 const { startConsumer } = require('./events/consumer');
 const { registerWorkflowNotificationHandler } = require('./events/handlers/workflowNotification.handler');
 const helmet = require('helmet');
+const metricsMiddleware = require('./middlewares/metricsMiddleware');
+const { register } = require('./utils/metrics');
 
 const limiter = rateLimit({
 	windowMs: 1 * 60 * 1000,
@@ -63,6 +65,13 @@ async function prepareAndStartServer() {
 
 	const apiPrefix = APP_ENV === 'production' ? '' : '/api';
 	console.log('apiPrefix ', apiPrefix);
+
+	app.get(`${apiPrefix}/metrics`, async (req, res) => {
+  		res.set('Content-Type', register.contentType);
+  		res.end(await register.metrics());
+	});
+
+	app.use(metricsMiddleware);
 
 	app.use('/storage', express.static(path.join(__dirname, '../storage')));
 

@@ -58,7 +58,7 @@ const createUserByOrganization = async (data, loggedInUser) => {
 
 		await t.commit();
 
-		return user;
+		return await AdminUserRepository.findById(user.id);
 	} catch (error) {
 		await t.rollback();
 		throw error;

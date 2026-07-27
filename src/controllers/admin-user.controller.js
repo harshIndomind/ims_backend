@@ -2,9 +2,6 @@ const catchAsync = require('../utils/catchAsync');
 const userService = require('../services/admin-user.service');
 
 exports.createUserByOrganization = catchAsync(async (req, res) => {
-	console.log('createUserByOrganization Body: ', req.body);
-	console.log('createUserByOrganization Request User: ', req.user);
-	// return
 	const user = await userService.createUserByOrganization(req.body, req.user);
 
 	res.status(201).json({
