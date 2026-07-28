@@ -47,6 +47,7 @@ exports.findAll = async (where = {}, options = {}) => {
 		where,
 		include,
 		order: [['createdAt', 'DESC']],
+		distinct: true,
 		...options,
 	});
 };
