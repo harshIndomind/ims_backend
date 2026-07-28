@@ -397,6 +397,16 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 			? { status: status || existing.status, payment_type: paymentType || null, transaction_id: transactionId || null, remark: remark || null }
 			: { status: existing.status, payment_type: existing.payment_type, transaction_id: existing.transaction_id, remark: existing.remark };
 
+		// authorized_at records the moment status genuinely transitions to APPROVED/REJECTED,
+		// unlike authorized_by(_id) which is refreshed on every approver edit.
+		const isStatusTransition =
+			isApprover &&
+			approverOnlyFields.status !== existing.status &&
+			['APPROVED', 'REJECTED'].includes(approverOnlyFields.status);
+		const authorizedAtUpdate = {
+			authorized_at: isStatusTransition ? new Date() : existing.authorized_at,
+		};
+
 		const po_id = (requisitionAgainst || existing.requisition_against) === 'PO' && (poWoId ?? existing.po_id)
 			? Number(poWoId ?? existing.po_id)
 			: null;
@@ -431,6 +441,7 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 				activity_id: activityId || null,
 				budget_id: budgetId || null,
 				...authorizedByUpdate,
+				...authorizedAtUpdate,
 				payment_date: paymentDate || null,
 				term_condition: termCondition || null,
 				payment_term_id,
