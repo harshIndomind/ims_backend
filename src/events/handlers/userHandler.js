@@ -265,6 +265,7 @@ async function handleUserDeactivated(data) {
 
 async function handleUserActivated(data) {
 	await User.update({ is_active: 1 }, { where: { uuid: data.uuid } });
+	logger.info(`User activated in ${APP_CODE}`, { uuid: data.uuid });
 }
 
 const VCP_ONLY_ROLES = ['vendor', 'vendor_customer', 'customer'];

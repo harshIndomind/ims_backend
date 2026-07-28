@@ -381,7 +381,7 @@ class UserService {
 			version: '1.0',
 			timestamp: new Date().toISOString(),
 			source: 'SCM',
-			data: { user_uuid: user.uuid },
+			data: { uuid: user.uuid },
 		});
 
 		logger.info('User deactivated', { userId });
@@ -399,7 +399,7 @@ class UserService {
 			version: '1.0',
 			timestamp: new Date().toISOString(),
 			source: 'SCM',
-			data: { user_uuid: user.uuid },
+			data: { uuid: user.uuid },
 		});
 
 		logger.info('User activated', { userId });

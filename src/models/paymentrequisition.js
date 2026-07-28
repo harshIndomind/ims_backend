@@ -187,6 +187,10 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.JSON,
 				allowNull: true,
 			},
+			authorized_at: {
+				type: DataTypes.DATE,
+				allowNull: true,
+			},
 			payment_date: {
 				type: DataTypes.DATE,
 				allowNull: true,
