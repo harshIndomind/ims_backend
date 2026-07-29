@@ -134,7 +134,6 @@ exports.getAllPlaceOfUse = async (req) => {
         filterOptions.offset = Number(offset || 0);
     }
 
-    logger.info('Fetching all Place of Use');
     return await masterPlaceOfUseRepository.findAll({}, filterOptions);
 };
 

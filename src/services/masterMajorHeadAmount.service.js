@@ -131,7 +131,7 @@ exports.getAllMasterMajorHeadAmount = async (req) => {
 		options.limit = Number(limit);
 		options.offset = Number(offset);
 	}
-	logger.info('Fetching all Master Major Head Amounts');
+
 	const result = await masterMajorHeadAmountRepo.findAll({
 		where,
 		...options,
@@ -253,7 +253,7 @@ exports.getAmountByMajorHeadAndPeriod = async (
 	major_head_id,
 	period_id,
 ) => {
-	logger.info('Fetching all Master Major Head Amounts');
+
 	return await masterMajorHeadAmountRepo.getAmountByMajorHeadAndPeriod({
 		where: { org_id, major_head_id, period_id },
 		include: [

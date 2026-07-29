@@ -81,7 +81,6 @@ exports.getAllMasterMajorHead = async (req) => {
 		where.id = { [Op.in]: majorHeadIds };
 	}
 
-	logger.info('Fetching all Master Major Heads', { period_id });
 	options.include = [
 		{
 			model: organization,

@@ -307,7 +307,6 @@ exports.updateRateContract = async (id, payload) => {
 };
 
 exports.getAllRateContract = async (req) => {
-	logger.info('Fetching all Rate Contract');
 	const { limit, offset } = req.query;
 
 	const filterOptions = { include: defaultIncludes };

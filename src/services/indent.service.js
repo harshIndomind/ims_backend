@@ -264,7 +264,9 @@ exports.getAllIndents = async (req) => {
 	if (selectedStatusId === 'cancelled') where.status = 'cancelled';
 	if (selectedBudgetTypeId && selectedBudgetTypeId != 'all') where.budgetType = selectedBudgetTypeId;
 
-	if (fromDate && toDate) {
+	if (indentNo) {
+		where.indent_no = indentNo;
+	} else if (fromDate && toDate) {
 		const from_date = parseDate(fromDate);
 		const to_date = parseDate(toDate);
 		to_date.setDate(to_date.getDate() + 1);
@@ -287,7 +289,6 @@ exports.getAllIndents = async (req) => {
 	if (periodId > 0) where.period_id = periodId;
 	if (unitId > 0) where.unit_id = unitId;
 	if (departmentId > 0) where.department_id = departmentId;
-	if (indentNo) where.indent_no = indentNo;
 
 	// Role-based data visibility — applied AFTER query-param filters so that
 	// non-admin users cannot bypass their department scope by sending an arbitrary

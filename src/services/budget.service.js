@@ -146,25 +146,28 @@ exports.getAllBudgets = async (req) => {
 		sortOrder,
 	} = req.query;
 
-	if (!fromDate || !toDate) {
-		throw new AppError('fromDate and toDate are required');
-	}
+	const where = { org_id };
 
-	const from_date = parseDate(fromDate);
-	const to_date = parseDate(toDate);
-	to_date.setDate(to_date.getDate() + 1);
+	if (budgetId) {
+		where.budget_id = budgetId;
+	} else {
+		if (!fromDate || !toDate) {
+			throw new AppError('fromDate and toDate are required');
+		}
 
-	if (isNaN(from_date) || isNaN(to_date)) {
-		throw new AppError('Invalid date range');
-	}
+		const from_date = parseDate(fromDate);
+		const to_date = parseDate(toDate);
+		to_date.setDate(to_date.getDate() + 1);
 
-	const where = {
-		org_id,
-		createdAt: {
+		if (isNaN(from_date) || isNaN(to_date)) {
+			throw new AppError('Invalid date range');
+		}
+
+		where.createdAt = {
 			[Op.gte]: from_date,
 			[Op.lt]: to_date,
-		},
-	};
+		};
+	}
 
 	const periodId = Number(selectedPeriodId);
 	const unitId = Number(selectedUnitId);
@@ -177,7 +180,6 @@ exports.getAllBudgets = async (req) => {
 	if (unitId > 0) where.unit_id = unitId;
 	if (departmentId > 0) where.department_id = departmentId;
 	if (costCenterId > 0) where.cost_center_id = costCenterId;
-	if (budgetId) where.budget_id = budgetId;
 	if (selectedCategoryId != 'all') where.category = selectedCategoryId;
 
 	// Role-based data visibility — applied AFTER query-param filters so that

@@ -56,7 +56,6 @@ exports.updateMasterAccount = async (id, payload) => {
 };
 
 exports.getAllMasterAccount = async (options = {}) => {
-	logger.info('Fetching all cost center');
 	// options.include = [
 	// 	{
 	// 		model: organization,

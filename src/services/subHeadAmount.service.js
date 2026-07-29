@@ -246,7 +246,7 @@ exports.getAllSubHeadAmount = async (req) => {
 		options.limit = Number(limit);
 		options.offset = Number(offset);
 	}
-	logger.info('Fetching all Sub head amounts');
+
 	const result = await masterSubHeadAmountRepo.findAll({
 		where,
 		...options,
@@ -408,7 +408,6 @@ exports.getAmountByMajorHeadAndPeriod = async (
 	major_head_id,
 	period_id,
 ) => {
-	logger.info('Fetching all Master Major Head Amounts');
 	return await masterSubHeadAmountRepo.getAmountByMajorHeadAndPeriod({
 		where: { id, major_head_id, period_id },
 		include: [
