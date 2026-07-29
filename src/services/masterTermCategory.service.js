@@ -89,7 +89,6 @@ exports.getAllTermCategories = async (req) => {
 		filterOptions.offset = Number(offset || 0);
 	}
 
-	logger.info('Fetching all Term Categories', { filterOptions });
 	return await masterTermCategoryRepository.findAll({}, filterOptions);
 };
 

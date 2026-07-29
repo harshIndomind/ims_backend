@@ -68,7 +68,6 @@ exports.getAllMasterTerms = async (req) => {
 		filterOptions.offset = Number(offset || 0);
 	}
 
-	logger.info('Fetching all Master Terms', { filterOptions });
 	return await masterTermsRepository.findAll({}, filterOptions);
 }; 	
 

@@ -117,7 +117,6 @@ exports.updateMasterUnit = async (req, id, payload) => {
 };
 
 exports.getAllMasterUnit = async (req) => {
-	logger.info('Fetching all Master Units');
 	const { org_id, isSuperAdmin } = req.user;
 	const { limit, offset, active, org_id: filterOrgId } = req.query;
 

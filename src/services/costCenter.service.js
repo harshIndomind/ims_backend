@@ -69,7 +69,7 @@ exports.getAllCostCenter = async (req) => {
 		options.limit = Number(limit);
 		options.offset = Number(offset);
 	}
-	logger.info('Fetching all cost center');
+
 	options.include = [
 		{
 			model: organization,

@@ -164,7 +164,7 @@ exports.getAllMasterPeriod = async (req) => {
 		options.limit = Number(limit);
 		options.offset = Number(offset);
 	}
-	logger.info('Fetching all Master Periods');
+
 	options.include = [
 		{
 			model: organization,

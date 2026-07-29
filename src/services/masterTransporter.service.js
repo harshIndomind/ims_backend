@@ -71,7 +71,6 @@ exports.getAllMasterTransporter = async (req) => {
 		filterOptions.offset = Number(offset || 0);
 	}
 
-	logger.info('Fetching all Master Transporters');
 	return await masterTransporterRepository.findAll({}, filterOptions);
 };
 
