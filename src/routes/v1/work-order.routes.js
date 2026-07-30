@@ -3,6 +3,9 @@ const router = express.Router();
 const workOrderController = require('../../controllers/work-order.controller');
 const verifyToken = require('../../middlewares/verifyToken');
 const checkPermission = require('../../middlewares/checkPermission');
+const { validate } = require('../../middlewares/validate');
+const { validationDispatchOrder, validationAcknowledgeOrder } = require('../../validations/OrderDispatch.validator');
+const { upload: orderDocUpload } = require('../../middlewares/orderDocumentUpload');
 
 router.use(verifyToken);
 
@@ -19,6 +22,27 @@ router.post('/:id/reopen', checkPermission('work-order', 'reopen'), workOrderCon
 router.post('/:id/archive', checkPermission('work-order', 'archive'), workOrderController.archiveWorkOrder);
 router.post('/:id/restore', checkPermission('work-order', 'archive'), workOrderController.restoreWorkOrder);
 router.get('/:id/workflow', checkPermission('work-order', 'view'), workOrderController.getWorkOrderWorkflow);
+router.post(
+	'/:id/dispatch',
+	checkPermission('work-order', 'dispatch'),
+	validationDispatchOrder,
+	validate,
+	workOrderController.dispatchWorkOrder,
+);
+router.post(
+	'/:id/acknowledge',
+	checkPermission('work-order', 'acknowledge'),
+	orderDocUpload.single('attachment'),
+	validationAcknowledgeOrder,
+	validate,
+	workOrderController.acknowledgeWorkOrder,
+);
+router.get('/:id/dispatches', checkPermission('work-order', 'view'), workOrderController.listWorkOrderDispatches);
+router.get(
+	'/:id/acknowledgements',
+	checkPermission('work-order', 'view'),
+	workOrderController.listWorkOrderAcknowledgements,
+);
 router.post('/:id/html', checkPermission('work-order', 'view'), workOrderController.generateInvoiceHtml);
 router.post('/:id/pdf', checkPermission('work-order', 'view'), workOrderController.downloadInvoicePdf);
 

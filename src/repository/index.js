@@ -34,4 +34,9 @@ module.exports = {
     workOrderItemsRepository: require('./work-order-items.repository'),
     masterPlaceOfUseRepository: require('./masterPlaceOfUse.repository'),
     userVisibilityRepository: require('./user-visibility.repository'),
+    masterDispatchMethodRepository: require('./masterDispatchMethod.repository'),
+    masterAcknowledgementModeRepository: require('./masterAcknowledgementMode.repository'),
+    orderDispatchRepository: require('./orderDispatch.repository'),
+    orderAcknowledgementRepository: require('./orderAcknowledgement.repository'),
+    orderDocumentRepository: require('./orderDocument.repository'),
 }

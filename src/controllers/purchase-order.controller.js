@@ -150,3 +150,27 @@ exports.getPurchaseOrderWorkflow = catchAsync(async (req, res) => {
 	const data = await purchaseOrderService.getPurchaseOrderWorkflow(req, id);
 	res.status(200).json({ message: 'Purchase Order workflow fetched successfully', data });
 });
+
+exports.dispatchPurchaseOrder = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const data = await purchaseOrderService.dispatchPurchaseOrder(req, id, req.body);
+	res.status(200).json({ message: 'Purchase Order dispatched successfully', data });
+});
+
+exports.acknowledgePurchaseOrder = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const data = await purchaseOrderService.acknowledgePurchaseOrder(req, id, req.body, req.file);
+	res.status(200).json({ message: 'Purchase Order acknowledgement recorded successfully', data });
+});
+
+exports.listPurchaseOrderDispatches = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const data = await purchaseOrderService.listPurchaseOrderDispatches(id);
+	res.status(200).json({ message: 'Purchase Order dispatches fetched successfully', data });
+});
+
+exports.listPurchaseOrderAcknowledgements = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const data = await purchaseOrderService.listPurchaseOrderAcknowledgements(id);
+	res.status(200).json({ message: 'Purchase Order acknowledgements fetched successfully', data });
+});

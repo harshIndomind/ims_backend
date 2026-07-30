@@ -109,10 +109,28 @@ const sendForgotPasswordMail = async (toEmail, data) => {
 	});
 };
 
+const sendDispatchMail = async (toEmail, data) => {
+	const filePath = path.join(__dirname, '../email-templates/order-dispatch-mail.html');
+
+	const source = fs.readFileSync(filePath, 'utf8');
+
+	const template = handlebars.compile(source);
+	const html = template({ ...data.body });
+
+	return await transporter.sendMail({
+		from: 'admin@indomind.ai',
+		to: toEmail,
+		subject: data.subject,
+		html,
+		attachments: data.attachments,
+	});
+};
+
 module.exports = {
 	sendIssueCreatedMail,
 	sendIssueApprovedMail,
 	sendIssueStatusChangedMail,
 	sendForgotPasswordMail,
+	sendDispatchMail,
 	sendTestMail
 };

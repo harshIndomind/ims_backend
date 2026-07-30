@@ -19,6 +19,7 @@ const { registerWorkflowNotificationHandler } = require('./events/handlers/workf
 const helmet = require('helmet');
 const metricsMiddleware = require('./middlewares/metricsMiddleware');
 const { register } = require('./utils/metrics');
+const logger = require('./utils/logger');
 
 const limiter = rateLimit({
 	windowMs: 1 * 60 * 1000,
@@ -27,20 +28,7 @@ const limiter = rateLimit({
 	legacyHeaders: false,
 });
 
-const authLimiter = rateLimit({
-	windowMs: 5 * 60 * 1000,
-	limit: 5,
-	standardHeaders: 'draft-8',
-	legacyHeaders: false,
-});
-
 async function prepareAndStartServer() {
-	// sendTestMail();
-	console.log(`Environment: ${APP_ENV}`);
-	console.log(`PORT: ${PORT}`);
-	console.log(`Server listening on ${BASE_URL}`);
-	console.log(`Date ${new Date().toString()}`);
-
 	app.use(helmet());
 	app.use(cookieParser());
 	const whitelist = CORS_WHITELIST;
@@ -51,7 +39,7 @@ async function prepareAndStartServer() {
 				if (whitelist.includes(origin) || !origin) {
 					callback(null, true);
 				} else {
-					console.error(`Blocked by CORS: ${origin}`);
+					logger.error(`Blocked by CORS: ${origin}`);
 					callback(new Error('Not allowed by CORS'));
 				}
 			},
@@ -61,10 +49,8 @@ async function prepareAndStartServer() {
 	app.use(express.json({ limit: '10mb' }));
 	app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-	// app.use(limiter);
-
 	const apiPrefix = APP_ENV === 'production' ? '' : '/api';
-	console.log('apiPrefix ', apiPrefix);
+	logger.debug('apiPrefix ', {apiPrefix});
 
 	app.get(`${apiPrefix}/metrics`, async (req, res) => {
   		res.set('Content-Type', register.contentType);
@@ -104,58 +90,9 @@ async function prepareAndStartServer() {
 	app.use(`${apiPrefix}/v1/countries`, require('./routes/v1/country.routes'));
 	app.use(`${apiPrefix}/v1/states`, require('./routes/v1/state.routes'));
 
-	// Budget Planner
 	app.use(
-		`${apiPrefix}/v1/master/major-head`,
-		require('./routes/v1/masterMajorHead.routes'),
-	);
-	app.use(
-		`${apiPrefix}/v1/master/sub-head`,
-		require('./routes/v1/masterSubHead.routes'),
-	);
-	app.use(
-		`${apiPrefix}/v1/master/period`,
-		require('./routes/v1/masterPeriod.routes'),
-	);
-	app.use(
-		`${apiPrefix}/v1/master/major-head-amount`,
-		require('./routes/v1/masterMajorHeadAmount.routes'),
-	);
-	app.use(
-		`${apiPrefix}/v1/master/sub-head-amount`,
-		require('./routes/v1/masterSubHeadAmount.routes'),
-	);
-	app.use(
-		`${apiPrefix}/v1/master/budget`,
-		require('./routes/v1/budget.routes'),
-	);
-	app.use(
-		`${apiPrefix}/v1/master/cost-center`,
-		require('./routes/v1/costCenter.routes'),
-	);
-	app.use(
-		`${apiPrefix}/v1/master/accounts`,
-		require('./routes/v1/masterAccounts.routes'),
-	);
-	app.use(
-    `${apiPrefix}/v1/master/term-categories`,
-    require('./routes/v1//masterTermCategory.routes'),  
-);
-	app.use(
-		`${apiPrefix}/v1/master/terms`,
-		require('./routes/v1/masterTerms.routes'),
-	);
-	app.use(
-		`${apiPrefix}/v1/master/transporter`,
-		require('./routes/v1/masterTransporter.routes'),
-	);
-	app.use(
-		`${apiPrefix}/v1/master/units`,
-		require('./routes/v1/masterUnit.routes'),
-	);
-	app.use(
-		`${apiPrefix}/v1/master/place-of-use`,
-		require('./routes/v1/masterPlaceOfUse.routes'),
+		`${apiPrefix}/v1/master`,
+		require('./routes/v1/master.routes'),
 	);
 
 	app.use(
@@ -198,17 +135,15 @@ async function prepareAndStartServer() {
 			require('./routes/v1/grn.routes'),
 		);
 	}
+
 	app.use(
 		`${apiPrefix}/v1/work-orders`,
 		require('./routes/v1/work-order.routes'),
 	);
+
 	app.use(
 		`${apiPrefix}/v1/payment-requisitions`,
 		require('./routes/v1/payment-requisition.routes'),
-	);
-	app.use(
-		`${apiPrefix}/v1/master/term-categories`,
-		require('./routes/v1//masterTermCategory.routes'),
 	);
 
 	app.use(
@@ -217,7 +152,7 @@ async function prepareAndStartServer() {
 	);
 
 	app.get('/', (req, res) => {
-		res.status(200).json({ status: true, message: '✅ Its working.' });
+		res.status(200).json({ status: true, message: '✅ Server up & running.' });
 	});
 
 	app.use((req, res, next) => {
@@ -229,26 +164,25 @@ async function prepareAndStartServer() {
 	const server = http.createServer(app);
 	const io = init(server);
 
-	const envLabel = APP_ENV === 'development' ? 'Dev' : 'Production';
+	const envLabel = APP_ENV === 'development' ? 'Development' : 'Production';
 
 	db.sequelize
 		.authenticate()
 		.then(async () => {
-			console.log(`✅ DB connected (${envLabel})`);
+			logger.info(`🛢  DB connected | Environment: (${envLabel})`);
 
 			await connect();
 			await startConsumer();
 			registerWorkflowNotificationHandler();
 
 			server.listen(PORT, () => {
-				console.log(`${envLabel} server running on ${BASE_URL}`);
+				logger.info(`🌐 ${envLabel} server running on ${BASE_URL}`);
 			});
 		})
 		.catch((err) => {
-			console.error(`${envLabel} DB connection failed:`, err);
+			logger.error(`${envLabel} DB connection failed:`, {err});
 			process.exit(1);
 		});
-	// await publishMessage();
 }
 
 prepareAndStartServer();
