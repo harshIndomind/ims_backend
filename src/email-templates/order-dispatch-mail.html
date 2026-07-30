@@ -1,0 +1,23 @@
+<html>
+<body style="font-family:Helvetica Neue,Helvetica,Lucida Grande,tahoma,verdana,arial,sans-serif;background:#ffffff;margin:0;padding:0;">
+	<table border="0" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;max-width:600px;margin:0 auto;">
+		<tbody>
+			<tr>
+				<td style="padding:24px 20px 0 20px;">
+					<p style="margin:0 0 12px 0;color:#565a5c;font-size:18px">Hello{{#if recipientName}} {{recipientName}}{{/if}},</p>
+					<p style="margin:0 0 12px 0;color:#565a5c;font-size:16px">
+						<strong>{{documentLabel}}</strong> has been dispatched to you on {{dispatchDate}}.
+					</p>
+					{{#if referenceNo}}
+					<p style="margin:0 0 8px 0;color:#565a5c;font-size:14px">Reference No: {{referenceNo}}</p>
+					{{/if}}
+					{{#if remarks}}
+					<p style="margin:0 0 8px 0;color:#565a5c;font-size:14px">Remarks: {{remarks}}</p>
+					{{/if}}
+					<p style="margin:24px 0 0 0;color:#8a8f91;font-size:12px">This is an automated notification. Please do not reply to this email.</p>
+				</td>
+			</tr>
+		</tbody>
+	</table>
+</body>
+</html>

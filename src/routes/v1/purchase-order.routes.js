@@ -3,6 +3,9 @@ const router = express.Router();
 const purchaseController = require('../../controllers/purchase-order.controller');
 const verifyToken = require('../../middlewares/verifyToken');
 const checkPermission = require('../../middlewares/checkPermission');
+const { validate } = require('../../middlewares/validate');
+const { validationDispatchOrder, validationAcknowledgeOrder } = require('../../validations/OrderDispatch.validator');
+const { upload: orderDocUpload } = require('../../middlewares/orderDocumentUpload');
 
 router.use(verifyToken);
 
@@ -19,6 +22,27 @@ router.post('/:id/reopen', checkPermission('purchase-order', 'reopen'), purchase
 router.post('/:id/archive', checkPermission('purchase-order', 'archive'), purchaseController.archivePurchaseOrder);
 router.post('/:id/restore', checkPermission('purchase-order', 'archive'), purchaseController.restorePurchaseOrder);
 router.get('/:id/workflow', checkPermission('purchase-order', 'view'), purchaseController.getPurchaseOrderWorkflow);
+router.post(
+	'/:id/dispatch',
+	checkPermission('purchase-order', 'dispatch'),
+	validationDispatchOrder,
+	validate,
+	purchaseController.dispatchPurchaseOrder,
+);
+router.post(
+	'/:id/acknowledge',
+	checkPermission('purchase-order', 'acknowledge'),
+	orderDocUpload.single('attachment'),
+	validationAcknowledgeOrder,
+	validate,
+	purchaseController.acknowledgePurchaseOrder,
+);
+router.get('/:id/dispatches', checkPermission('purchase-order', 'view'), purchaseController.listPurchaseOrderDispatches);
+router.get(
+	'/:id/acknowledgements',
+	checkPermission('purchase-order', 'view'),
+	purchaseController.listPurchaseOrderAcknowledgements,
+);
 router.post('/:id/html', checkPermission('purchase-order', 'view'), purchaseController.generateInvoiceHtml);
 router.post('/:id/pdf', checkPermission('purchase-order', 'view'), purchaseController.downloadInvoicePdf);
 

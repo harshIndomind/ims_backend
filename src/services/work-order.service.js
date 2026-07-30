@@ -24,6 +24,7 @@ const {
 const workflowEngine = require('./workflowEngine.service');
 const auditLogService = require('./auditLog.service');
 const { createWorkflowDocumentService } = require('./workflowDocument.factory');
+const orderDispatchService = require('./orderDispatch.service');
 
 const DOCUMENT_TYPE = 'work_order';
 
@@ -52,6 +53,7 @@ const { VCP_SERVICE_API_BASE_URL, BASE_URL } = require('../config/serverConfig')
 const { generateSignedUrl, getImageAsBase64DataUrl } = require('../utils/s3Bucket');
 const ExcelJS = require('exceljs');
 const path = require('path');
+const fs = require('fs/promises');
 
 // Services have no stock and carry qty_for_purchase_order = 0 on the indent,
 // so they must be excluded from the purchase-order qty ledger (otherwise the
@@ -386,15 +388,13 @@ exports.updateWorkOrder = async (req) => {
 	}
 };
 
-exports.getAllWorkOrders = async (req) => {
-	const { org_id, role } = req.user;
-	const { from_date, to_date, unit_id, due_date_from, due_date_to, payment_status } = req.query;
-	const limit = req.query.limit ? parseInt(req.query.limit) : undefined;
-	const offset = req.query.offset ? parseInt(req.query.offset) : undefined;
-
-	if (!org_id && role !== 'Admin') {
-		throw new AppError(`You don't authorize to access this api.`);
-	}
+/**
+ * Shared by getAllWorkOrders (list) and exportWorkOrders (Excel) — see the matching comment
+ * in purchase-order.service.js's buildPurchaseOrderFilters for why this is factored out.
+ */
+function buildWorkOrderFilters(req) {
+	const { org_id } = req.user;
+	const { from_date, to_date, unit_id, due_date_from, due_date_to, payment_status, dispatch_status_filter } = req.query;
 
 	const andConditions = [{ org_id }];
 
@@ -437,6 +437,28 @@ exports.getAllWorkOrders = async (req) => {
 		}
 	}
 
+	// See the matching comment in purchase-order.service.js's getAllPurchaseOrders —
+	// 'pending_dispatch' requires status === 'approved' too, not just the raw column value.
+	if (dispatch_status_filter === 'pending_dispatch') {
+		andConditions.push({ status: 'approved', dispatch_status: 'not_dispatched' });
+	} else if (dispatch_status_filter === 'pending_acknowledgement') {
+		andConditions.push({ dispatch_status: 'dispatched' });
+	}
+
+	return { andConditions, unitId: unit_id ? Number(unit_id) : null };
+}
+
+exports.getAllWorkOrders = async (req) => {
+	const { org_id, role } = req.user;
+	const limit = req.query.limit ? parseInt(req.query.limit) : undefined;
+	const offset = req.query.offset ? parseInt(req.query.offset) : undefined;
+
+	if (!org_id && role !== 'Admin') {
+		throw new AppError(`You don't authorize to access this api.`);
+	}
+
+	const { andConditions, unitId } = buildWorkOrderFilters(req);
+
 	const findOptions = {
 		where: { [Op.and]: andConditions },
 		attributes: [
@@ -453,6 +475,7 @@ exports.getAllWorkOrders = async (req) => {
 			'createdAt',
 			'paymentStatus',
 			'vendorInfo',
+			'dispatch_status',
 		],
 		include: [
 			{
@@ -466,8 +489,8 @@ exports.getAllWorkOrders = async (req) => {
 				model: Indent,
 				as: 'indent',
 				attributes: ['id', 'unit_id', 'department_id'],
-				where: unit_id ? { unit_id: Number(unit_id) } : undefined,
-				required: !!unit_id,
+				where: unitId ? { unit_id: unitId } : undefined,
+				required: !!unitId,
 				include: [
 					{ model: MasterUnit, as: 'unit', attributes: ['id', 'unitName', 'unitCd'] },
 					{ model: Department, as: 'department', attributes: ['id', 'name'] },
@@ -911,18 +934,8 @@ exports.exportWorkOrders = async (req) => {
 		throw new AppError("You don't have access to this API.", 403);
 	}
 
-	const { from_date, to_date } = req.query;
-	const whereClause = { org_id };
-
-	if (from_date || to_date) {
-		const fromDate = new Date(from_date);
-		const toDate = new Date(to_date);
-		if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
-			throw new AppError('Invalid date range');
-		}
-		toDate.setHours(23, 59, 59, 999);
-		whereClause.createdAt = { [Op.between]: [fromDate, toDate] };
-	}
+	const { andConditions, unitId } = buildWorkOrderFilters(req);
+	const whereClause = { [Op.and]: andConditions };
 
 	const now = new Date();
 	const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
@@ -978,6 +991,10 @@ exports.exportWorkOrders = async (req) => {
 		{ header: 'Outstanding (₹)', key: 'remaining', width: 16 },
 		{ header: 'Payment Status', key: 'paymentStatus', width: 16 },
 		{ header: 'Order Status', key: 'status', width: 14 },
+		{ header: 'Dispatch Status', key: 'dispatchStatus', width: 16 },
+		{ header: 'Acknowledge Status', key: 'acknowledgeStatus', width: 18 },
+		{ header: 'Last Dispatch Date', key: 'lastDispatchedAt', width: 20 },
+		{ header: 'Last Acknowledge Date', key: 'lastAcknowledgedAt', width: 22 },
 		{ header: 'Same State (GST)', key: 'sameState', width: 18 },
 		{ header: 'QC Required', key: 'qcCheck', width: 14 },
 		{ header: 'Retention (%)', key: 'retention', width: 14 },
@@ -1027,6 +1044,7 @@ exports.exportWorkOrders = async (req) => {
 				'id', 'woPrefix', 'woNo', 'woPostfix', 'woDetail', 'vendorInfo',
 				'dueDate', 'grandTotal', 'total_taxable', 'total_tax',
 				'totalPaid', 'remainingAmount', 'paymentStatus', 'status',
+				'dispatch_status', 'last_dispatched_at', 'last_acknowledged_at',
 				'same_state', 'wo_qc_check', 'start_date', 'end_date',
 				'retention', 'retention_amount', 'remarks',
 				'payment_term_value', 'payment_term_amount', 'createdAt',
@@ -1041,6 +1059,13 @@ exports.exportWorkOrders = async (req) => {
 						'igst', 'cgst', 'sgst', 'cess', 'total',
 						'note', 'specification', 'budget_no',
 					],
+				},
+				{
+					model: Indent,
+					as: 'indent',
+					attributes: [],
+					where: unitId ? { unit_id: unitId } : undefined,
+					required: !!unitId,
 				},
 			],
 			order: [['createdAt', 'DESC']],
@@ -1078,6 +1103,10 @@ exports.exportWorkOrders = async (req) => {
 				remaining: safeFloat(wo.remainingAmount),
 				paymentStatus: safeStr(wo.paymentStatus),
 				status: safeStr(wo.status).toUpperCase(),
+				dispatchStatus: wo.dispatch_status === 'not_dispatched' ? 'Not Dispatched' : 'Dispatched',
+				acknowledgeStatus: { not_dispatched: '—', dispatched: 'Pending', acknowledged: 'Acknowledged' }[wo.dispatch_status] ?? '—',
+				lastDispatchedAt: formatExportDateTime(wo.last_dispatched_at),
+				lastAcknowledgedAt: formatExportDateTime(wo.last_acknowledged_at),
 				sameState: wo.same_state ? 'Yes' : 'No',
 				qcCheck: wo.wo_qc_check ? 'Yes' : 'No',
 				retention: wo.retention != null ? safeFloat(wo.retention) : '',
@@ -1122,6 +1151,10 @@ exports.exportWorkOrders = async (req) => {
 
 		offset += EXPORT_BATCH_SIZE;
 		if (batch.length < EXPORT_BATCH_SIZE) break;
+	}
+
+	if (woSrNo === 1) {
+		throw new AppError('No work orders found to export.', StatusCodes.NOT_FOUND);
 	}
 
 	await workbook.xlsx.writeFile(filePath);
@@ -1235,5 +1268,69 @@ exports.restoreWorkOrder = async (req, id, remarks) => {
 };
 
 exports.getWorkOrderWorkflow = async (req, id) => {
-	return woWorkflow.getWorkflow(req, id);
+	const workflow = await woWorkflow.getWorkflow(req, id);
+	const dispatchHistoryRows = await orderDispatchService.getMergedHistoryRows(DOCUMENT_TYPE, id);
+	const history = [...workflow.history, ...dispatchHistoryRows].sort(
+		(a, b) => new Date(a.createdAt) - new Date(b.createdAt),
+	);
+	return { ...workflow, history };
+};
+
+/**
+ * Same server-side HTML→PDF pipeline as the PO equivalent (see purchase-order.service.js's
+ * buildPurchaseOrderPdfBuffer) but through the 'workOrderTemplate' template.
+ */
+async function buildWorkOrderPdfBuffer(id) {
+	const html = await exports.generateInvoiceHtml({ params: { id }, body: {} });
+	const pdfUrl = await generateInvoiceHTMLPDF(html, 'workOrderTemplate', { multi: true });
+	const relativePath = pdfUrl.split('/storage/')[1];
+	if (!relativePath) return null;
+	return fs.readFile(path.join(__dirname, '../../storage', relativePath));
+}
+
+exports.dispatchWorkOrder = async (req, id, payload) => {
+	const wo = await fetchWorkOrderForWorkflow(id);
+	if (wo.status !== 'approved') {
+		throw new AppError('Only approved Work Orders can be dispatched', StatusCodes.BAD_REQUEST);
+	}
+
+	await orderDispatchService.dispatchDocument({
+		req,
+		documentType: DOCUMENT_TYPE,
+		documentId: id,
+		doc: wo,
+		payload,
+		generatePdfBuffer: () => buildWorkOrderPdfBuffer(id),
+		documentLabel: `${wo.woPrefix || ''}${wo.woNo}${wo.woPostfix || ''}`,
+	});
+
+	return fetchWorkOrderForWorkflow(id);
+};
+
+exports.acknowledgeWorkOrder = async (req, id, payload, file) => {
+	const wo = await fetchWorkOrderForWorkflow(id);
+	if (wo.dispatch_status === 'not_dispatched') {
+		throw new AppError('This Work Order has not been dispatched yet', StatusCodes.CONFLICT);
+	}
+
+	await orderDispatchService.acknowledgeDocument({
+		req,
+		documentType: DOCUMENT_TYPE,
+		documentId: id,
+		doc: wo,
+		payload,
+		file,
+	});
+
+	return fetchWorkOrderForWorkflow(id);
+};
+
+exports.listWorkOrderDispatches = async (id) => {
+	await fetchWorkOrderForWorkflow(id);
+	return orderDispatchService.listDispatches(DOCUMENT_TYPE, id);
+};
+
+exports.listWorkOrderAcknowledgements = async (id) => {
+	await fetchWorkOrderForWorkflow(id);
+	return orderDispatchService.listAcknowledgements(DOCUMENT_TYPE, id);
 };

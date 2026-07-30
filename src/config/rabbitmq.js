@@ -139,7 +139,7 @@ async function connect() {
         }
       }
 
-      logger.info('✅ RabbitMQ connected and configured');
+      logger.info('📨 RabbitMQ connected and configured');
       reconnectAttempts = 0;
 
       return channel;

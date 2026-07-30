@@ -32,9 +32,11 @@ const { VCP_SERVICE_API_BASE_URL, BASE_URL } = require('../config/serverConfig')
 const { generateSignedUrl, getImageAsBase64DataUrl } = require('../utils/s3Bucket');
 const ExcelJS = require('exceljs');
 const path = require('path');
+const fs = require('fs/promises');
 const workflowEngine = require('./workflowEngine.service');
 const auditLogService = require('./auditLog.service');
 const { createWorkflowDocumentService } = require('./workflowDocument.factory');
+const orderDispatchService = require('./orderDispatch.service');
 
 const DOCUMENT_TYPE = 'purchase_order';
 
@@ -383,16 +385,14 @@ exports.updatePurchaseOrder = async (req) => {
 	}
 };
 
-exports.getAllPurchaseOrders = async (req) => {
-	const { org_id, role } = req.user;
-
-	const { from_date, to_date, unit_id, due_date_from, due_date_to, payment_status } = req.query;
-	const limit = req.query.limit ? parseInt(req.query.limit) : undefined;
-	const offset = req.query.offset ? parseInt(req.query.offset) : undefined;
-
-	if (!org_id && role !== 'Admin') {
-		throw new AppError(`You don't authorize to access this api.`);
-	}
+/**
+ * Shared by getAllPurchaseOrders (list) and exportPurchaseOrders (Excel) so the two can never
+ * silently drift apart — "Export" is meant to download exactly what the list page is currently
+ * showing, so it must apply the identical set of filters the same way.
+ */
+function buildPurchaseOrderFilters(req) {
+	const { org_id } = req.user;
+	const { from_date, to_date, unit_id, due_date_from, due_date_to, payment_status, dispatch_status_filter } = req.query;
 
 	const andConditions = [{ org_id }];
 
@@ -435,6 +435,32 @@ exports.getAllPurchaseOrders = async (req) => {
 		}
 	}
 
+	// 'pending_dispatch': approved but not yet dispatched at all — a draft/in_progress PO's
+	// dispatch_status is also 'not_dispatched' by default, but it isn't actionable for dispatch
+	// yet, so this filter requires status === 'approved' too, not just the raw column value.
+	// 'pending_acknowledgement': dispatched but not yet acknowledged (status is implicitly
+	// 'approved' already, since dispatch_status can only reach 'dispatched' from there).
+	if (dispatch_status_filter === 'pending_dispatch') {
+		andConditions.push({ status: 'approved', dispatch_status: 'not_dispatched' });
+	} else if (dispatch_status_filter === 'pending_acknowledgement') {
+		andConditions.push({ dispatch_status: 'dispatched' });
+	}
+
+	return { andConditions, unitId: unit_id ? Number(unit_id) : null };
+}
+
+exports.getAllPurchaseOrders = async (req) => {
+	const { org_id, role } = req.user;
+
+	const limit = req.query.limit ? parseInt(req.query.limit) : undefined;
+	const offset = req.query.offset ? parseInt(req.query.offset) : undefined;
+
+	if (!org_id && role !== 'Admin') {
+		throw new AppError(`You don't authorize to access this api.`);
+	}
+
+	const { andConditions, unitId } = buildPurchaseOrderFilters(req);
+
 	const findOptions = {
 		where: { [Op.and]: andConditions },
 		attributes: [
@@ -451,6 +477,7 @@ exports.getAllPurchaseOrders = async (req) => {
 			'createdAt',
 			'paymentStatus',
 			'vendorInfo',
+			'dispatch_status'
 		],
 		include: [
 			{
@@ -464,8 +491,8 @@ exports.getAllPurchaseOrders = async (req) => {
 				model: Indent,
 				as: 'indent',
 				attributes: ['id', 'unit_id', 'department_id'],
-				where: unit_id ? { unit_id: Number(unit_id) } : undefined,
-				required: !!unit_id,
+				where: unitId ? { unit_id: unitId } : undefined,
+				required: !!unitId,
 				include: [
 					{ model: MasterUnit, as: 'unit', attributes: ['id', 'unitName', 'unitCd'] },
 					{ model: Department, as: 'department', attributes: ['id', 'name'] },
@@ -1170,18 +1197,8 @@ exports.exportPurchaseOrders = async (req) => {
 		throw new AppError("You don't have access to this API.", 403);
 	}
 
-	const { from_date, to_date } = req.query;
-	const whereClause = { org_id };
-
-	if (from_date || to_date) {
-		const fromDate = new Date(from_date);
-		const toDate = new Date(to_date);
-		if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
-			throw new AppError('Invalid date range');
-		}
-		toDate.setHours(23, 59, 59, 999);
-		whereClause.createdAt = { [Op.between]: [fromDate, toDate] };
-	}
+	const { andConditions, unitId } = buildPurchaseOrderFilters(req);
+	const whereClause = { [Op.and]: andConditions };
 
 	const now = new Date();
 	const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
@@ -1241,6 +1258,10 @@ exports.exportPurchaseOrders = async (req) => {
 		{ header: 'Outstanding (₹)', key: 'remaining', width: 16 },
 		{ header: 'Payment Status', key: 'paymentStatus', width: 16 },
 		{ header: 'Order Status', key: 'status', width: 14 },
+		{ header: 'Dispatch Status', key: 'dispatchStatus', width: 16 },
+		{ header: 'Acknowledge Status', key: 'acknowledgeStatus', width: 18 },
+		{ header: 'Last Dispatch Date', key: 'lastDispatchedAt', width: 20 },
+		{ header: 'Last Acknowledge Date', key: 'lastAcknowledgedAt', width: 22 },
 		{ header: 'Same State (GST)', key: 'sameState', width: 18 },
 		{ header: 'QC Required', key: 'qcCheck', width: 14 },
 		{ header: 'Remarks', key: 'remarks', width: 35 },
@@ -1295,6 +1316,7 @@ exports.exportPurchaseOrders = async (req) => {
 				'id', 'poPrefix', 'poNo', 'poPostfix', 'poDetail', 'vendorInfo',
 				'dueDate', 'grandTotal', 'total_taxable', 'total_tax', 'discount',
 				'otherTax', 'totalPaid', 'remainingAmount', 'paymentStatus', 'status',
+				'dispatch_status', 'last_dispatched_at', 'last_acknowledged_at',
 				'same_state', 'po_qc_check', 'orderType', 'start_date', 'end_date',
 				'retention', 'retention_amount', 'remarks',
 				'payment_term_value', 'payment_term_amount', 'createdAt',
@@ -1309,6 +1331,13 @@ exports.exportPurchaseOrders = async (req) => {
 						'igst', 'cgst', 'sgst', 'cess', 'total',
 						'note', 'specification', 'budget_no',
 					],
+				},
+				{
+					model: Indent,
+					as: 'indent',
+					attributes: [],
+					where: unitId ? { unit_id: unitId } : undefined,
+					required: !!unitId,
 				},
 			],
 			order: [['createdAt', 'DESC']],
@@ -1352,6 +1381,10 @@ exports.exportPurchaseOrders = async (req) => {
 				remaining: safeFloat(po.remainingAmount),
 				paymentStatus: safeStr(po.paymentStatus),
 				status: safeStr(po.status).toUpperCase(),
+				dispatchStatus: po.dispatch_status === 'not_dispatched' ? 'Not Dispatched' : 'Dispatched',
+				acknowledgeStatus: { not_dispatched: '—', dispatched: 'Pending', acknowledged: 'Acknowledged' }[po.dispatch_status] ?? '—',
+				lastDispatchedAt: formatExportDateTime(po.last_dispatched_at),
+				lastAcknowledgedAt: formatExportDateTime(po.last_acknowledged_at),
 				sameState: po.same_state ? 'Yes' : 'No',
 				qcCheck: po.po_qc_check ? 'Yes' : 'No',
 				remarks: safeStr(po.remarks),
@@ -1399,6 +1432,10 @@ exports.exportPurchaseOrders = async (req) => {
 
 		offset += EXPORT_BATCH_SIZE;
 		if (batch.length < EXPORT_BATCH_SIZE) break;
+	}
+
+	if (poSrNo === 1) {
+		throw new AppError('No purchase orders found to export.', StatusCodes.NOT_FOUND);
 	}
 
 	await workbook.xlsx.writeFile(filePath);
@@ -1555,5 +1592,73 @@ exports.restorePurchaseOrder = async (req, id, remarks) => {
 };
 
 exports.getPurchaseOrderWorkflow = async (req, id) => {
-	return poWorkflow.getWorkflow(req, id);
+	const workflow = await poWorkflow.getWorkflow(req, id);
+	const dispatchHistoryRows = await orderDispatchService.getMergedHistoryRows(DOCUMENT_TYPE, id);
+	const history = [...workflow.history, ...dispatchHistoryRows].sort(
+		(a, b) => new Date(a.createdAt) - new Date(b.createdAt),
+	);
+	return { ...workflow, history };
+};
+
+/**
+ * Renders the same HTML/PDF pipeline `POST /:id/html` + `/:id/pdf` use (see
+ * generateInvoiceHtml/generateInvoiceHTMLPDF above), but end-to-end server-side with no
+ * frontend round-trip, then reads the saved file back into a Buffer for the dispatch email
+ * attachment. `generateInvoiceHTMLPDF` writes to disk and returns a URL, not a Buffer, because
+ * its only other caller streams the URL straight to the browser — this is the one place that
+ * needs the bytes instead.
+ */
+async function buildPurchaseOrderPdfBuffer(id) {
+	const html = await exports.generateInvoiceHtml({ params: { id }, body: {} });
+	const pdfUrl = await generateInvoiceHTMLPDF(html, 'defaultTemplate', { multi: true });
+	const relativePath = pdfUrl.split('/storage/')[1];
+	if (!relativePath) return null;
+	return fs.readFile(path.join(__dirname, '../../storage', relativePath));
+}
+
+exports.dispatchPurchaseOrder = async (req, id, payload) => {
+	const po = await fetchPurchaseOrderForWorkflow(id);
+	if (po.status !== 'approved') {
+		throw new AppError('Only approved Purchase Orders can be dispatched', StatusCodes.BAD_REQUEST);
+	}
+
+	await orderDispatchService.dispatchDocument({
+		req,
+		documentType: DOCUMENT_TYPE,
+		documentId: id,
+		doc: po,
+		payload,
+		generatePdfBuffer: () => buildPurchaseOrderPdfBuffer(id),
+		documentLabel: `${po.poPrefix || ''}${po.poNo}${po.poPostfix || ''}`,
+	});
+
+	return fetchPurchaseOrderForWorkflow(id);
+};
+
+exports.acknowledgePurchaseOrder = async (req, id, payload, file) => {
+	const po = await fetchPurchaseOrderForWorkflow(id);
+	if (po.dispatch_status === 'not_dispatched') {
+		throw new AppError('This Purchase Order has not been dispatched yet', StatusCodes.CONFLICT);
+	}
+
+	await orderDispatchService.acknowledgeDocument({
+		req,
+		documentType: DOCUMENT_TYPE,
+		documentId: id,
+		doc: po,
+		payload,
+		file,
+	});
+
+	return fetchPurchaseOrderForWorkflow(id);
+};
+
+exports.listPurchaseOrderDispatches = async (id) => {
+	await fetchPurchaseOrderForWorkflow(id);
+	return orderDispatchService.listDispatches(DOCUMENT_TYPE, id);
+};
+
+exports.listPurchaseOrderAcknowledgements = async (id) => {
+	await fetchPurchaseOrderForWorkflow(id);
+	return orderDispatchService.listAcknowledgements(DOCUMENT_TYPE, id);
 };

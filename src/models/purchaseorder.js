@@ -229,6 +229,19 @@ module.exports = (sequelize, DataTypes) => {
 			dispatch_id: {
 				type: DataTypes.INTEGER,
 			},
+			dispatch_status: {
+				type: DataTypes.ENUM('not_dispatched', 'dispatched', 'acknowledged'),
+				allowNull: false,
+				defaultValue: 'not_dispatched',
+			},
+			last_dispatched_at: {
+				type: DataTypes.DATE,
+				allowNull: true,
+			},
+			last_acknowledged_at: {
+				type: DataTypes.DATE,
+				allowNull: true,
+			},
 			orderType: {
 				type: DataTypes.ENUM('purchase_order', 'work_order'),
 				allowNull: false,
