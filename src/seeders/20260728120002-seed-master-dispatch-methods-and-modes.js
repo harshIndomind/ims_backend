@@ -19,8 +19,8 @@ module.exports = {
 			{ name: 'Email', code: 'email', requires_recipient_email: true, sort_order: 1 },
 			{ name: 'Courier', code: 'courier', requires_recipient_email: false, sort_order: 2 },
 			{ name: 'Hand Delivery', code: 'hand_delivery', requires_recipient_email: false, sort_order: 3 },
-			{ name: 'Vendor Portal', code: 'vendor_portal', requires_recipient_email: false, sort_order: 4 },
-			{ name: 'Other', code: 'other', requires_recipient_email: false, sort_order: 5 },
+			// { name: 'Vendor Portal', code: 'vendor_portal', requires_recipient_email: false, sort_order: 4 },
+			{ name: 'Other', code: 'other', requires_recipient_email: false, sort_order: 4 },
 		]
 			.filter((m) => !existingMethodCodes.has(m.code))
 			.map((m) => ({ ...m, is_active: true, createdAt: now, updatedAt: now }));
@@ -38,9 +38,9 @@ module.exports = {
 		const modes = [
 			{ name: 'Email', code: 'email', sort_order: 1 },
 			{ name: 'Phone', code: 'phone', sort_order: 2 },
-			{ name: 'Vendor Portal', code: 'portal', sort_order: 3 },
-			{ name: 'Physical Copy', code: 'physical_copy', sort_order: 4 },
-			{ name: 'Other', code: 'other', sort_order: 5 },
+			// { name: 'Vendor Portal', code: 'portal', sort_order: 3 },
+			{ name: 'Physical Copy', code: 'physical_copy', sort_order: 3 },
+			{ name: 'Other', code: 'other', sort_order: 4 },
 		]
 			.filter((m) => !existingModeCodes.has(m.code))
 			.map((m) => ({ ...m, is_active: true, createdAt: now, updatedAt: now }));
