@@ -21,6 +21,11 @@ router.get(
 	MasterUnitController.getAllMasterUnit
 );
 router.get(
+	'/check-short-name',
+	checkPermission('period', 'view'),
+	MasterUnitController.checkUnitShortName
+);
+router.get(
 	'/:id',
 	checkPermission('period', 'view'),
 	MasterUnitController.getMasterUnitById

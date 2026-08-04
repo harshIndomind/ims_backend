@@ -2,6 +2,7 @@
 
 const { MasterUnit, organization } = require('../../models');
 const logger = require('../../utils/logger');
+const { generateUniqueUnitShortName } = require('../../utils/unitShortName');
 
 const SYNC_FIELDS = [
 	'unitName',
@@ -50,9 +51,20 @@ async function applyMasterUnit(data) {
 	const fields = {};
 	for (const key of SYNC_FIELDS) fields[key] = data[key];
 
-	await MasterUnit.upsert({
+	const existing = await MasterUnit.findOne({ where: { uuid: data.uuid } });
+	if (existing) {
+		// unit_short_name is SCM-local — never overwritten by an HRMS sync.
+		await existing.update({ org_id, ...fields });
+		return;
+	}
+
+	// First time we're hearing about this unit: it has no SCM-local short name
+	// yet, but the column is NOT NULL/unique, so mint one from the HRMS name.
+	const unit_short_name = await generateUniqueUnitShortName(data.unitName);
+	await MasterUnit.create({
 		uuid: data.uuid,
 		org_id,
+		unit_short_name,
 		...fields,
 	});
 }

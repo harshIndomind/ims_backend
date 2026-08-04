@@ -8,6 +8,10 @@ exports.findById = (id, options = {}) => {
 	return MasterUnit.findByPk(id, options);
 };
 
+exports.findOne = (options = {}) => {
+	return MasterUnit.findOne(options);
+};
+
 exports.findAll = (where = {}, options = {}) => {	
 	return MasterUnit.findAndCountAll({
 		where,

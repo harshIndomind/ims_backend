@@ -3,6 +3,7 @@
 const { Op } = require('sequelize');
 const { MasterUnit, Department, Designation, User } = require('../models');
 const logger = require('../utils/logger');
+const { generateUniqueUnitShortName, generateUniqueUnitShortNames } = require('../utils/unitShortName');
 
 /**
  * Remap a PK to a new id. MySQL ON UPDATE CASCADE propagates the change to all
@@ -35,7 +36,10 @@ async function syncUnits(units = []) {
     for (const unit of units) {
       const local = await MasterUnit.findOne({ where: { unitCd: unit.unitCd }, attributes: ['id'] });
       if (!local) {
-        await MasterUnit.create({ id: unit.id, unitCd: unit.unitCd, unitName: unit.unitName, lock: !!unit.lock, masterUnitid: unit.masterUnitid });
+        // unit_short_name is SCM-local (not part of the HRMS payload) but the column
+        // is NOT NULL/unique, so a fresh unit needs one minted before it can be inserted.
+        const unit_short_name = await generateUniqueUnitShortName(unit.unitName);
+        await MasterUnit.create({ id: unit.id, unitCd: unit.unitCd, unitName: unit.unitName, lock: !!unit.lock, masterUnitid: unit.masterUnitid, unit_short_name });
         created++;
       } else {
         if (local.id !== unit.id) await remapPK(sequelize, 'MasterUnits', local.id, unit.id);
@@ -63,7 +67,11 @@ async function syncUnits(units = []) {
     }
   }
 
-  if (toCreate.length) await MasterUnit.bulkCreate(toCreate);
+  if (toCreate.length) {
+    const shortNames = await generateUniqueUnitShortNames(toCreate.map((u) => u.unitName));
+    toCreate.forEach((u, i) => { u.unit_short_name = shortNames[i]; });
+    await MasterUnit.bulkCreate(toCreate);
+  }
   for (const { id, data } of toUpdate) await MasterUnit.update(data, { where: { id } });
 
   logger.info('[hrmsSync] Units synced', { created: toCreate.length, updated: toUpdate.length });
