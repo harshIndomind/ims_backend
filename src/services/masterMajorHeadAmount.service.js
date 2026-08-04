@@ -149,7 +149,7 @@ exports.getAllMasterMajorHeadAmount = async (req) => {
 			{
 				model: MasterPeriod,
 				as: 'period',
-				attributes: ['period', 'period_detail', 'period_short'],
+				attributes: ['period', 'period_detail', 'period_short', 'from_date', 'end_date'],
 			},
 			{
 				model: organization,
