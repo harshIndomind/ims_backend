@@ -37,7 +37,11 @@ module.exports = (sequelize, DataTypes) => {
 
 			// Local editable fields
 			unit_name: DataTypes.STRING,
-			unit_short_name: DataTypes.STRING,
+			unit_short_name: {
+				type: DataTypes.STRING(20),
+				allowNull: false,
+				unique: true,
+			},
 
 			// HRMS-synced fields (read-only via API)
 			unitCd: {

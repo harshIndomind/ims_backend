@@ -49,6 +49,12 @@ exports.deleteMasterUnit = catchAsync(async (req, res) => {
 	});
 });
 
+exports.checkUnitShortName = catchAsync(async (req, res) => {
+	const data = await masterUnit.checkShortNameAvailability(req);
+
+	res.status(StatusCodes.OK).json(data);
+});
+
 exports.toggleMasterUnitStatus = catchAsync(async (req, res) => {
 	const { id } = req.params;
 

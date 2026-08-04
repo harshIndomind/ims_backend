@@ -1,5 +1,6 @@
 const AppError = require('../utils/AppError');
 const { StatusCodes } = require('http-status-codes');
+const { Op } = require('sequelize');
 const { masterUnitsRepositoy } = require('../repository/index');
 const { Country, GstStateCode, organization } = require('../models/index');
 const logger = require('../utils/logger');
@@ -9,6 +10,37 @@ const {
 	buildMasterUnitUpdatedEvent,
 	buildMasterUnitDeletedEvent,
 } = require('../events/schemas/masterUnitEvents');
+const { SHORT_NAME_MAX_LENGTH, SHORT_NAME_REGEX } = require('../utils/unitShortName');
+
+function assertValidShortNameFormat(shortName) {
+	if (!shortName || !shortName.trim()) {
+		throw new AppError('Unit short name is required', StatusCodes.BAD_REQUEST);
+	}
+	if (shortName.length > SHORT_NAME_MAX_LENGTH) {
+		throw new AppError(
+			`Unit short name must not exceed ${SHORT_NAME_MAX_LENGTH} characters`,
+			StatusCodes.BAD_REQUEST,
+		);
+	}
+	if (!SHORT_NAME_REGEX.test(shortName)) {
+		throw new AppError(
+			'Unit short name may only contain letters, numbers, hyphens (-) and underscores (_)',
+			StatusCodes.BAD_REQUEST,
+		);
+	}
+}
+
+async function assertShortNameAvailable(shortName, excludeId) {
+	const duplicate = await masterUnitsRepositoy.findOne({
+		where: {
+			unit_short_name: shortName,
+			...(excludeId && { id: { [Op.ne]: excludeId } }),
+		},
+	});
+	if (duplicate) {
+		throw new AppError('Unit short name already exists', StatusCodes.CONFLICT);
+	}
+}
 
 const COMPANY_DETAIL_FIELDS = [
 	'unit_name',
@@ -80,10 +112,15 @@ exports.createMasterUnit = async (req, payload) => {
 		throw new AppError('Unit name is required', StatusCodes.BAD_REQUEST);
 	}
 
+	const shortName = typeof unit_short_name === 'string' ? unit_short_name.trim() : unit_short_name;
+	assertValidShortNameFormat(shortName);
+	await assertShortNameAvailable(shortName);
+
 	const masterUnit = await masterUnitsRepositoy.create({
 		org_id,
 		unitName: unit_name,
 		...pickCompanyFields(payload),
+		unit_short_name: shortName,
 	});
 
 	logger.info('Master Unit created', { id: masterUnit.id, unit_name });
@@ -103,8 +140,19 @@ exports.updateMasterUnit = async (req, id, payload) => {
 	}
 	assertOrgAccess(req, masterUnit);
 
+	const companyFields = pickCompanyFields(payload);
+	const shortName =
+		typeof payload.unit_short_name === 'string'
+			? payload.unit_short_name.trim()
+			: payload.unit_short_name;
+	assertValidShortNameFormat(shortName);
+	if (shortName !== masterUnit.unit_short_name) {
+		await assertShortNameAvailable(shortName, masterUnit.id);
+	}
+	companyFields.unit_short_name = shortName;
+
 	// unitCd, unitName, lock, masterUnitid are HRMS-synced — never overwrite via API
-	await masterUnitsRepositoy.update(masterUnit, pickCompanyFields(payload));
+	await masterUnitsRepositoy.update(masterUnit, companyFields);
 
 	logger.info('Master Unit updated', { id });
 
@@ -114,6 +162,24 @@ exports.updateMasterUnit = async (req, id, payload) => {
 	await publishEvent('master_unit.updated', buildMasterUnitUpdatedEvent(reloaded, orgUuid));
 
 	return reloaded;
+};
+
+exports.checkShortNameAvailability = async (req) => {
+	const value = typeof req.query.value === 'string' ? req.query.value.trim() : '';
+	const excludeId = req.query.excludeId ? Number(req.query.excludeId) : undefined;
+
+	if (!value || !SHORT_NAME_REGEX.test(value) || value.length > SHORT_NAME_MAX_LENGTH) {
+		return { available: false };
+	}
+
+	const duplicate = await masterUnitsRepositoy.findOne({
+		where: {
+			unit_short_name: value,
+			...(excludeId && { id: { [Op.ne]: excludeId } }),
+		},
+	});
+
+	return { available: !duplicate };
 };
 
 exports.getAllMasterUnit = async (req) => {

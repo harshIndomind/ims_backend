@@ -98,7 +98,7 @@ exports.getMyVisibility = async (user) => {
 		const [units, departments] = await Promise.all([
 			MasterUnit.findAll({
 				where: { org_id: user.org_id },
-				attributes: ['id', 'unitName', 'unitCd', 'unit_name'],
+				attributes: ['id', 'unitName', 'unitCd', 'unit_name', 'unit_short_name'],
 				order: [['unitName', 'ASC']],
 			}),
 			Department.findAll({
@@ -109,7 +109,7 @@ exports.getMyVisibility = async (user) => {
 		]);
 		const mappings = departments.map((d) => ({ unit_id: d.unit_id, department_id: d.id }));
 		return {
-			units: units.map((u) => ({ id: u.id, unitName: u.unitName || u.unit_name, unitCd: u.unitCd })),
+			units: units.map((u) => ({ id: u.id, unitName: u.unitName || u.unit_name, unitCd: u.unitCd, unit_short_name: u.unit_short_name })),
 			departments: departments.map((d) => ({ id: d.id, name: d.name, unit_id: d.unit_id, depCd: d.depCd })),
 			mappings,
 		};
@@ -126,7 +126,7 @@ exports.getMyVisibility = async (user) => {
 	const [units, departments] = await Promise.all([
 		MasterUnit.findAll({
 			where: { id: { [Op.in]: unitIds } },
-			attributes: ['id', 'unitName', 'unitCd', 'unit_name'],
+			attributes: ['id', 'unitName', 'unitCd', 'unit_name', 'unit_short_name'],
 			order: [['unitName', 'ASC']],
 		}),
 		Department.findAll({
@@ -137,7 +137,7 @@ exports.getMyVisibility = async (user) => {
 	]);
 
 	return {
-		units: units.map((u) => ({ id: u.id, unitName: u.unitName || u.unit_name, unitCd: u.unitCd })),
+		units: units.map((u) => ({ id: u.id, unitName: u.unitName || u.unit_name, unitCd: u.unitCd, unit_short_name: u.unit_short_name })),
 		departments: departments.map((d) => ({ id: d.id, name: d.name, unit_id: d.unit_id, depCd: d.depCd, depName: d.depName })),
 		mappings: rawMappings.map((m) => ({ unit_id: m.unit_id, department_id: m.department_id })),
 	};
