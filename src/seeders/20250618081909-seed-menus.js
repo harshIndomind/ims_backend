@@ -239,7 +239,7 @@ module.exports = {
 				parentId: 8,
 				menuName: 'Purchase Order',
 				icon: 'IconFileInvoice',
-				url: '/purchase-order',
+				url: '/transaction/purchase-order',
 				slug: 'purchase-order',
 				showInSidebar: true,
 				isActive: 1,
