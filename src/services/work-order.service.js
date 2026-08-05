@@ -25,6 +25,8 @@ const workflowEngine = require('./workflowEngine.service');
 const auditLogService = require('./auditLog.service');
 const { createWorkflowDocumentService } = require('./workflowDocument.factory');
 const orderDispatchService = require('./orderDispatch.service');
+const { generateDocumentNumber } = require('./document-numbering.service');
+const { resolveUnitAndMajorHeadCodes } = require('./document-header-codes.service');
 
 const DOCUMENT_TYPE = 'work_order';
 
@@ -65,6 +67,20 @@ exports.createWorkOrder = async (req) => {
 	const transaction = await sequelize.transaction();
 	try {
 		const { org_id } = req.user;
+
+		// Preserves the role gate that used to live in the now-removed generate-wo-number
+		// "peek" endpoint — checkPermission('work-order', 'create') alone isn't enough
+		// since it bypasses everything for super_admin.
+		if (
+			!req.user.org_id ||
+			(!req.user.roles.includes('org_admin') && !req.user.roles.includes('app_admin'))
+		) {
+			const errorMsg = req.user.role === 'Super Admin'
+				? "As a super admin user you can't create a work order."
+				: 'Invalid user or organization ID';
+			throw new AppError(errorMsg, 403);
+		}
+
 		const {
 			indent_id,
 			wo_qc_check,
@@ -104,14 +120,27 @@ exports.createWorkOrder = async (req) => {
 			}
 		}
 
+		const { unitShortCode, majorHeadCode } = await resolveUnitAndMajorHeadCodes({
+			indentId: indent_id,
+			productItems,
+			transaction,
+		});
+		const { docNumber, sequenceNo, fiscalYear } = await generateDocumentNumber({
+			orgId: org_id,
+			docType: 'WO',
+			unitShortCode,
+			majorHeadCode,
+			transaction,
+		});
+
 		const woObject = {
 			org_id,
 			indent_id,
 			vendorId: vendorInfo.vendor_id || null,
 			dueDate,
-			woPrefix: workOrderDetail.woPrefix || null,
-			woNo: workOrderDetail.woNumber || null,
-			woPostfix: workOrderDetail.woPostfix || null,
+			doc_number: docNumber,
+			doc_sequence_no: sequenceNo,
+			doc_fiscal_year: fiscalYear,
 			total_taxable: parseFloat(total_taxable || 0),
 			total_tax: parseFloat(total_tax || 0),
 			grandTotal: parseFloat(grandTotal || 0),
@@ -161,7 +190,7 @@ exports.createWorkOrder = async (req) => {
 			entityType: DOCUMENT_TYPE,
 			entityId: workOrder.id,
 			action: 'create',
-			newState: { woNo: woObject.woNo },
+			newState: { doc_number: woObject.doc_number },
 			transaction,
 		});
 
@@ -466,6 +495,7 @@ exports.getAllWorkOrders = async (req) => {
 			'woPrefix',
 			'woNo',
 			'woPostfix',
+			'doc_number',
 			'dueDate',
 			'grandTotal',
 			'totalPaid',
@@ -595,9 +625,12 @@ exports.deleteWorkOrder = async (req) => {
 
 		await PaymentRequisition.destroy({ where: { wo_id: id }, transaction });
 
+		const orderFileKeys = await orderDispatchService.deleteAllForDocument(DOCUMENT_TYPE, id, transaction);
+
 		await workOrderRepository.delete(workOrder, { transaction });
 
 		await transaction.commit();
+		await orderDispatchService.cleanupS3Documents(orderFileKeys);
 		return true;
 	} catch (error) {
 		if (transaction && !transaction.finished) {
@@ -783,7 +816,7 @@ async function calculateWorkOrderInvoice(workOrder) {
 			};
 		}),
 		additionalRemarks: invoiceData.remarks,
-		combineInvoiceNumber: `${invoiceData.woPrefix || ''}${invoiceData.woNo || ''}${invoiceData.woPostfix || ''}`,
+		combineInvoiceNumber: invoiceData.doc_number || `${invoiceData.woPrefix || ''}${invoiceData.woNo || ''}${invoiceData.woPostfix || ''}`,
 		totalCgst,
 		totalSgst,
 		totalIgst,
@@ -867,38 +900,6 @@ async function getState(id) {
 	const data = await response.json();
 	return data || null;
 }
-
-exports.getWorkOrderNo = async (req) => {
-	const user = req.user;
-	logger.info('getWorkOrderNo: ', { user });
-
-	if (
-		!user ||
-		!user.org_id ||
-		(!user.roles.includes('org_admin') && !user.roles.includes('app_admin'))
-	) {
-		const errorMsg =
-			user?.role === 'Super Admin'
-				? "As a super admin user you can't create a work order."
-				: 'Invalid user or organization ID';
-		throw new AppError(errorMsg, 403);
-	}
-
-	const latestWorkOrder = await workOrderRepository.findOne({
-		where: { org_id: user.org_id },
-		order: [['createdAt', 'DESC']],
-	});
-
-	let newWorkOrderNumber = 1;
-	if (latestWorkOrder) {
-		const latestNumber = parseInt(latestWorkOrder.woNo, 10);
-		if (!isNaN(latestNumber)) {
-			newWorkOrderNumber = latestNumber + 1;
-		}
-	}
-
-	return newWorkOrderNumber.toString().padStart(4, '0');
-};
 
 const EXPORT_BATCH_SIZE = 200;
 
@@ -1041,7 +1042,7 @@ exports.exportWorkOrders = async (req) => {
 		const batch = await WorkOrder.findAll({
 			where: whereClause,
 			attributes: [
-				'id', 'woPrefix', 'woNo', 'woPostfix', 'woDetail', 'vendorInfo',
+				'id', 'woPrefix', 'woNo', 'woPostfix', 'doc_number', 'woDetail', 'vendorInfo',
 				'dueDate', 'grandTotal', 'total_taxable', 'total_tax',
 				'totalPaid', 'remainingAmount', 'paymentStatus', 'status',
 				'dispatch_status', 'last_dispatched_at', 'last_acknowledged_at',
@@ -1078,7 +1079,7 @@ exports.exportWorkOrders = async (req) => {
 		for (const woInstance of batch) {
 			const wo = woInstance.get({ plain: true });
 
-			const woNumber = `${safeStr(wo.woPrefix)}${safeStr(wo.woNo)}${safeStr(wo.woPostfix)}`;
+			const woNumber = wo.doc_number || `${safeStr(wo.woPrefix)}${safeStr(wo.woNo)}${safeStr(wo.woPostfix)}`;
 			const vendorInfo = wo.vendorInfo ?? {};
 			const vendorName = safeStr(vendorInfo.vendor_name ?? vendorInfo.name ?? '');
 			const vendorGstin = safeStr(vendorInfo.gstin ?? vendorInfo.gst_no ?? '');
@@ -1301,7 +1302,7 @@ exports.dispatchWorkOrder = async (req, id, payload) => {
 		doc: wo,
 		payload,
 		generatePdfBuffer: () => buildWorkOrderPdfBuffer(id),
-		documentLabel: `${wo.woPrefix || ''}${wo.woNo}${wo.woPostfix || ''}`,
+		documentLabel: wo.doc_number || `${wo.woPrefix || ''}${wo.woNo}${wo.woPostfix || ''}`,
 	});
 
 	return fetchWorkOrderForWorkflow(id);

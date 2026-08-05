@@ -84,7 +84,20 @@ module.exports = (sequelize, DataTypes) => {
 			woNo: {
 				type: DataTypes.STRING,
 				unique: true,
-				allowNull: false,
+				allowNull: true,
+			},
+			doc_number: {
+				type: DataTypes.STRING(100),
+				unique: true,
+				allowNull: true,
+			},
+			doc_sequence_no: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
+			doc_fiscal_year: {
+				type: DataTypes.STRING(7),
+				allowNull: true,
 			},
 			woPostfix: {
 				type: DataTypes.STRING,

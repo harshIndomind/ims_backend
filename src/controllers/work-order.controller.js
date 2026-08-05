@@ -35,14 +35,6 @@ exports.exportWorkOrders = catchAsync(async (req, res) => {
 	});
 });
 
-exports.generateWoNumber = catchAsync(async (req, res) => {
-	const workOrderNumber = await workOrderService.getWorkOrderNo(req);
-	res.status(200).json({
-		message: 'Generated work order number successfully',
-		data: workOrderNumber,
-	});
-});
-
 exports.generateInvoiceHtml = catchAsync(async (req, res) => {
 	const combinedHtml = await workOrderService.generateInvoiceHtml(req);
 	res.json({ html: combinedHtml });
