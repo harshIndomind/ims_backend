@@ -20,7 +20,7 @@ const {
 } = require('../repository/index');
 const auditLogService = require('./auditLog.service');
 const logger = require('../utils/logger');
-const { s3, PutObjectCommand, generateSignedUrl } = require('../utils/s3Bucket');
+const { s3, PutObjectCommand, DeleteObjectCommand, generateSignedUrl } = require('../utils/s3Bucket');
 const { sendDispatchMail } = require('../utils/mailer');
 
 // When enabled, a document may only be dispatched once and acknowledged once — re-dispatch
@@ -354,4 +354,47 @@ exports.getMergedHistoryRows = async (documentType, documentId) => {
 	}));
 
 	return [...dispatchRows, ...acknowledgementRows];
+};
+
+/**
+ * Called by purchase-order.service.js / work-order.service.js when the PO/WO itself is being
+ * deleted — dispatch/acknowledgement/document rows have no FK back to the PO/WO (polymorphic via
+ * document_type/document_id, same convention as audit_logs), so nothing cascades on its own and
+ * the caller must remove them explicitly in the same transaction.
+ *
+ * S3 objects are NOT deleted here — deleting them before the transaction commits would risk
+ * losing a file whose DB delete then rolled back. Callers must call cleanupS3Documents() with
+ * the returned file_keys only after their transaction has committed.
+ *
+ * @param {'purchase_order'|'work_order'} documentType
+ * @param {number} documentId
+ * @param {import('sequelize').Transaction} transaction
+ * @returns {Promise<string[]>} file_keys of the removed documents, for post-commit S3 cleanup
+ */
+exports.deleteAllForDocument = async (documentType, documentId, transaction) => {
+	const documents = await orderDocumentRepository.findAllForDocument(documentType, documentId, { transaction });
+	const fileKeys = documents.map((doc) => doc.file_key);
+
+	await orderDocumentRepository.destroyForDocument(documentType, documentId, { transaction });
+	await orderAcknowledgementRepository.destroyForDocument(documentType, documentId, { transaction });
+	await orderDispatchRepository.destroyForDocument(documentType, documentId, { transaction });
+
+	return fileKeys;
+};
+
+/**
+ * Best-effort S3 cleanup, run only after the caller's DB transaction has committed. Failures are
+ * logged rather than thrown — an orphaned S3 object is a far smaller problem than the delete API
+ * call failing after the PO/WO and its rows are already gone.
+ *
+ * @param {string[]} fileKeys
+ */
+exports.cleanupS3Documents = async (fileKeys) => {
+	await Promise.all(
+		fileKeys.map((key) =>
+			s3.send(new DeleteObjectCommand({ Bucket: process.env.AWS_BUCKET_NAME, Key: key })).catch((err) => {
+				logger.error('Failed to delete S3 document during order cleanup', { key, err: err?.message });
+			}),
+		),
+	);
 };

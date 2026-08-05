@@ -15,3 +15,10 @@ exports.findAllForDocument = (documentType, documentId, options = {}) => {
 		...options,
 	});
 };
+
+exports.destroyForDocument = (documentType, documentId, options = {}) => {
+	return OrderAcknowledgement.destroy({
+		where: { document_type: documentType, document_id: documentId },
+		...options,
+	});
+};

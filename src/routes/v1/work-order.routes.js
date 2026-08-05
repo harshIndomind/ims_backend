@@ -9,7 +9,6 @@ const { upload: orderDocUpload } = require('../../middlewares/orderDocumentUploa
 
 router.use(verifyToken);
 
-router.get('/generate-wo-number', workOrderController.generateWoNumber);
 router.get('/export', checkPermission('work-order', 'export'), workOrderController.exportWorkOrders);
 router.post('/', checkPermission('work-order', 'create'), workOrderController.createWorkOrder);
 router.get('/', checkPermission('work-order', 'view'), workOrderController.getAllWorkOrders);

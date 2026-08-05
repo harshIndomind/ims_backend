@@ -37,6 +37,9 @@ const workflowEngine = require('./workflowEngine.service');
 const auditLogService = require('./auditLog.service');
 const { createWorkflowDocumentService } = require('./workflowDocument.factory');
 const orderDispatchService = require('./orderDispatch.service');
+const { generateDocumentNumber } = require('./document-numbering.service');
+const { resolveUnitAndMajorHeadCodes } = require('./document-header-codes.service');
+const { existsSync } = require('node:fs');
 
 const DOCUMENT_TYPE = 'purchase_order';
 
@@ -61,6 +64,21 @@ exports.createPurchaseOrder = async (req, payload) => {
 	const transaction = await sequelize.transaction();
 	try {
 		const { org_id } = req.user;
+
+		// Preserves the role gate that used to live in the now-removed generate-po-number
+		// "peek" endpoint — checkPermission('purchase-order', 'create') alone isn't enough
+		// since it bypasses everything for super_admin.
+		if (
+			!req.user.org_id ||
+			!req.user.roles.includes('org_admin') ||
+			req.user.roles.includes('app_admin')
+		) {
+			const errorMsg = req.user.role === 'Super Admin'
+				? "As a super admin user you can't create a purchase order."
+				: 'Invalid user or organization ID';
+			throw new AppError(errorMsg, 403);
+		}
+
 		const {
 			indent_id,
 			po_qc_check,
@@ -107,15 +125,28 @@ exports.createPurchaseOrder = async (req, payload) => {
 			);
 		}
 
+		const { unitShortCode, majorHeadCode } = await resolveUnitAndMajorHeadCodes({
+			indentId: indent_id,
+			productItems,
+			transaction,
+		});
+		const { docNumber, sequenceNo, fiscalYear } = await generateDocumentNumber({
+			orgId: org_id,
+			docType: 'PO',
+			unitShortCode,
+			majorHeadCode,
+			transaction,
+		});
+
 		const poObject = {
 			org_id,
 			indent_id,
 			orderType: orderType || 'purchase_order',
 			vendorId: vendorInfo.vendor_id || null,
 			dueDate,
-			poPrefix: purchaseOrderDetail.poPrefix || null,
-			poNo: purchaseOrderDetail.poNumber || null,
-			poPostfix: purchaseOrderDetail.poPostfix || null,
+			doc_number: docNumber,
+			doc_sequence_no: sequenceNo,
+			doc_fiscal_year: fiscalYear,
 			total_taxable: parseFloat(total_taxable || 0),
 			total_tax: parseFloat(total_tax || 0),
 			grandTotal: parseFloat(grandTotal || 0),
@@ -156,7 +187,7 @@ exports.createPurchaseOrder = async (req, payload) => {
 			entityType: DOCUMENT_TYPE,
 			entityId: purchaseOrder.id,
 			action: 'create',
-			newState: { poNo: poObject.poNo },
+			newState: { doc_number: poObject.doc_number },
 			transaction,
 		});
 
@@ -468,6 +499,7 @@ exports.getAllPurchaseOrders = async (req) => {
 			'poPrefix',
 			'poNo',
 			'poPostfix',
+			'doc_number',
 			'dueDate',
 			'grandTotal',
 			'totalPaid',
@@ -686,11 +718,13 @@ exports.deletePurchaseOrder = async (req) => {
 		logger.warn('fourth');
 		await PaymentRequisition.destroy({ where: { po_id: id }, transaction });
 		logger.warn('five');
+		const orderFileKeys = await orderDispatchService.deleteAllForDocument(DOCUMENT_TYPE, id, transaction);
 		await purchaseOrderRepository.delete(purchaseOrder, { transaction });
 
 		logger.info('Purchase Order deleted', { id });
 		logger.warn('six');
 		await transaction.commit();
+		await orderDispatchService.cleanupS3Documents(orderFileKeys);
 		return true;
 	} catch (error) {
 		if (transaction && !transaction.finished) {
@@ -705,42 +739,6 @@ exports.deletePurchaseOrder = async (req) => {
 		}
 		throw error;
 	}
-};
-
-exports.getPurchaseOrderNo = async (req) => {
-	const user = req.user;
-	logger.info('getPurchaseOrderNo: ', { user });
-	let errorMsg = 'Invalid user or organization ID';
-	if (
-		!user ||
-		!user.org_id ||
-		!user.roles.includes('org_admin') ||
-		user.roles.includes('app_admin')
-	) {
-		if (user.role === 'Super Admin') {
-			errorMsg = "As a super admin user you can't create a purchase order.";
-		}
-		throw new AppError(errorMsg, 403);
-	}
-
-	// Find the latest purchase order with the given prefix and postfix
-	const latestPurchaseOrder = await purchaseOrderRepository.findOne({
-		where: {
-			org_id: user.org_id,
-		},
-		order: [['createdAt', 'DESC']],
-	});
-	logger.debug('latestPurchaseOrder ', latestPurchaseOrder);
-
-	let newPurchaseOrderNumber = 1;
-	if (latestPurchaseOrder) {
-		const latestNumber = parseInt(latestPurchaseOrder.poNo, 10);
-		if (!isNaN(latestNumber)) {
-			newPurchaseOrderNumber = latestNumber + 1;
-		}
-	}
-
-	return newPurchaseOrderNumber.toString().padStart(4, '0');
 };
 
 // Apply a base-unit delta to every IndentItem row for a product, scaling each row's
@@ -1026,7 +1024,7 @@ async function calculateSaleInvoice(invoice) {
 			};
 		}),
 		additionalRemarks: invoiceData.remarks,
-		combineInvoiceNumber: `${invoiceData.poPrefix || ''}${
+		combineInvoiceNumber: invoiceData.doc_number || `${invoiceData.poPrefix || ''}${
 			invoiceData.poNo || ''
 		}${invoiceData.poPostfix || ''}`,
 		totalCgst,
@@ -1203,7 +1201,13 @@ exports.exportPurchaseOrders = async (req) => {
 	const now = new Date();
 	const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
 	const fileName = `purchase_order_report_${ts}.xlsx`;
-	const filePath = path.join(__dirname, `../../storage/purchase-orders/${fileName}`);
+	const directory = path.join(__dirname,`../../storage/purchase-orders`);
+
+	if(!existsSync(directory)){
+		await fs.mkdir(directory, { recursive: true });
+	}
+
+	const filePath = path.join(directory, `/${fileName}`);
 
 	// Standard workbook (not streaming) — full styling support including fills/fonts
 	const workbook = new ExcelJS.Workbook();
@@ -1313,7 +1317,7 @@ exports.exportPurchaseOrders = async (req) => {
 		const batch = await PurchaseOrder.findAll({
 			where: whereClause,
 			attributes: [
-				'id', 'poPrefix', 'poNo', 'poPostfix', 'poDetail', 'vendorInfo',
+				'id', 'poPrefix', 'poNo', 'poPostfix', 'doc_number', 'poDetail', 'vendorInfo',
 				'dueDate', 'grandTotal', 'total_taxable', 'total_tax', 'discount',
 				'otherTax', 'totalPaid', 'remainingAmount', 'paymentStatus', 'status',
 				'dispatch_status', 'last_dispatched_at', 'last_acknowledged_at',
@@ -1350,7 +1354,7 @@ exports.exportPurchaseOrders = async (req) => {
 		for (const poInstance of batch) {
 			const po = poInstance.get({ plain: true });
 
-			const poNumber = `${safeStr(po.poPrefix)}${safeStr(po.poNo)}${safeStr(po.poPostfix)}`;
+			const poNumber = po.doc_number || `${safeStr(po.poPrefix)}${safeStr(po.poNo)}${safeStr(po.poPostfix)}`;
 			const vendorInfo = po.vendorInfo ?? {};
 			const vendorName = safeStr(vendorInfo.vendor_name ?? vendorInfo.name ?? '');
 			const vendorGstin = safeStr(vendorInfo.gstin ?? vendorInfo.gst_no ?? '');
@@ -1629,7 +1633,7 @@ exports.dispatchPurchaseOrder = async (req, id, payload) => {
 		doc: po,
 		payload,
 		generatePdfBuffer: () => buildPurchaseOrderPdfBuffer(id),
-		documentLabel: `${po.poPrefix || ''}${po.poNo}${po.poPostfix || ''}`,
+		documentLabel: po.doc_number || `${po.poPrefix || ''}${po.poNo}${po.poPostfix || ''}`,
 	});
 
 	return fetchPurchaseOrderForWorkflow(id);

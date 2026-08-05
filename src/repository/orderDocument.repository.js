@@ -11,3 +11,18 @@ exports.findAllForContext = (context, contextId, options = {}) => {
 		...options,
 	});
 };
+
+exports.findAllForDocument = (documentType, documentId, options = {}) => {
+	return OrderDocument.findAll({
+		where: { document_type: documentType, document_id: documentId },
+		order: [['createdAt', 'ASC']],
+		...options,
+	});
+};
+
+exports.destroyForDocument = (documentType, documentId, options = {}) => {
+	return OrderDocument.destroy({
+		where: { document_type: documentType, document_id: documentId },
+		...options,
+	});
+};
