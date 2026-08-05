@@ -67,15 +67,6 @@ exports.deletePurchaseOrder = catchAsync(async (req, res) => {
 	});
 });
 
-exports.generatePoNumber = catchAsync(async (req, res) => {
-	const purchaseOrderNumber =
-		await purchaseOrderService.getPurchaseOrderNo(req);
-	res.status(200).json({
-		message: 'Generated purchase order number successfully',
-		data: purchaseOrderNumber,
-	});
-});
-
 exports.generateInvoiceHtml = catchAsync(async (req, res) => {
 	const combinedHtml = await purchaseOrderService.generateInvoiceHtml(req);
 	res.json({ html: combinedHtml });

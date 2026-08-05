@@ -9,7 +9,6 @@ const { upload: orderDocUpload } = require('../../middlewares/orderDocumentUploa
 
 router.use(verifyToken);
 
-router.get('/generate-po-number', purchaseController.generatePoNumber);
 router.get('/export', checkPermission('purchase-order', 'export'), purchaseController.exportPurchaseOrders);
 router.post('/', checkPermission('purchase-order', 'create'), purchaseController.createPurchaseOrder);
 router.get('/', checkPermission('purchase-order', 'view'), purchaseController.getAllPurchaseOrders);
