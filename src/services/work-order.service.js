@@ -56,6 +56,7 @@ const { generateSignedUrl, getImageAsBase64DataUrl } = require('../utils/s3Bucke
 const ExcelJS = require('exceljs');
 const path = require('path');
 const fs = require('fs/promises');
+const { existsSync } = require('node:fs');
 
 // Services have no stock and carry qty_for_purchase_order = 0 on the indent,
 // so they must be excluded from the purchase-order qty ledger (otherwise the
@@ -941,7 +942,13 @@ exports.exportWorkOrders = async (req) => {
 	const now = new Date();
 	const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
 	const fileName = `work_order_report_${ts}.xlsx`;
-	const filePath = path.join(__dirname, `../../storage/work-orders/${fileName}`);
+	const directory = path.join(__dirname, '../../storage/work-orders');
+
+	if (!existsSync(directory)) {
+		await fs.mkdir(directory, { recursive: true });
+	}
+
+	const filePath = path.join(directory, fileName);
 
 	const workbook = new ExcelJS.Workbook();
 

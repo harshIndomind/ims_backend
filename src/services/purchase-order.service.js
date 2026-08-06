@@ -39,6 +39,7 @@ const { createWorkflowDocumentService } = require('./workflowDocument.factory');
 const orderDispatchService = require('./orderDispatch.service');
 const { generateDocumentNumber } = require('./document-numbering.service');
 const { resolveUnitAndMajorHeadCodes } = require('./document-header-codes.service');
+const { existsSync } = require('node:fs');
 
 const DOCUMENT_TYPE = 'purchase_order';
 
@@ -1200,7 +1201,13 @@ exports.exportPurchaseOrders = async (req) => {
 	const now = new Date();
 	const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
 	const fileName = `purchase_order_report_${ts}.xlsx`;
-	const filePath = path.join(__dirname, `../../storage/purchase-orders/${fileName}`);
+	const directory = path.join(__dirname,`../../storage/purchase-orders`);
+
+	if(!existsSync(directory)){
+		await fs.mkdir(directory, { recursive: true });
+	}
+
+	const filePath = path.join(directory, `/${fileName}`);
 
 	// Standard workbook (not streaming) — full styling support including fills/fonts
 	const workbook = new ExcelJS.Workbook();
