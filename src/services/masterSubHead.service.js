@@ -2,7 +2,7 @@ const AppError = require('../utils/AppError');
 const { StatusCodes } = require('http-status-codes');
 const { masterSubHeadRepo } = require('../repository/index');
 const logger = require('../utils/logger');
-const { organization, MasterMajorHead, MasterSubHeadAmount } = require('../models/index');
+const { organization, MasterSubHeadAmount } = require('../models/index');
 const { Op } = require('sequelize');
 
 /**
@@ -10,7 +10,7 @@ const { Op } = require('sequelize');
  */
 exports.createMasterSubHead = async (req, payload) => {
 	const { org_id } = req.user;
-	const { sh_code, sh_name, major_head_id } = payload;
+	const { sh_code, sh_name } = payload;
 
 	if (!sh_code || !sh_name) {
 		logger.warn('Validation failed while creating Master Major Head', payload);
@@ -24,7 +24,6 @@ exports.createMasterSubHead = async (req, payload) => {
 		org_id,
 		sh_code,
 		sh_name,
-		...(major_head_id ? { major_head_id: Number(major_head_id) } : {}),
 	});
 
 	logger.info('Sub Head created', {
@@ -39,7 +38,7 @@ exports.createMasterSubHead = async (req, payload) => {
  * Update
  */
 exports.updateMasterSubHead = async (id, payload) => {
-	const { sh_code, sh_name, major_head_id } = payload;
+	const { sh_code, sh_name } = payload;
 
 	const MasterSubHead = await masterSubHeadRepo.findById(id);
 
@@ -51,7 +50,6 @@ exports.updateMasterSubHead = async (id, payload) => {
 	await masterSubHeadRepo.update(MasterSubHead, {
 		sh_code,
 		sh_name,
-		...(major_head_id !== undefined ? { major_head_id: major_head_id ? Number(major_head_id) : null } : {}),
 	});
 
 	logger.info('Sub Head updated', {
@@ -69,9 +67,6 @@ exports.getAllMasterSubHead = async (req) => {
 	const { limit, offset, major_head_id, period_id } = req.query;
 
 	const where = { org_id };
-	if (major_head_id) {
-		where.major_head_id = Number(major_head_id);
-	}
 
 	if (period_id) {
 		const amountWhere = { org_id, period_id: Number(period_id) };
@@ -99,12 +94,8 @@ exports.getAllMasterSubHead = async (req) => {
 					as: 'organization',
 					attributes: ['org_code', 'org_name'],
 				},
-				{
-					model: MasterMajorHead,
-					as: 'majorHead',
-					attributes: ['id', 'm_code', 'm_name'],
-				},
 			],
+			order: [['id', 'ASC']],
 			...options,
 		},
 	);
@@ -142,16 +133,4 @@ exports.deleteMasterSubHead = async (id) => {
 	logger.info('Sub Head deleted', { id });
 
 	return true;
-};
-
-exports.latestSubCode = async (id) => {
-	const latestSubCode = await masterSubHeadRepo.latestSubCode();
-
-	let subCode = 1;
-	if (latestSubCode) {
-		subCode = latestSubCode.id + 1;
-	}
-
-	logger.warn('Sub head latest code', { subCode });
-	return subCode;
 };

@@ -22,11 +22,3 @@ exports.update = (instance, data, options = {}) => {
 exports.delete = (instance, options = {}) => {
 	return instance.destroy(options);
 };
-
-exports.latestSubCode = () => {
-	return MasterSubHead.findOne({
-		attributes: ['id', 'sh_code'],
-		order: [['id', 'DESC']],
-		paranoid: false
-	});
-};

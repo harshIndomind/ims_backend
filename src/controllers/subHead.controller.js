@@ -49,10 +49,3 @@ exports.deleteMasterSubHead = catchAsync(async (req, res) => {
 	});
 });
 
-exports.latestSubCode = catchAsync(async (req, res) => {
-	const subCode = await masterSubHeadService.latestSubCode();
-
-	res.status(StatusCodes.OK).json({
-		subCode,
-	});
-});
