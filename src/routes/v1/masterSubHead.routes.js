@@ -16,12 +16,6 @@ router.put(
 	MasterSubHeadController.updateMasterSubHead
 );
 router.get(
-	'/latestSubCode',
-	checkPermission('sub-head', 'view'),
-	MasterSubHeadController.latestSubCode
-);
-
-router.get(
 	'/',
 	checkPermission('sub-head', 'view'),
 	MasterSubHeadController.getAllMasterSubHead

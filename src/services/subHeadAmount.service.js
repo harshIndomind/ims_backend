@@ -45,12 +45,6 @@ exports.createSubHeadAmount = async (req, payload) => {
 	if (!subHead) {
 		throw new AppError('Sub head not found', StatusCodes.NOT_FOUND);
 	}
-	if (Number(subHead.major_head_id) !== Number(major_head_id)) {
-		throw new AppError(
-			'Selected sub head does not belong to the selected major head',
-			StatusCodes.BAD_REQUEST,
-		);
-	}
 
 	const existing = await masterSubHeadAmountRepo.getAmountByMajorHeadAndPeriod({
 		where: { org_id, major_head_id, period_id, sub_head_id },
@@ -152,12 +146,6 @@ exports.updateSubHeadAmount = async (req, payload) => {
 		const subHead = await MasterSubHead.findByPk(sub_head_id);
 		if (!subHead) {
 			throw new AppError('Sub head not found', StatusCodes.NOT_FOUND);
-		}
-		if (Number(subHead.major_head_id) !== Number(major_head_id)) {
-			throw new AppError(
-				'Selected sub head does not belong to the selected major head',
-				StatusCodes.BAD_REQUEST,
-			);
 		}
 	}
 

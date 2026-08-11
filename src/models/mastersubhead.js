@@ -12,10 +12,6 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'org_id',
 				as: 'organization',
 			});
-			MasterSubHead.belongsTo(models.MasterMajorHead, {
-				foreignKey: 'major_head_id',
-				as: 'majorHead',
-			});
 		}
 	}
 	MasterSubHead.init(
@@ -24,11 +20,6 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.INTEGER,
 				allowNull: true,
 				references: { model: 'organization', key: 'id' },
-			},
-			major_head_id: {
-				type: DataTypes.INTEGER,
-				allowNull: true,
-				references: { model: 'MasterMajorHeads', key: 'id' },
 			},
 			sh_code: {
 				type: DataTypes.STRING,
