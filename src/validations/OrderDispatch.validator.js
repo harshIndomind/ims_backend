@@ -65,4 +65,16 @@ exports.validationAcknowledgeOrder = [
 	body('dispatchId').optional({ checkFalsy: true }).isInt().withMessage('Invalid dispatch reference').toInt(),
 
 	body('remarks').optional({ checkFalsy: true }).isString().trim(),
+
+	// Required only when the order's po_qc_check/wo_qc_check is true — a DB-backed fact this
+	// validator can't see, so the hard "must be present" check lives in
+	// orderDispatch.service.js::acknowledgeDocument, which also does the real per-item
+	// validation. On this multipart route `items` arrives as a JSON-encoded string, so there's
+	// nothing meaningful to shape-check here beyond "don't reject it outright" — the service
+	// parses and validates it.
+	body('items').optional().custom((value) => {
+		if (typeof value === 'string') return true;
+		if (!Array.isArray(value)) throw new Error('items must be an array');
+		return true;
+	}),
 ];

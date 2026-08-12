@@ -128,13 +128,28 @@ async function prepareAndStartServer() {
 	// Feature flag for in-progress modules pending verification before merge to tg-uat
 	// (see scm-frontend's lib/featureFlags.ts for the matching client-side gate).
 	// Set ENABLE_WIP_MODULES=true locally to test; route stays unmounted (404)
-	// everywhere else until verified. Currently gates: GRN (Goods Receipt Note).
+	// everywhere else until verified. Currently gates: GRN (Goods Receipt Note)
 	if (process.env.ENABLE_WIP_MODULES === 'true') {
 		app.use(
 			`${apiPrefix}/v1/goods-receipt-notes`,
 			require('./routes/v1/grn.routes'),
 		);
 	}
+
+	app.use(
+		`${apiPrefix}/v1/quality-control`,
+		require('./routes/v1/qc-inspection.routes'),
+	);
+
+	app.use(
+		`${apiPrefix}/v1/qc-templates`,
+		require('./routes/v1/qc-template.routes'),
+	);
+
+	app.use(
+		`${apiPrefix}/v1/short-close-requests`,
+		require('./routes/v1/short-close.routes'),
+	);
 
 	app.use(
 		`${apiPrefix}/v1/work-orders`,

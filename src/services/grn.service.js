@@ -8,6 +8,8 @@ const {
 	GoodsReceiptNoteItem,
 	PurchaseOrder,
 	PurchaseOrderItem,
+	QcInspection,
+	QcInspectionItem,
 } = require('../models/index');
 const AppError = require('../utils/AppError');
 const logger = require('../utils/logger');
@@ -74,7 +76,53 @@ exports.createGRN = async (req) => {
 
 	const poItemsById = new Map(po.items.map((i) => [i.id, i]));
 
-	// --- Phase 0: validate every line against the PO's ordered qty before touching anything ---
+	// When this PO required QC, GRN creation is gated on an approved inspection — see
+	// resolveQcInspectionItem below. Non-QC POs (the vast majority today) take the exact same
+	// path as before this gate existed.
+	const qcRequired = Boolean(po.po_qc_check);
+
+	/**
+	 * Loads and validates the qc_inspection_item a GRN line claims to be drawing from: it must
+	 * belong to an inspection that is (a) approved, and (b) for this same PO. Only the
+	 * inspection's accepted_qty may ever reach GRN — rejected/rework quantity is never
+	 * reachable from this function, by construction (it's simply never read).
+	 */
+	async function resolveQcInspectionItem(poItem, input) {
+		if (!input.qc_inspection_item_id) {
+			throw new AppError(
+				`This Purchase Order requires QC — item ${input.purchase_order_item_id} must reference an approved qc_inspection_item_id`,
+				StatusCodes.BAD_REQUEST,
+			);
+		}
+
+		const qcItem = await QcInspectionItem.findOne({
+			where: { id: input.qc_inspection_item_id, po_wo_item_id: poItem.id },
+			include: [{ model: QcInspection, as: 'inspection' }],
+		});
+		if (!qcItem) {
+			throw new AppError(`QC inspection item ${input.qc_inspection_item_id} not found for this PO item`, StatusCodes.BAD_REQUEST);
+		}
+		if (qcItem.inspection.document_type !== 'purchase_order' || qcItem.inspection.document_id !== purchase_order_id) {
+			throw new AppError(`QC inspection item ${input.qc_inspection_item_id} does not belong to this Purchase Order`, StatusCodes.BAD_REQUEST);
+		}
+		if (qcItem.inspection.status !== 'approved') {
+			throw new AppError(
+				`Cannot create a GRN from QC inspection ${qcItem.inspection.qc_no} — it is "${qcItem.inspection.status}", not approved`,
+				StatusCodes.CONFLICT,
+			);
+		}
+
+		const alreadyDrawn = parseFloat(
+			(await GoodsReceiptNoteItem.sum('received_qty', {
+				where: { qc_inspection_item_id: qcItem.id },
+				include: [{ model: GoodsReceiptNote, as: 'goodsReceiptNote', attributes: [], where: { status: 'active' } }],
+			})) || 0,
+		);
+		return { qcItem, alreadyDrawn };
+	}
+
+	// --- Phase 0: validate every line against the PO's ordered qty (and, for QC orders, the
+	// approved QC-accepted qty) before touching anything ---
 	const linesToReceive = [];
 	for (const input of items) {
 		const poItem = poItemsById.get(input.purchase_order_item_id);
@@ -104,7 +152,20 @@ exports.createGRN = async (req) => {
 			);
 		}
 
-		linesToReceive.push({ poItem, input, effectiveReceivedQty });
+		let qcInspectionItemId = null;
+		if (qcRequired) {
+			const { qcItem, alreadyDrawn } = await resolveQcInspectionItem(poItem, input);
+			const acceptedQty = parseFloat(qcItem.accepted_qty);
+			if (alreadyDrawn + effectiveReceivedQty > acceptedQty) {
+				throw new AppError(
+					`Cannot receive ${effectiveReceivedQty} for "${poItem.productSnapshot?.name || poItem.id}" — only ${Math.max(0, acceptedQty - alreadyDrawn)} remaining against QC-accepted qty of ${acceptedQty}`,
+					StatusCodes.BAD_REQUEST,
+				);
+			}
+			qcInspectionItemId = qcItem.id;
+		}
+
+		linesToReceive.push({ poItem, input, effectiveReceivedQty, qcInspectionItemId });
 	}
 
 	// --- Phase 1: record the receipt in VCP's stock ledger (always succeeds — no availability check for a receipt) ---
@@ -140,7 +201,7 @@ exports.createGRN = async (req) => {
 			{ transaction },
 		);
 
-		for (const { poItem, input, effectiveReceivedQty } of linesToReceive) {
+		for (const { poItem, input, effectiveReceivedQty, qcInspectionItemId } of linesToReceive) {
 			await GoodsReceiptNoteItem.create(
 				{
 					goods_receipt_note_id: grn.id,
@@ -150,6 +211,7 @@ exports.createGRN = async (req) => {
 					stock_type: poItem.stock_type,
 					received_qty: effectiveReceivedQty,
 					serial_nos: input.serial_nos || null,
+					qc_inspection_item_id: qcInspectionItemId,
 				},
 				{ transaction },
 			);

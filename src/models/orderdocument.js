@@ -17,7 +17,7 @@ module.exports = (sequelize, DataTypes) => {
 				allowNull: false,
 			},
 			context: {
-				type: DataTypes.ENUM('dispatch', 'acknowledgement'),
+				type: DataTypes.ENUM('dispatch', 'acknowledgement', 'qc'),
 				allowNull: false,
 			},
 			context_id: {
