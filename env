@@ -2,11 +2,11 @@
 # GENERAL CONFIGURATION
 #============================================
 APP_ENV=development
-APP_DEBUG=false
-BASE_URL=
+APP_DEBUG=true
+BASE_URL=http://localhost
 TZ="Asia/Kolkata"
-PORT=
-
+PORT=4300
+CLIENT_BASE_URL=
 # ===========================================
 # JWT AUTHENTICATION
 #============================================
@@ -53,7 +53,14 @@ SWAYAMM_GET_ACCOUNT_BY_CODE_NAME_ENDPOINT=
 SWAYAMM_USERNAME=
 SWAYAMM_PASSWORD=
 
-# Added on 24 March 2026
 RABBITMQ_URL=
 RABBITMQ_AUTH_SERVICE_QUEUE=
 DEFAULT_USER_PASSWORD=
+EVENT_SECRET=
+
+CORS_WHITELIST=
+COOKIE_DOMAIN=
+COOKIE_SECURE=
+VCP_SERVICE_API_BASE_URL=
+VCP_SERVICE_PRODUCT_ENDPOINT=
+S2S_COMM_KEY=
