@@ -63,7 +63,7 @@ exports.updateMasterMajorHead = async (id, payload) => {
 
 exports.getAllMasterMajorHead = async (req) => {
 	const { org_id } = req.user;
-	const { limit, offset, period_id } = req.query;
+	const { limit, offset, period_id, search, sortOrder } = req.query;
 	const options = {};
 	if (limit) {
 		options.limit = Number(limit);
@@ -81,6 +81,15 @@ exports.getAllMasterMajorHead = async (req) => {
 		where.id = { [Op.in]: majorHeadIds };
 	}
 
+	if (search) {
+		const like = `%${search}%`;
+		where[Op.or] = [
+			{ m_code: { [Op.like]: like } },
+			{ m_name: { [Op.like]: like } },
+		];
+	}
+
+	options.order = [['createdAt', String(sortOrder).toLowerCase() === 'asc' ? 'ASC' : 'DESC']];
 	options.include = [
 		{
 			model: organization,

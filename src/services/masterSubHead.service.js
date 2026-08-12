@@ -64,7 +64,7 @@ exports.updateMasterSubHead = async (id, payload) => {
  */
 exports.getAllMasterSubHead = async (req) => {
 	const { org_id } = req.user;
-	const { limit, offset, major_head_id, period_id } = req.query;
+	const { limit, offset, major_head_id, period_id, search, sortOrder } = req.query;
 
 	const where = { org_id };
 
@@ -77,6 +77,14 @@ exports.getAllMasterSubHead = async (req) => {
 		});
 		const subHeadIds = amounts.map((a) => a.sub_head_id);
 		where.id = { [Op.in]: subHeadIds };
+	}
+
+	if (search) {
+		const like = `%${search}%`;
+		where[Op.or] = [
+			{ sh_code: { [Op.like]: like } },
+			{ sh_name: { [Op.like]: like } },
+		];
 	}
 
 	const options = {};
@@ -95,7 +103,7 @@ exports.getAllMasterSubHead = async (req) => {
 					attributes: ['org_code', 'org_name'],
 				},
 			],
-			order: [['id', 'ASC']],
+			order: [['createdAt', String(sortOrder).toLowerCase() === 'asc' ? 'ASC' : 'DESC']],
 			...options,
 		},
 	);

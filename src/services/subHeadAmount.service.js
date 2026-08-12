@@ -17,7 +17,7 @@ const {
 	getAmountByMajorHeadAndPeriodAndSubHead,
 } = require('../services/budget.service');
 const auditLogService = require('./auditLog.service');
-const { fn, col } = require('sequelize');
+const { fn, col, Op } = require('sequelize');
 
 const ENTITY_TYPE = 'sub_head_amount';
 
@@ -222,12 +222,22 @@ exports.updateSubHeadAmount = async (req, payload) => {
  */
 exports.getAllSubHeadAmount = async (req) => {
 	const { org_id } = req.user;
-	const { limit, offset, period_id, major_head_id, sub_head_id } = req.query;
+	const { limit, offset, period_id, major_head_id, sub_head_id, search, sortOrder } = req.query;
 
 	const where = { org_id };
 	if (period_id)     where.period_id     = Number(period_id);
 	if (major_head_id) where.major_head_id = Number(major_head_id);
 	if (sub_head_id)   where.sub_head_id   = Number(sub_head_id);
+
+	if (search) {
+		const like = `%${search}%`;
+		where[Op.or] = [
+			{ '$majorHead.m_code$': { [Op.like]: like } },
+			{ '$majorHead.m_name$': { [Op.like]: like } },
+			{ '$subHead.sh_code$': { [Op.like]: like } },
+			{ '$subHead.sh_name$': { [Op.like]: like } },
+		];
+	}
 
 	const options = {};
 	if (limit) {
@@ -237,6 +247,8 @@ exports.getAllSubHeadAmount = async (req) => {
 
 	const result = await masterSubHeadAmountRepo.findAll({
 		where,
+		order: [['createdAt', String(sortOrder).toLowerCase() === 'asc' ? 'ASC' : 'DESC']],
+		subQuery: false,
 		...options,
 		include: [
 			{
