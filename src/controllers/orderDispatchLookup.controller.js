@@ -1,5 +1,6 @@
 const catchAsync = require('../utils/catchAsync');
 const orderDispatchService = require('../services/orderDispatch.service');
+const { masterQcRejectionReasonRepository, masterShortCloseReasonRepository } = require('../repository/index');
 
 exports.getDispatchMethods = catchAsync(async (req, res) => {
 	const data = await orderDispatchService.listDispatchMethods();
@@ -9,4 +10,14 @@ exports.getDispatchMethods = catchAsync(async (req, res) => {
 exports.getAcknowledgementModes = catchAsync(async (req, res) => {
 	const data = await orderDispatchService.listAcknowledgementModes();
 	res.status(200).json({ message: 'Acknowledgement modes fetched successfully', data });
+});
+
+exports.getQcRejectionReasons = catchAsync(async (req, res) => {
+	const data = await masterQcRejectionReasonRepository.findAllActive();
+	res.status(200).json({ message: 'QC rejection reasons fetched successfully', data });
+});
+
+exports.getShortCloseReasons = catchAsync(async (req, res) => {
+	const data = await masterShortCloseReasonRepository.findAllActive();
+	res.status(200).json({ message: 'Short close reasons fetched successfully', data });
 });

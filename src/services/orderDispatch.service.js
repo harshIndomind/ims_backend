@@ -10,10 +10,11 @@ const path = require('path');
 const AppError = require('../utils/AppError');
 const { StatusCodes } = require('http-status-codes');
 const { sequelize } = require('../models/index');
-const { MasterDispatchMethod, MasterAcknowledgementMode } = require('../models/index');
+const { MasterDispatchMethod, MasterAcknowledgementMode, OrderAcknowledgementItem } = require('../models/index');
 const {
 	orderDispatchRepository,
 	orderAcknowledgementRepository,
+	orderAcknowledgementItemRepository,
 	orderDocumentRepository,
 	masterDispatchMethodRepository,
 	masterAcknowledgementModeRepository,
@@ -51,7 +52,10 @@ exports.listDispatches = (documentType, documentId) =>
 
 exports.listAcknowledgements = async (documentType, documentId) => {
 	const acknowledgements = await orderAcknowledgementRepository.findAllForDocument(documentType, documentId, {
-		include: [{ model: MasterAcknowledgementMode, as: 'mode' }],
+		include: [
+			{ model: MasterAcknowledgementMode, as: 'mode' },
+			{ model: OrderAcknowledgementItem, as: 'items' },
+		],
 	});
 
 	return Promise.all(
@@ -188,11 +192,53 @@ exports.dispatchDocument = async ({ req, documentType, documentId, doc, payload,
  * @param {number} params.documentId
  * @param {Model} params.doc
  * @param {object} params.payload - { acknowledgementModeId, acknowledgedByName,
- *   acknowledgementDate, vendorReferenceNo, remarks, dispatchId? }
+ *   acknowledgementDate, vendorReferenceNo, remarks, dispatchId?, items? }
+ *   `items` — [{ purchase_order_item_id | work_order_item_id, arrived_qty?, damage_notes? }] —
+ *   optional on every order, QC-required or not. Acknowledgement only confirms the vendor
+ *   accepted the PO/WO document, not that goods physically arrived, so `arrived_qty` here (when
+ *   supplied) is informational only — the vendor's stated intent, not a QC input. Physical
+ *   receipt is captured on the QC inspection itself (qc_inspection_items.current_received_qty).
  * @param {Express.Multer.File} [params.file] - optional attachment
  */
 exports.acknowledgeDocument = async ({ req, documentType, documentId, doc, payload, file }) => {
 	const { acknowledgementModeId, acknowledgedByName, acknowledgementDate, vendorReferenceNo, remarks, dispatchId } = payload;
+
+	// The acknowledge route accepts multipart/form-data (to carry the optional file), so a
+	// structured field like `items` arrives as a JSON-encoded string rather than a native array
+	// whenever the frontend sends one alongside a file — same shape multer gives every other
+	// non-file field on this route.
+	let items = payload.items;
+	if (typeof items === 'string') {
+		try {
+			items = JSON.parse(items);
+		} catch {
+			throw new AppError('items must be valid JSON', StatusCodes.BAD_REQUEST);
+		}
+	}
+
+	let linesToRecord = [];
+	if (Array.isArray(items) && items.length > 0) {
+		const docItemsById = new Map(doc.items.map((i) => [i.id, i]));
+		linesToRecord = items.map((input) => {
+			const itemId = input.po_wo_item_id ?? input.purchase_order_item_id ?? input.work_order_item_id;
+			const docItem = docItemsById.get(itemId);
+			if (!docItem) {
+				throw new AppError(`Item ${itemId} does not belong to this order`, StatusCodes.BAD_REQUEST);
+			}
+			const arrivedQty = input.arrived_qty === undefined || input.arrived_qty === null || input.arrived_qty === '' ? null : parseFloat(input.arrived_qty);
+			if (arrivedQty !== null && arrivedQty < 0) {
+				throw new AppError(`arrived_qty cannot be negative for item ${itemId}`, StatusCodes.BAD_REQUEST);
+			}
+			return {
+				po_wo_item_id: docItem.id,
+				product_id: docItem.product_id,
+				batch_id: docItem.batch_id || null,
+				stock_type: docItem.stock_type,
+				arrived_qty: arrivedQty,
+				damage_notes: input.damage_notes || null,
+			};
+		});
+	}
 
 	const mode = await masterAcknowledgementModeRepository.findById(acknowledgementModeId);
 	if (!mode || !mode.is_active) {
@@ -257,6 +303,13 @@ exports.acknowledgeDocument = async ({ req, documentType, documentId, doc, paylo
 		);
 
 		await doc.update({ dispatch_status: 'acknowledged', last_acknowledged_at: new Date() }, { transaction });
+
+		if (linesToRecord.length > 0) {
+			await orderAcknowledgementItemRepository.bulkCreate(
+				linesToRecord.map((line) => ({ ...line, acknowledgement_id: acknowledgement.id })),
+				{ transaction },
+			);
+		}
 
 		if (file) {
 			await orderDocumentRepository.create(

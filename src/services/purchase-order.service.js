@@ -509,7 +509,8 @@ exports.getAllPurchaseOrders = async (req) => {
 			'createdAt',
 			'paymentStatus',
 			'vendorInfo',
-			'dispatch_status'
+			'dispatch_status',
+			'po_qc_check'
 		],
 		include: [
 			{
@@ -760,6 +761,10 @@ async function applyIndentQtyDelta(uomDelta, indent_id, product_id, uom_id, tran
 		{ where: { id: row.id }, transaction },
 	);
 }
+// Exported for short-close.service.js — Short Close approval releases qty back to the indent
+// via this exact function (positive delta), reusing the one lookup/increment logic PO
+// create/update/delete already trust rather than a second, possibly-divergent implementation.
+exports.applyIndentQtyDelta = applyIndentQtyDelta;
 
 function validateItemsLimits(productItems, budgetType) {
 	// Reject same product + same UOM (different UOM for the same product is allowed).

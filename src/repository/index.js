@@ -38,5 +38,12 @@ module.exports = {
     masterAcknowledgementModeRepository: require('./masterAcknowledgementMode.repository'),
     orderDispatchRepository: require('./orderDispatch.repository'),
     orderAcknowledgementRepository: require('./orderAcknowledgement.repository'),
+    orderAcknowledgementItemRepository: require('./orderAcknowledgementItem.repository'),
     orderDocumentRepository: require('./orderDocument.repository'),
+    qcInspectionRepository: require('./qcInspection.repository'),
+    qcInspectionItemsRepository: require('./qcInspectionItems.repository'),
+    qcTemplateRepository: require('./qcTemplate.repository'),
+    masterQcRejectionReasonRepository: require('./masterQcRejectionReason.repository'),
+    shortCloseRequestItemsRepository: require('./shortCloseRequestItems.repository'),
+    masterShortCloseReasonRepository: require('./masterShortCloseReason.repository'),
 }
