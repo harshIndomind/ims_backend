@@ -774,34 +774,45 @@
                     <%= invoice?.bankSnapshot?.bank_ifsc || 'N/A' %>
                 </div> -->
 
-        <!-- Additional Notes -->
-        <% if (invoice.additionalNotes && invoice.additionalNotes.length > 0) { %>
-            <% invoice.additionalNotes.forEach((item) => { %>
-                <% if (item.title && item.title.trim() !== '' && item.detail && item.detail.trim() !== '') { %>
-                    <div style="border-top:1px dotted #ccc; margin-top:8px; padding-top:6px; font-size:11px;">
-                        <div style="font-weight:bold;"><%= item.title %></div>
-                        <div style="margin-top:4px;">
-                        <div style="margin-top:4px; white-space: pre-wrap;">
-                             <%- item.detail %>
-                        </div>
-                    </div>
-                                        </div>
-                                    <% } %>
-                                <% }) %>
-                            <% } %>
-
         <!-- Terms & Conditions -->
         <% if (invoice.termsAndConditions && invoice.termsAndConditions.length > 0) { %>
-            <div style="border-top:1px dotted #ccc; margin-top:8px; padding-top:6px; font-size:11px; line-height:1.6;">
-                <div style="font-weight:bold;">Terms &amp; Conditions</div>
+            <div style="font-size:11px; line-height:1.6;">
+                <div style="font-weight:bold;"><h3>Terms &amp; Conditions</h3></div>
                 <% invoice.termsAndConditions.forEach((term) => { %>
-                    <div style="margin-top:4px;">
-                        <div style="font-weight:bold;"><%= term.label %></div>
+                    <div style="margin-top:4px; margin-left:8px;">
+                        <div style="font-weight:bold;"><%= term.label %>:</div>
                         <div><%= term.value %></div>
                     </div>
                 <% }) %>
             </div>
         <% } %>
+
+        <!-- Additional Notes -->
+        <% if (invoice.additionalNotes && invoice.additionalNotes.length > 0) { %>
+            <% invoice.additionalNotes.forEach((item) => { %>
+                <% if (item.title && item.title.trim() !== '' && item.detail && item.detail.trim() !== '') { %>
+                    <div style="border-top:1px dotted #afafaf; margin-top:8px; padding-top:6px; font-size:11px;">
+                        <div style="font-weight:bold;"><h3><%= item.title %></h3></div>
+                        <div style="margin-top:4px;">
+                        <div style="margin-top:4px; font-size:11px; line-height:1.6;">
+                        <%- item.detail
+    .replace(/<p\b([^>]*)>/gi, (match, attrs) => {
+        if (attrs.includes('style=')) {
+            return match.replace(
+                /style="([^"]*)"/i,
+                'style="$1; margin:0 !important; padding:0 !important; line-height:1.2;"'
+            );
+        }
+
+        return `<p${attrs} style="margin:0 !important; padding:0 !important; line-height:1.2;">`;
+    })
+%>
+                    </div>
+                                        </div>
+                                    </div>
+                                    <% } %>
+                                <% }) %>
+                            <% } %>
     </div>
     </div>
 
