@@ -133,8 +133,10 @@ module.exports = (sequelize, DataTypes) => {
 				allowNull: true,
 				defaultValue: 0,
 			},
-			// Live remaining qty still open for PO; qty_for_purchase_order stays frozen as the
-			// original backorder amount, this is what PO create/update/delete actually mutate.
+			// Separate post-approval backorder re-issue counter, mutated only by
+			// indentService.reissuePendingQuantity (manual `POST /indents/:id/reissue`). NOT
+			// touched by PO/WO create/update/delete/short-close — those all mutate
+			// qty_for_purchase_order above, which is the field new-PO validation actually checks.
 			balance_indent_qty: {
 				type: DataTypes.DOUBLE,
 				allowNull: true,

@@ -11,6 +11,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'purchase_order_item_id',
 				as: 'purchaseOrderItem',
 			});
+			GoodsReceiptNoteItem.belongsTo(models.QcInspectionItem, {
+				foreignKey: 'qc_inspection_item_id',
+				as: 'qcInspectionItem',
+			});
 		}
 	}
 	GoodsReceiptNoteItem.init(
@@ -36,6 +40,11 @@ module.exports = (sequelize, DataTypes) => {
 			serial_nos: {
 				type: DataTypes.JSON,
 				allowNull: true,
+			},
+			qc_inspection_item_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+				references: { model: 'qc_inspection_items', key: 'id' },
 			},
 		},
 		{

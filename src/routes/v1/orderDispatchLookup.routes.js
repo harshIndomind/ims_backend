@@ -16,5 +16,15 @@ router.get(
 	checkPermission(['purchase-order', 'work-order'], 'view'),
 	orderDispatchLookupController.getAcknowledgementModes,
 );
+router.get(
+	'/qc-rejection-reasons',
+	checkPermission('quality-control', 'view'),
+	orderDispatchLookupController.getQcRejectionReasons,
+);
+router.get(
+	'/short-close-reasons',
+	checkPermission('short-close', 'view'),
+	orderDispatchLookupController.getShortCloseReasons,
+);
 
 module.exports = router;

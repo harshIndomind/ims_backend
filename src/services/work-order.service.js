@@ -64,6 +64,19 @@ const { existsSync } = require('node:fs');
 const isServiceItem = (item) =>
 	(item?.productSnapshot?.item_type ?? item?.item_type) === 'service';
 
+// Same increment pattern as purchase-order.service.js's applyIndentQtyDelta, but keyed by
+// indent_id + product_id only (no selected_uom_id disambiguation — matches the pre-existing
+// lookup at every WO create/update/delete call site below). Exported so short-close.service.js
+// can reuse this exact lookup/increment when releasing qty back to the indent on WO Short
+// Close approval, rather than re-implementing it.
+async function applyIndentQtyDeltaForWorkOrder(qtyDelta, indent_id, product_id, transaction) {
+	await IndentItemRepository.increment(
+		{ qty_for_purchase_order: qtyDelta },
+		{ where: { indent_id, product_id }, transaction },
+	);
+}
+exports.applyIndentQtyDeltaForWorkOrder = applyIndentQtyDeltaForWorkOrder;
+
 exports.createWorkOrder = async (req) => {
 	const transaction = await sequelize.transaction();
 	try {
@@ -226,13 +239,7 @@ exports.createWorkOrder = async (req) => {
 			await workOrderItemsRepository.create(woItemObject, { transaction });
 
 			if (!isServiceItem(item)) {
-				await IndentItemRepository.increment(
-					{ qty_for_purchase_order: -parseFloat(item.qty) },
-					{
-						where: { indent_id, product_id: item.product_id },
-						transaction,
-					},
-				);
+				await applyIndentQtyDeltaForWorkOrder(-parseFloat(item.qty), indent_id, item.product_id, transaction);
 			}
 		}
 
@@ -385,13 +392,7 @@ exports.updateWorkOrder = async (req) => {
 			}
 
 			if (!isServiceItem(item)) {
-				await IndentItemRepository.increment(
-					{ qty_for_purchase_order: parseFloat(existingItem.qty) },
-					{
-						where: { indent_id, product_id: item.product_id },
-						transaction,
-					},
-				);
+				await applyIndentQtyDeltaForWorkOrder(parseFloat(existingItem.qty), indent_id, item.product_id, transaction);
 			}
 
 			await workOrderItemsRepository.update(existingItem, woItemObject, {
@@ -399,13 +400,7 @@ exports.updateWorkOrder = async (req) => {
 			});
 
 			if (!isServiceItem(item)) {
-				await IndentItemRepository.increment(
-					{ qty_for_purchase_order: -parseFloat(item.qty) },
-					{
-						where: { indent_id, product_id: item.product_id },
-						transaction,
-					},
-				);
+				await applyIndentQtyDeltaForWorkOrder(-parseFloat(item.qty), indent_id, item.product_id, transaction);
 			}
 		}
 
@@ -507,6 +502,7 @@ exports.getAllWorkOrders = async (req) => {
 			'paymentStatus',
 			'vendorInfo',
 			'dispatch_status',
+			'wo_qc_check',
 		],
 		include: [
 			{
@@ -612,16 +608,7 @@ exports.deleteWorkOrder = async (req) => {
 
 		for (const item of workOrder.items) {
 			if (isServiceItem(item)) continue;
-			await IndentItemRepository.increment(
-				{ qty_for_purchase_order: parseFloat(item.qty) },
-				{
-					where: {
-						indent_id: workOrder.indent_id,
-						product_id: item.product_id,
-					},
-					transaction,
-				},
-			);
+			await applyIndentQtyDeltaForWorkOrder(parseFloat(item.qty), workOrder.indent_id, item.product_id, transaction);
 		}
 
 		await PaymentRequisition.destroy({ where: { wo_id: id }, transaction });

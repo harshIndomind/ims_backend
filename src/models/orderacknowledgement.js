@@ -15,6 +15,14 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'acknowledgement_mode_id',
 				as: 'mode',
 			});
+			OrderAcknowledgement.hasMany(models.OrderAcknowledgementItem, {
+				foreignKey: 'acknowledgement_id',
+				as: 'items',
+			});
+			OrderAcknowledgement.hasMany(models.QcInspection, {
+				foreignKey: 'acknowledgement_id',
+				as: 'qcInspections',
+			});
 		}
 	}
 	OrderAcknowledgement.init(
