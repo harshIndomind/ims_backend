@@ -643,24 +643,9 @@
                     <div style="width:100%; max-width:100%; min-width:0; overflow-wrap:break-word; border:1px dotted #ccc; border-radius:4px; padding:10px; box-sizing:border-box;">
                         <!-- Bank Details -->
 
-
-                        <!-- Additional Notes -->
-                        <% if (invoice.additionalNotes && invoice.additionalNotes.length> 0) { %>
-                            <% invoice.additionalNotes.forEach((item)=> { %>
-                                <div style="margin:6px 0; padding-top:6px; font-size:12px; line-height:1.6;">
-                                    <div style="font-weight:bold;">
-                                        <%= item.title %>
-                                    </div>
-                                    <div style="white-space: pre-wrap;">
-                                        <%= item.detail %>
-                                    </div>
-                                </div>
-                                <% }) %>
-                                    <% } %>
-
-                                        <!-- Terms & Conditions -->
+                        <!-- Terms & Conditions -->
                                         <% if (invoice.termsAndConditions && invoice.termsAndConditions.length > 0) { %>
-                                            <div style="border-top:1px dotted #ccc; margin-top:8px; padding-top:10px; font-size:12px; line-height:1.6;">
+                                            <div style="font-size:12px; line-height:1.6;">
                                                 <div style="font-weight:bold;">Terms &amp; Conditions</div>
                                                 <% invoice.termsAndConditions.forEach((term) => { %>
                                                     <div style="margin:6px 0;">
@@ -670,6 +655,36 @@
                                                 <% }) %>
                                             </div>
                                         <% } %>
+
+
+                        <!-- Additional Notes -->
+                        <% if (invoice.additionalNotes && invoice.additionalNotes.length> 0) { %>
+                            <div style="border-top:1px dotted #ccc; margin-top:8px; padding-top:10px;">
+                            <% invoice.additionalNotes.forEach((item)=> { %>
+                                <div style="margin:6px 0; padding-top:6px; font-size:12px; line-height:1.6;">
+                                    <div style="font-weight:bold;">
+                                        <%= item.title %>
+                                    </div>
+                                    <div style="margin-top:4px; font-size:11px; line-height:1.6;">
+                        <%- item.detail
+    .replace(/<p\b([^>]*)>/gi, (match, attrs) => {
+        if (attrs.includes('style=')) {
+            return match.replace(
+                /style="([^"]*)"/i,
+                'style="$1; margin:0 !important; padding:0 !important; line-height:1.2;"'
+            );
+        }
+
+        return `<p${attrs} style="margin:0 !important; padding:0 !important; line-height:1.2;">`;
+    })
+%>
+                    </div>
+                                </div>
+                                <% }) %>
+                            </div>
+                                    <% } %>
+
+                                        
                     </div>
                     </div>
 
