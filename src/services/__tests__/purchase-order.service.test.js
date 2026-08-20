@@ -43,6 +43,9 @@ jest.mock('../../repository/index', () => ({
 	purchaseOrderItemsRepository: { create: jest.fn(), findOne: jest.fn(), update: jest.fn() },
 	purchaseOrderSerialItemsRepository: {},
 	IndentItemRepository: { increment: jest.fn() },
+	// indentQtyLog.service.js (invoked internally by applyIndentQtyDelta) pulls this from the
+	// same repository index — must be present or it crashes with "not a function".
+	indentItemQtyLogRepository: { create: jest.fn().mockResolvedValue({}) },
 }));
 
 const { sequelize } = require('../../models/index');

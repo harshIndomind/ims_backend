@@ -35,6 +35,7 @@ const path = require('path');
 const fs = require('fs/promises');
 const workflowEngine = require('./workflowEngine.service');
 const auditLogService = require('./auditLog.service');
+const indentQtyLogService = require('./indentQtyLog.service');
 const { createWorkflowDocumentService } = require('./workflowDocument.factory');
 const orderDispatchService = require('./orderDispatch.service');
 const { generateDocumentNumber } = require('./document-numbering.service');
@@ -341,6 +342,19 @@ exports.updatePurchaseOrder = async (req) => {
 			throw new AppError('Pruchase order not found.');
 		}
 
+		// A draft PO has never deducted anything from the indent yet — that only happens at
+		// submit (see submitPurchaseOrder), using whatever qty sits on the PO items at that
+		// point. So editing a still-draft PO needs no indent-qty adjustment at all. Only a PO
+		// that has already been submitted (deduction already applied) needs its edit reconciled
+		// against the indent here. Captured before purchaseOrderRepository.update() below, which
+		// mutates `purchaseOrder` in place.
+		const wasSubmitted = purchaseOrder.status !== 'draft';
+		// Same indent for the whole edit — this is the request body's indent_id, already in
+		// scope above, not purchaseOrder.indent_id (which update() below would overwrite anyway
+		// if the payload changed it).
+		const indentIdForQtyAdjust = indent_id;
+		const qtyAdjustMeta = { req, source: 'po_updated', sourceRefId: purchaseOrder.id };
+
 		await purchaseOrderRepository.update(purchaseOrder, poObject, {
 			transaction,
 		});
@@ -360,6 +374,17 @@ exports.updatePurchaseOrder = async (req) => {
 		// Remove items that are no longer in the payload.
 		for (const existing of existingItems) {
 			if (!payloadIds.has(existing.id)) {
+				if (wasSubmitted) {
+					// Restores what submit had deducted for this now-removed line.
+					await applyIndentQtyDelta(
+						parseFloat(existing.qty),
+						indentIdForQtyAdjust,
+						existing.product_id,
+						existing.selected_uom_id ?? null,
+						transaction,
+						qtyAdjustMeta,
+					);
+				}
 				await existing.destroy({ transaction });
 			}
 		}
@@ -399,9 +424,50 @@ exports.updatePurchaseOrder = async (req) => {
 
 			if (item.id && existingById.has(Number(item.id))) {
 				const existing = existingById.get(Number(item.id));
+				// Captured before update() mutates `existing` in place.
+				const oldQty = parseFloat(existing.qty);
+				const oldProductId = existing.product_id;
+				const oldUomId = existing.selected_uom_id ?? null;
+
+				if (wasSubmitted) {
+					// Always restore-then-deduct as two separate calls (not one net delta) —
+					// same convention as work-order.service.js's updateWorkOrder, and the only
+					// form that still works correctly when product/UOM changed (those are two
+					// different IndentItem rows, matched by product_id + uom_id, so they can't
+					// be netted into a single delta).
+					await applyIndentQtyDelta(
+						oldQty,
+						indentIdForQtyAdjust,
+						oldProductId,
+						oldUomId,
+						transaction,
+						qtyAdjustMeta,
+					);
+					await applyIndentQtyDelta(
+						-parseFloat(item.qty),
+						indentIdForQtyAdjust,
+						poItemsObject.product_id,
+						poItemsObject.selected_uom_id,
+						transaction,
+						qtyAdjustMeta,
+					);
+				}
+
 				await purchaseOrderItemsRepository.update(existing, poItemsObject, { transaction });
 			} else {
-				// New item added during update.
+				// New item added during update — submit never accounted for this line, so it
+				// must be deducted from the indent now (mirrors what submit does for the items
+				// that were present at submit time).
+				if (wasSubmitted) {
+					await applyIndentQtyDelta(
+						-parseFloat(item.qty),
+						indentIdForQtyAdjust,
+						poItemsObject.product_id,
+						poItemsObject.selected_uom_id,
+						transaction,
+						qtyAdjustMeta,
+					);
+				}
 				await purchaseOrderItemsRepository.create(poItemsObject, { transaction });
 			}
 		}
@@ -713,6 +779,7 @@ exports.deletePurchaseOrder = async (req) => {
 					item.product_id,
 					item.selected_uom_id ?? null,
 					transaction,
+					{ req, source: 'po_deleted', sourceRefId: purchaseOrder.id },
 				);
 			}
 		}
@@ -744,7 +811,7 @@ exports.deletePurchaseOrder = async (req) => {
 
 // Apply a base-unit delta to every IndentItem row for a product, scaling each row's
 // delta by its own uomSnapshot.qty so that qty_for_purchase_order stays in that row's UOM.
-async function applyIndentQtyDelta(uomDelta, indent_id, product_id, uom_id, transaction) {
+async function applyIndentQtyDelta(uomDelta, indent_id, product_id, uom_id, transaction, meta = {}) {
 	const isBaseUnit = uom_id === null || uom_id === undefined || Number(uom_id) === 0;
 	const row = await IndentItem.findOne({
 		where: {
@@ -756,10 +823,26 @@ async function applyIndentQtyDelta(uomDelta, indent_id, product_id, uom_id, tran
 	});
 	logger.debug("applyIndentQtyDelta", {row});
 	if (!row) return;
+	const previousValue = parseFloat(row.qty_for_purchase_order || 0);
 	await IndentItemRepository.increment(
 		{ qty_for_purchase_order: uomDelta },
 		{ where: { id: row.id }, transaction },
 	);
+	if (meta.source) {
+		await indentQtyLogService.record({
+			req: meta.req,
+			indentItemId: row.id,
+			indentId: indent_id,
+			productId: product_id,
+			field: 'qty_for_purchase_order',
+			delta: uomDelta,
+			previousValue,
+			newValue: previousValue + uomDelta,
+			source: meta.source,
+			sourceRefId: meta.sourceRefId,
+			transaction,
+		});
+	}
 }
 // Exported for short-close.service.js — Short Close approval releases qty back to the indent
 // via this exact function (positive delta), reusing the one lookup/increment logic PO
@@ -1487,6 +1570,7 @@ exports.submitPurchaseOrder = async (req, id) => {
 				item.product_id,
 				item.selected_uom_id ?? null,
 				transaction,
+				{ req, source: 'po_submitted', sourceRefId: po.id },
 			);
 		}
 

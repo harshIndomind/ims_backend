@@ -285,6 +285,46 @@ describe('reissuePendingQuantity', () => {
 		const sentBody = JSON.parse(fetch.mock.calls[0][1].body);
 		expect(sentBody.indents[0].serial_items).toEqual([{ serial_no: 'C', is_issued: 0 }]);
 	});
+
+	it('batch items: re-resolves to whichever batch currently has stock, not the one pinned at indent creation', async () => {
+		// batch_id 55 was the FEFO suggestion at indent-creation time and is now empty (that's
+		// why this item backordered); batch 99 was received later and has stock — verify-stock
+		// only ever checks the batch_id it's handed, so re-issue must swap to 99 itself.
+		const item = makeIndentItem({
+			product_id: 1,
+			stock_type: 'batch',
+			batch_id: 55,
+			qty_issued: 0,
+			balance_indent_qty: 6,
+		});
+		indentRepo.findById.mockResolvedValue(approvedIndent(item));
+
+		fetch.mockResolvedValueOnce({
+			ok: true,
+			status: 200,
+			json: async () => ({
+				data: {
+					batches: [
+						{ id: 55, qty: '0', expiry_date: '2026-01-01' },
+						{ id: 99, qty: '10', expiry_date: '2026-06-01' },
+					],
+				},
+			}),
+		});
+		fetch.mockResolvedValueOnce(vcpJsonResponse([{ product_id: 1, issued_qty: 6, batch_id: 99, issuedSerials: [] }]));
+
+		const req = { cookies: { accessToken: 'tok' }, user: { id: 1 } };
+		const result = await indentService.reissuePendingQuantity(req, 1);
+
+		const sentBody = JSON.parse(fetch.mock.calls[1][1].body);
+		expect(sentBody.indents[0].batch_id).toBe(99);
+
+		expect(item.update).toHaveBeenCalledWith(
+			expect.objectContaining({ balance_indent_qty: 0, batch_id: 99 }),
+			expect.anything(),
+		);
+		expect(result.reissued).toEqual([{ product_id: 1, issued_qty: 6, balance_indent_qty: 0 }]);
+	});
 });
 
 describe('previewReissue', () => {

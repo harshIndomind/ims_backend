@@ -27,6 +27,7 @@ const parseDate = require('../utils/parse-date');
 const crypto = require('crypto');
 const workflowEngine = require('./workflowEngine.service');
 const auditLogService = require('./auditLog.service');
+const indentQtyLogService = require('./indentQtyLog.service');
 const { createWorkflowDocumentService } = require('./workflowDocument.factory');
 // const dataVisibility = require('./dataVisibility.service');
 
@@ -668,6 +669,8 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 			const issuedQty = allocation?.issued_qty || 0;
 			const baseIssuedQty = allocation?.base_issued_qty ?? issuedQty;
 			const purchaseQty = Math.max(0, parseFloat(i.qty || 0) - issuedQty);
+			const previousQtyForPurchaseOrder = parseFloat(i.qty_for_purchase_order || 0);
+			const previousBalanceIndentQty = parseFloat(i.balance_indent_qty || 0);
 
 			await i.update(
 				{
@@ -685,6 +688,31 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 				},
 				{ transaction },
 			);
+
+			await indentQtyLogService.record({
+				req,
+				indentItemId: i.id,
+				indentId: id,
+				productId: i.product_id,
+				field: 'qty_for_purchase_order',
+				delta: purchaseQty - previousQtyForPurchaseOrder,
+				previousValue: previousQtyForPurchaseOrder,
+				newValue: purchaseQty,
+				source: 'indent_approved',
+				transaction,
+			});
+			await indentQtyLogService.record({
+				req,
+				indentItemId: i.id,
+				indentId: id,
+				productId: i.product_id,
+				field: 'balance_indent_qty',
+				delta: purchaseQty - previousBalanceIndentQty,
+				previousValue: previousBalanceIndentQty,
+				newValue: purchaseQty,
+				source: 'indent_approved',
+				transaction,
+			});
 
 			if (i.stock_type === 'serial' && allocation?.issuedSerials?.length > 0) {
 				await IndentSerialRepository.update(
@@ -751,14 +779,59 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 };
 
 /**
+ * A batch-type IndentItem's `batch_id` is pinned to whichever batch was selected (FEFO
+ * suggestion, user-editable) at indent-creation time. verify-stock only ever checks that
+ * one batch's qty — so if that batch was empty (hence the backorder) and stock later
+ * arrives in a *different*, newly-received batch, the pinned batch_id never sees it and
+ * re-issue keeps reporting 0 available forever. Re-resolve to whichever current batch has
+ * stock, FEFO order (soonest expiry first, undated last), same policy as the frontend's
+ * indent-creation suggestion — see docs/architecture/vcp-batch-fifo-fefo-design.
+ */
+async function resolveCurrentBatchIdForReissue(req, productId) {
+	const url = `${VCP_SERVICE_API_BASE_URL}${VCP_SERVICE_PRODUCT_ENDPOINT}/${productId}`;
+	const token = req.cookies.accessToken;
+	const response = await fetch(url, {
+		method: 'GET',
+		// VCP's verifyToken reads req.cookies.accessToken, not the Authorization header —
+		// this is a server-to-server fetch so no cookie jar carries it automatically.
+		headers: { Authorization: `Bearer ${token}`, Cookie: `accessToken=${token}` },
+	});
+	if (!response.ok) {
+		logger.warn('resolveCurrentBatchIdForReissue: product fetch failed', {
+			productId,
+			status: response.status,
+		});
+		return null;
+	}
+
+	const { data } = await response.json();
+	const batches = (data?.batches || []).filter((b) => parseFloat(b.qty || 0) > 0);
+	logger.info('resolveCurrentBatchIdForReissue', {
+		productId,
+		allBatches: (data?.batches || []).map((b) => ({ id: b.id, qty: b.qty, expiry_date: b.expiry_date })),
+		batchesWithStock: batches.map((b) => b.id),
+	});
+	if (batches.length === 0) return null;
+
+	batches.sort((a, b) => {
+		const aTime = a.expiry_date ? new Date(a.expiry_date).getTime() : Infinity;
+		const bTime = b.expiry_date ? new Date(b.expiry_date).getTime() : Infinity;
+		return aTime - bTime;
+	});
+	return batches[0].id;
+}
+
+/**
  * Shared by previewReissue and reissuePendingQuantity: fetches the approved indent and
  * its items still owed (balance_indent_qty > 0), and builds the request payload VCP's
  * verify-stock expects. For serial items, the stored serial_items still includes ones
  * already issued at approval time; VCP's verify-stock requires every serial it's handed
  * to currently be unsold (it throws if any aren't), so only the not-yet-issued serials
- * may be sent here.
+ * may be sent here. For batch items, batch_id is re-resolved to whatever currently has
+ * stock (see resolveCurrentBatchIdForReissue) instead of the stale batch_id captured at
+ * indent creation.
  */
-async function getPendingReissueItems(indentId) {
+async function getPendingReissueItems(req, indentId) {
 	const indent = await fetchIndentForWorkflowAction(indentId);
 
 	if (indent.status !== 'approved') {
@@ -773,13 +846,26 @@ async function getPendingReissueItems(indentId) {
 	);
 
 	// Request exactly what's still owed — VCP decides how much of that is actually available now.
-	const plainPendingItems = pendingItems.map((i) => {
-		const plain = i.get({ plain: true });
-		if (plain.stock_type === 'serial') {
-			plain.serial_items = (plain.serial_items || []).filter((s) => !s.is_issued);
-		}
-		return { ...plain, qty: parseFloat(i.balance_indent_qty) };
-	});
+	const plainPendingItems = await Promise.all(
+		pendingItems.map(async (i) => {
+			const plain = i.get({ plain: true });
+			if (plain.stock_type === 'serial') {
+				plain.serial_items = (plain.serial_items || []).filter((s) => !s.is_issued);
+			}
+			if (plain.stock_type === 'batch') {
+				const originalBatchId = plain.batch_id;
+				const currentBatchId = await resolveCurrentBatchIdForReissue(req, plain.product_id);
+				if (currentBatchId != null) plain.batch_id = currentBatchId;
+				logger.info('getPendingReissueItems: batch resolution', {
+					product_id: plain.product_id,
+					originalBatchId,
+					resolvedBatchId: currentBatchId,
+					finalBatchId: plain.batch_id,
+				});
+			}
+			return { ...plain, qty: parseFloat(i.balance_indent_qty) };
+		}),
+	);
 
 	return { indent, pendingItems, plainPendingItems };
 }
@@ -790,7 +876,7 @@ async function getPendingReissueItems(indentId) {
  * before committing to a re-issue. Mirrors verifyIndent's advisory dry run.
  */
 exports.previewReissue = async (req, indentId) => {
-	const { pendingItems, plainPendingItems } = await getPendingReissueItems(indentId);
+	const { pendingItems, plainPendingItems } = await getPendingReissueItems(req, indentId);
 	if (pendingItems.length === 0) {
 		return { indent_id: indentId, items: [] };
 	}
@@ -828,7 +914,7 @@ exports.previewReissue = async (req, indentId) => {
  * no longer there.
  */
 exports.reissuePendingQuantity = async (req, indentId) => {
-	const { pendingItems, plainPendingItems } = await getPendingReissueItems(indentId);
+	const { pendingItems, plainPendingItems } = await getPendingReissueItems(req, indentId);
 	if (pendingItems.length === 0) {
 		return { indent_id: indentId, reissued: [] };
 	}
@@ -851,13 +937,20 @@ exports.reissuePendingQuantity = async (req, indentId) => {
 			if (newlyIssued <= 0) continue;
 
 			const newlyIssuedBase = parseFloat(allocation?.base_issued_qty ?? allocation?.issued_qty ?? 0);
-			const updatedBalance = parseFloat(item.balance_indent_qty) - newlyIssued;
+			const previousBalance = parseFloat(item.balance_indent_qty);
+			const updatedBalance = previousBalance - newlyIssued;
 			await item.update(
 				{
 					qty_issued: parseFloat(item.qty_issued || 0) + newlyIssued,
 					base_qty_issued: parseFloat(item.base_qty_issued || 0) + newlyIssuedBase,
 					balance_indent_qty: updatedBalance,
-					qty_updated_by_verifier: parseFloat(item.qty_updated_by_verifier || 0) + newlyIssued
+					qty_updated_by_verifier: parseFloat(item.qty_updated_by_verifier || 0) + newlyIssued,
+					// Keep the item's batch_id in sync with whichever batch this re-issue actually
+					// drew from (resolveCurrentBatchIdForReissue may have picked a different, newer
+					// batch than the one recorded at indent creation).
+					...(item.stock_type === 'batch' && allocation?.batch_id != null
+						? { batch_id: allocation.batch_id }
+						: {}),
 				},
 				{ transaction },
 			);
@@ -868,6 +961,19 @@ exports.reissuePendingQuantity = async (req, indentId) => {
 					{ where: { serial_no: { [Op.in]: allocation.issuedSerials } }, transaction },
 				);
 			}
+
+			await indentQtyLogService.record({
+				req,
+				indentItemId: item.id,
+				indentId,
+				productId: item.product_id,
+				field: 'balance_indent_qty',
+				delta: -newlyIssued,
+				previousValue: previousBalance,
+				newValue: updatedBalance,
+				source: 'reissued',
+				transaction,
+			});
 
 			reissued.push({
 				product_id: item.product_id,
