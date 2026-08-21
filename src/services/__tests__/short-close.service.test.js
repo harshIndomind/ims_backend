@@ -248,7 +248,11 @@ describe('approveShortCloseRequest', () => {
 
 		const result = await shortCloseService.approveShortCloseRequest(baseReq(), 900);
 
-		expect(mockApplyIndentQtyDelta).toHaveBeenCalledWith(20, 7, 1, null, mockTransaction);
+		expect(mockApplyIndentQtyDelta).toHaveBeenCalledWith(20, 7, 1, null, mockTransaction, {
+			req: baseReq(),
+			source: 'short_close_released',
+			sourceRefId: 900,
+		});
 		expect(mockApplyIndentQtyDeltaForWorkOrder).not.toHaveBeenCalled();
 		expect(locked.update).toHaveBeenCalledWith(
 			expect.objectContaining({ status: 'approved' }),
@@ -285,7 +289,11 @@ describe('approveShortCloseRequest', () => {
 
 		await shortCloseService.approveShortCloseRequest(baseReq(), 900);
 
-		expect(mockApplyIndentQtyDeltaForWorkOrder).toHaveBeenCalledWith(20, 9, 1, mockTransaction);
+		expect(mockApplyIndentQtyDeltaForWorkOrder).toHaveBeenCalledWith(20, 9, 1, mockTransaction, {
+			req: baseReq(),
+			source: 'short_close_released',
+			sourceRefId: 900,
+		});
 		expect(mockApplyIndentQtyDelta).not.toHaveBeenCalled();
 	});
 

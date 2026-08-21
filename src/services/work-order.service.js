@@ -5,6 +5,7 @@ const {
 	workOrderItemsRepository,
 	IndentItemRepository,
 } = require('../repository/index');
+const paymentRequisitionAnalyticsRepo = require('../repository/payment-requisition-analytics.repository');
 const logger = require('../utils/logger');
 const { sequelize } = require('../models/index');
 const { Op } = require('sequelize');
@@ -12,6 +13,7 @@ const {
 	WorkOrder,
 	WorkOrderItem,
 	Indent,
+	IndentItem,
 	User,
 	organization,
 	Role,
@@ -23,6 +25,7 @@ const {
 } = require('../models/index');
 const workflowEngine = require('./workflowEngine.service');
 const auditLogService = require('./auditLog.service');
+const indentQtyLogService = require('./indentQtyLog.service');
 const { createWorkflowDocumentService } = require('./workflowDocument.factory');
 const orderDispatchService = require('./orderDispatch.service');
 const { generateDocumentNumber } = require('./document-numbering.service');
@@ -69,11 +72,29 @@ const isServiceItem = (item) =>
 // lookup at every WO create/update/delete call site below). Exported so short-close.service.js
 // can reuse this exact lookup/increment when releasing qty back to the indent on WO Short
 // Close approval, rather than re-implementing it.
-async function applyIndentQtyDeltaForWorkOrder(qtyDelta, indent_id, product_id, transaction) {
+async function applyIndentQtyDeltaForWorkOrder(qtyDelta, indent_id, product_id, transaction, meta = {}) {
+	const row = await IndentItem.findOne({ where: { indent_id, product_id }, transaction });
+	if (!row) return;
+	const previousValue = parseFloat(row.qty_for_purchase_order || 0);
 	await IndentItemRepository.increment(
 		{ qty_for_purchase_order: qtyDelta },
 		{ where: { indent_id, product_id }, transaction },
 	);
+	if (meta.source) {
+		await indentQtyLogService.record({
+			req: meta.req,
+			indentItemId: row.id,
+			indentId: indent_id,
+			productId: product_id,
+			field: 'qty_for_purchase_order',
+			delta: qtyDelta,
+			previousValue,
+			newValue: previousValue + qtyDelta,
+			source: meta.source,
+			sourceRefId: meta.sourceRefId,
+			transaction,
+		});
+	}
 }
 exports.applyIndentQtyDeltaForWorkOrder = applyIndentQtyDeltaForWorkOrder;
 
@@ -239,7 +260,11 @@ exports.createWorkOrder = async (req) => {
 			await workOrderItemsRepository.create(woItemObject, { transaction });
 
 			if (!isServiceItem(item)) {
-				await applyIndentQtyDeltaForWorkOrder(-parseFloat(item.qty), indent_id, item.product_id, transaction);
+				await applyIndentQtyDeltaForWorkOrder(-parseFloat(item.qty), indent_id, item.product_id, transaction, {
+					req,
+					source: 'wo_created',
+					sourceRefId: workOrder.id,
+				});
 			}
 		}
 
@@ -392,7 +417,11 @@ exports.updateWorkOrder = async (req) => {
 			}
 
 			if (!isServiceItem(item)) {
-				await applyIndentQtyDeltaForWorkOrder(parseFloat(existingItem.qty), indent_id, item.product_id, transaction);
+				await applyIndentQtyDeltaForWorkOrder(parseFloat(existingItem.qty), indent_id, item.product_id, transaction, {
+					req,
+					source: 'wo_updated',
+					sourceRefId: workOrder.id,
+				});
 			}
 
 			await workOrderItemsRepository.update(existingItem, woItemObject, {
@@ -400,7 +429,11 @@ exports.updateWorkOrder = async (req) => {
 			});
 
 			if (!isServiceItem(item)) {
-				await applyIndentQtyDeltaForWorkOrder(-parseFloat(item.qty), indent_id, item.product_id, transaction);
+				await applyIndentQtyDeltaForWorkOrder(-parseFloat(item.qty), indent_id, item.product_id, transaction, {
+					req,
+					source: 'wo_updated',
+					sourceRefId: workOrder.id,
+				});
 			}
 		}
 
@@ -532,7 +565,23 @@ exports.getAllWorkOrders = async (req) => {
 
 	const workOrders = await workOrderRepository.findAll(findOptions);
 
-	const response = workOrders.rows.map((wo) => wo.get({ plain: true }));
+	let response = workOrders.rows.map((wo) => wo.get({ plain: true }));
+
+	// See purchase-order.service.js getAllPurchaseOrders for why this is a
+	// batched query here rather than a denormalized column.
+	const orderIds = response.map((wo) => wo.id);
+	const retentionByOrderId = await paymentRequisitionAnalyticsRepo.getRetentionSummaryBulk({
+		idField: 'wo_id',
+		ids: orderIds,
+		org_id,
+	});
+	response = response.map((wo) => ({
+		...wo,
+		retention_held: retentionByOrderId[wo.id]?.retention_held || 0,
+		retention_released: retentionByOrderId[wo.id]?.retention_released || 0,
+		retention_balance: retentionByOrderId[wo.id]?.retention_balance || 0,
+	}));
+
 	return { rows: response, count: workOrders.count };
 };
 
@@ -608,7 +657,11 @@ exports.deleteWorkOrder = async (req) => {
 
 		for (const item of workOrder.items) {
 			if (isServiceItem(item)) continue;
-			await applyIndentQtyDeltaForWorkOrder(parseFloat(item.qty), workOrder.indent_id, item.product_id, transaction);
+			await applyIndentQtyDeltaForWorkOrder(parseFloat(item.qty), workOrder.indent_id, item.product_id, transaction, {
+				req,
+				source: 'wo_deleted',
+				sourceRefId: workOrder.id,
+			});
 		}
 
 		await PaymentRequisition.destroy({ where: { wo_id: id }, transaction });
