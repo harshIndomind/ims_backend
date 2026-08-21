@@ -5,6 +5,7 @@ const {
 	workOrderItemsRepository,
 	IndentItemRepository,
 } = require('../repository/index');
+const paymentRequisitionAnalyticsRepo = require('../repository/payment-requisition-analytics.repository');
 const logger = require('../utils/logger');
 const { sequelize } = require('../models/index');
 const { Op } = require('sequelize');
@@ -564,7 +565,23 @@ exports.getAllWorkOrders = async (req) => {
 
 	const workOrders = await workOrderRepository.findAll(findOptions);
 
-	const response = workOrders.rows.map((wo) => wo.get({ plain: true }));
+	let response = workOrders.rows.map((wo) => wo.get({ plain: true }));
+
+	// See purchase-order.service.js getAllPurchaseOrders for why this is a
+	// batched query here rather than a denormalized column.
+	const orderIds = response.map((wo) => wo.id);
+	const retentionByOrderId = await paymentRequisitionAnalyticsRepo.getRetentionSummaryBulk({
+		idField: 'wo_id',
+		ids: orderIds,
+		org_id,
+	});
+	response = response.map((wo) => ({
+		...wo,
+		retention_held: retentionByOrderId[wo.id]?.retention_held || 0,
+		retention_released: retentionByOrderId[wo.id]?.retention_released || 0,
+		retention_balance: retentionByOrderId[wo.id]?.retention_balance || 0,
+	}));
+
 	return { rows: response, count: workOrders.count };
 };
 

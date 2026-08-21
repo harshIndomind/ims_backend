@@ -77,7 +77,7 @@ exports.getDeductionBreakdownByPoWo = async ({ idField, id, org_id }) => {
  *   retention_released — total from RETENTION_RELEASE requisitions (approved)
  *   retention_balance  — held minus released (still locked with org)
  */
-exports.getRetentionSummary = async ({ idField, id, org_id }) => {
+exports.getRetentionSummary = async ({ idField, id, org_id, transaction }) => {
 	const held = await sequelize.query(
 		`
 		SELECT COALESCE(SUM(d.amount), 0) AS retention_held
@@ -89,7 +89,7 @@ exports.getRetentionSummary = async ({ idField, id, org_id }) => {
 		  AND pr.requisition_type  = 'REGULAR'
 		  AND d.deduction_type     = 'RETENTION'
 		`,
-		{ replacements: { id, org_id }, type: QueryTypes.SELECT, plain: true },
+		{ replacements: { id, org_id }, type: QueryTypes.SELECT, plain: true, transaction },
 	);
 
 	const released = await sequelize.query(
@@ -101,7 +101,7 @@ exports.getRetentionSummary = async ({ idField, id, org_id }) => {
 		  AND status           = 'APPROVED'
 		  AND requisition_type = 'RETENTION_RELEASE'
 		`,
-		{ replacements: { id, org_id }, type: QueryTypes.SELECT, plain: true },
+		{ replacements: { id, org_id }, type: QueryTypes.SELECT, plain: true, transaction },
 	);
 
 	const retentionHeld = parseFloat(held?.retention_held || 0);
@@ -112,6 +112,65 @@ exports.getRetentionSummary = async ({ idField, id, org_id }) => {
 		retention_released: retentionReleased,
 		retention_balance: Math.max(0, retentionHeld - retentionReleased),
 	};
+};
+
+/**
+ * Same held/released/balance computation as getRetentionSummary, but for many
+ * PO/WO ids at once (one GROUP BY query each instead of N single-id queries) —
+ * built for list pages that need a per-row retention indicator without an
+ * N+1 query per row.
+ *
+ * Returns a plain object keyed by id: { [id]: { retention_held, retention_released, retention_balance } }.
+ * Ids with no retention activity at all are simply absent from the result —
+ * callers should default to zeros.
+ */
+exports.getRetentionSummaryBulk = async ({ idField, ids, org_id }) => {
+	if (!ids || ids.length === 0) return {};
+
+	const heldRows = await sequelize.query(
+		`
+		SELECT pr.${idField} AS order_id, COALESCE(SUM(d.amount), 0) AS retention_held
+		FROM PaymentRequisitionDeductions d
+		INNER JOIN PaymentRequisitions pr ON pr.id = d.payment_requisition_id
+		WHERE pr.${idField}        IN (:ids)
+		  AND pr.org_id            = :org_id
+		  AND pr.status           != 'REJECTED'
+		  AND pr.requisition_type  = 'REGULAR'
+		  AND d.deduction_type     = 'RETENTION'
+		GROUP BY pr.${idField}
+		`,
+		{ replacements: { ids, org_id }, type: QueryTypes.SELECT },
+	);
+
+	const releasedRows = await sequelize.query(
+		`
+		SELECT ${idField} AS order_id, COALESCE(SUM(gross_amount), 0) AS retention_released
+		FROM PaymentRequisitions
+		WHERE ${idField}       IN (:ids)
+		  AND org_id           = :org_id
+		  AND status           = 'APPROVED'
+		  AND requisition_type = 'RETENTION_RELEASE'
+		GROUP BY ${idField}
+		`,
+		{ replacements: { ids, org_id }, type: QueryTypes.SELECT },
+	);
+
+	const result = {};
+	for (const row of heldRows) {
+		result[row.order_id] = { retention_held: parseFloat(row.retention_held) || 0, retention_released: 0 };
+	}
+	for (const row of releasedRows) {
+		result[row.order_id] = {
+			retention_held: result[row.order_id]?.retention_held || 0,
+			retention_released: parseFloat(row.retention_released) || 0,
+		};
+	}
+	for (const id of Object.keys(result)) {
+		const { retention_held, retention_released } = result[id];
+		result[id].retention_balance = Math.max(0, retention_held - retention_released);
+	}
+
+	return result;
 };
 
 /**

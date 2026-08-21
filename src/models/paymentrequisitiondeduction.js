@@ -10,6 +10,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'payment_requisition_id',
 				as: 'paymentRequisition',
 			});
+			PaymentRequisitionDeduction.hasOne(models.TdsLiability, {
+				foreignKey: 'payment_requisition_deduction_id',
+				as: 'tdsLiability',
+			});
 		}
 	}
 

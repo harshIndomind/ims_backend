@@ -6,6 +6,7 @@ const {
 	purchaseOrderSerialItemsRepository,
 	IndentItemRepository,
 } = require('../repository/index');
+const paymentRequisitionAnalyticsRepo = require('../repository/payment-requisition-analytics.repository');
 const logger = require('../utils/logger');
 const { sequelize } = require('../models/index');
 const { Op, where } = require('sequelize');
@@ -642,6 +643,23 @@ exports.getAllPurchaseOrders = async (req) => {
 			};
 		});
 	}
+
+	// Retention held/released is only ever computed from PaymentRequisitionDeductions/
+	// PaymentRequisitions (single source of truth, no denormalized column to drift out
+	// of sync) — fetched here in one batched query per page load rather than a stored
+	// column, since it only needs to be fresh at list-view time, not on every write.
+	const orderIds = response.map((po) => po.id);
+	const retentionByOrderId = await paymentRequisitionAnalyticsRepo.getRetentionSummaryBulk({
+		idField: 'po_id',
+		ids: orderIds,
+		org_id,
+	});
+	response = response.map((po) => ({
+		...po,
+		retention_held: retentionByOrderId[po.id]?.retention_held || 0,
+		retention_released: retentionByOrderId[po.id]?.retention_released || 0,
+		retention_balance: retentionByOrderId[po.id]?.retention_balance || 0,
+	}));
 
 	return { rows: response, count: purchaseOrders.count };
 };

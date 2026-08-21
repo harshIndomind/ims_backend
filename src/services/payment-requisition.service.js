@@ -8,11 +8,15 @@ const {
 	organization,
 	Role,
 	CostCenter,
+	TdsLiability,
 } = require('../models/index');
 const { Op, fn, col, literal } = require('sequelize');
 const paymentRequisitionRepo = require('../repository/payment-requisition.repository');
 const deductionRepo = require('../repository/payment-requisition-deduction.repository');
 const analyticsRepo = require('../repository/payment-requisition-analytics.repository');
+const tdsLiabilityRepo = require('../repository/tds-liability.repository');
+const tdsLiabilityService = require('./tds-liability.service');
+const auditLogService = require('./auditLog.service');
 const AppError = require('../utils/AppError');
 const logger = require('../utils/logger');
 const { StatusCodes } = require('http-status-codes');
@@ -22,19 +26,39 @@ const fs = require('fs');
 const path = require('path');
 const { BASE_URL } = require('../config/serverConfig');
 const fetchPermissions = require('../helpers/fetchPermissions');
+const money = require('../utils/money');
+const { getTaxableRatio } = require('../utils/taxable-ratio.util');
+
+const TDS_DEDUCTION_TYPES = ['TDS', 'GST_TDS', 'WCT'];
+
+// Deduction types whose amount, when driven by a percentage, must be computed
+// on the taxable (pre-GST) slice of gross rather than gross itself — TDS
+// under the Income Tax Act (CBDT Circular 23/2017) and GST-TDS under Section
+// 51 CGST Act are both legally deducted on the value excluding GST when GST
+// is shown separately. WCT is deliberately excluded: it's a pre-GST,
+// state-varying concept without a standardized taxable-value convention, so
+// it keeps the old gross-based behavior.
+const TAXABLE_BASE_DEDUCTION_TYPES = ['TDS', 'GST_TDS'];
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 /**
- * Validates an array of deduction DTOs and returns the normalized rows.
+ * Validates an array of deduction DTOs and returns the normalized rows
+ * (still missing payment_requisition_id — callers attach that once the
+ * requisition's id is known, see call sites).
  *
- * Each deduction must have: deduction_type (required), amount (required, > 0).
- * percentage is optional — if provided it is stored as-is for reference; the
- * caller is responsible for computing amount from it before passing here.
+ * Each deduction must have: deduction_type (required), amount (required, > 0)
+ * unless it's a percentage-driven TDS/GST_TDS line, in which case amount is
+ * recomputed server-side from `gross * taxableRatio * percentage / 100` and
+ * whatever the client sent is discarded — the client is not trusted to get
+ * the taxable-base math right (or to not tamper with it). Other deduction
+ * types (RETENTION, WCT, etc.) still trust the client-provided amount even
+ * when a percentage is present, since those aren't tax computations with a
+ * single legally-mandated base.
  */
-function normalizeDeductions(deductions = [], payment_requisition_id) {
+function normalizeDeductions(deductions = [], { gross, taxableRatio = 1 } = {}) {
 	const VALID_TYPES = ['RETENTION', 'TDS', 'SECURITY_DEPOSIT', 'ADVANCE_RECOVERY', 'LD', 'GST_TDS', 'WCT', 'OTHER'];
 
 	return deductions.map((d, i) => {
@@ -44,15 +68,26 @@ function normalizeDeductions(deductions = [], payment_requisition_id) {
 				StatusCodes.UNPROCESSABLE_ENTITY,
 			);
 		}
-		const amount = parseFloat(d.amount);
+
+		const percentage = d.percentage != null ? parseFloat(d.percentage) : null;
+		const isTaxableBaseType = TAXABLE_BASE_DEDUCTION_TYPES.includes(d.deduction_type);
+
+		let amount;
+		if (isTaxableBaseType && percentage != null && percentage > 0 && gross != null) {
+			const taxableBase = money.round2(gross * taxableRatio);
+			amount = money.round2(taxableBase * (percentage / 100));
+		} else {
+			amount = parseFloat(d.amount);
+		}
+
 		if (isNaN(amount) || amount < 0) {
 			throw new AppError(`Deduction[${i}]: amount must be a non-negative number`, StatusCodes.UNPROCESSABLE_ENTITY);
 		}
+
 		return {
-			payment_requisition_id,
 			deduction_type: d.deduction_type,
 			deduction_name: d.deduction_name || d.deduction_type,
-			percentage: d.percentage != null ? parseFloat(d.percentage) : null,
+			percentage,
 			amount,
 			remarks: d.remarks || null,
 		};
@@ -72,7 +107,7 @@ function sumDeductions(deductions = []) {
  * RETENTION_RELEASE requisitions add back the released amount as positive cash.
  */
 async function syncPoWoPaymentFields(Model, id, org_id, amountDelta, transaction) {
-	const record = await Model.findOne({ where: { id, org_id }, transaction });
+	const record = await Model.findOne({ where: { id, org_id }, transaction, lock: transaction.LOCK.UPDATE });
 	if (!record) return;
 
 	const grandTotal = parseFloat(record.grandTotal) || 0;
@@ -105,18 +140,93 @@ async function syncPoWoPaymentFields(Model, id, org_id, amountDelta, transaction
 }
 
 /**
- * Returns the effective "cash paid" amount for syncPoWoPaymentFields.
- * For REGULAR requisitions this is net_payable (gross minus all deductions).
- * For RETENTION_RELEASE this is gross_amount (pure positive cash back).
+ * Returns the amount that should move PO/WO.totalPaid for a REGULAR
+ * requisition, or null if this requisition type shouldn't touch PO/WO totals
+ * at all.
+ *
+ * This is deliberately gross_amount, not net_payable. totalPaid/remainingAmount
+ * answer "how much of this PO/WO's value has been requisitioned" — that's a
+ * procurement/budget question, not a treasury one. gross_amount already
+ * accounts for the full requisitioned value regardless of how it later splits
+ * between vendor cash, TDS liability, and retention hold, so once 100% of
+ * gross has been requisitioned the PO/WO correctly reads as fully processed.
+ * Using net_payable instead (the actual cash sent to the vendor) leaves a
+ * permanent phantom "outstanding" balance equal to the cumulative TDS —
+ * remainingAmount can never reach zero on any order that has TDS deducted.
+ *
+ * RETENTION_RELEASE requisitions return null: the retention they release was
+ * already counted in gross_amount the first time it was withheld, so adding
+ * the release amount again here would double-count it against grandTotal.
+ * That cash event is tracked separately via the retention held/released/
+ * balance summary (payment-requisition-analytics.repository.js), not via
+ * PO/WO.totalPaid.
  */
-function effectivePaidAmount(requisition) {
-	if (requisition.requisition_type === 'RETENTION_RELEASE') {
-		return parseFloat(requisition.gross_amount) || 0;
+function poWoSyncAmount(requisition) {
+	if (requisition.requisition_type === 'RETENTION_RELEASE') return null;
+	const gross = parseFloat(requisition.gross_amount);
+	if (!isNaN(gross)) return gross;
+	// Fall back to legacy requisition_amount for old rows that predate gross_amount
+	return parseFloat(requisition.requisition_amount) || 0;
+}
+
+/**
+ * Validates retention-related caps against a locked PO/WO row and returns
+ * nothing (throws AppError on violation). Shared by createPaymentRequisition
+ * (both REGULAR-with-retention and RETENTION_RELEASE) and addDeduction, so
+ * every entry point that can add a RETENTION deduction or release retention
+ * enforces the same cap under the same row lock — closes the gap where
+ * addDeduction used to bypass the cap entirely.
+ *
+ * Must be called with a transaction that has already taken
+ * `lock: transaction.LOCK.UPDATE` on the PO/WO row (via the caller loading
+ * `order`), so concurrent requisitions against the same PO/WO serialize here.
+ */
+async function validateRetentionCap({ requisitionType, order, idField, orderId, org_id, newRetentionAmt, transaction }) {
+	const cap = parseFloat(order?.retention_amount) || 0;
+	if (cap <= 0 && requisitionType !== 'RETENTION_RELEASE') return;
+
+	const summary = await analyticsRepo.getRetentionSummary({ idField, id: orderId, org_id, transaction });
+	const alreadyHeld = parseFloat(summary.retention_held) || 0;
+	const alreadyReleased = parseFloat(summary.retention_released) || 0;
+	const balance = Math.max(0, alreadyHeld - alreadyReleased);
+
+	if (requisitionType === 'RETENTION_RELEASE') {
+		if (money.gt(newRetentionAmt, balance)) {
+			throw new AppError(
+				`Cannot release ₹${newRetentionAmt.toFixed(2)}. Retention balance is only ₹${balance.toFixed(2)}.`,
+				StatusCodes.UNPROCESSABLE_ENTITY,
+			);
+		}
+		return;
 	}
-	// Fall back to legacy total_amount for old rows that predate net_payable
-	const netPayable = parseFloat(requisition.net_payable);
-	if (!isNaN(netPayable) && netPayable > 0) return netPayable;
-	return parseFloat(requisition.total_amount) || 0;
+
+	if (newRetentionAmt > 0 && money.gt(money.sum([alreadyHeld, newRetentionAmt]), cap)) {
+		throw new AppError(
+			`Retention cap exceeded. Contract cap: ₹${cap.toFixed(2)}, Already held: ₹${alreadyHeld.toFixed(2)}, New deduction: ₹${newRetentionAmt.toFixed(2)}. Max allowed: ₹${Math.max(0, cap - alreadyHeld).toFixed(2)}.`,
+			StatusCodes.UNPROCESSABLE_ENTITY,
+		);
+	}
+}
+
+/**
+ * Blocks deduction mutation (bulk replace / per-line update / delete) once any
+ * non-cancelled TdsLiability has been generated for this requisition — those
+ * deduction rows are now the source of a real financial liability record, and
+ * editing/deleting them out from under it would silently desync the two.
+ * (addDeduction is exempt: adding a brand-new line never touches an existing
+ * liability-backed row.)
+ */
+async function assertDeductionsMutable(requisitionId, transaction) {
+	const count = await TdsLiability.count({
+		where: { payment_requisition_id: requisitionId, status: { [Op.ne]: 'CANCELLED' } },
+		transaction,
+	});
+	if (count > 0) {
+		throw new AppError(
+			'This requisition has TDS liabilities on record and its existing deductions can no longer be edited or removed directly. Add a new deduction line instead, or reverse the relevant TDS settlement first.',
+			StatusCodes.CONFLICT,
+		);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -190,35 +300,49 @@ exports.createPaymentRequisition = async (req, payload) => {
 		} = payload;
 
 		const gross = parseFloat(grossAmount ?? requisitionAmount ?? 0);
-		const totalDed = sumDeductions(deductions);
+		const fedBy = { id: user.id, name: user.name, email: user.email };
+		const po_id = requisitionAgainst === 'PO' && poWoId ? Number(poWoId) : null;
+		const wo_id = requisitionAgainst === 'WO' && poWoId ? Number(poWoId) : null;
+
+		// Deduction amounts are normalized (and TDS/GST_TDS recomputed against the
+		// taxable base) before totalDed/netPayable are derived from them, so the
+		// requisition's own stored totals always agree with what actually gets
+		// inserted into PaymentRequisitionDeductions.
+		let taxableRatio = 1;
+		if ((po_id || wo_id) && deductions.some((d) => TAXABLE_BASE_DEDUCTION_TYPES.includes(d.deduction_type))) {
+			taxableRatio = await getTaxableRatio({ PurchaseOrder, WorkOrder, po_id, wo_id, transaction });
+		}
+		const normalizedDeductions = normalizeDeductions(deductions, { gross, taxableRatio });
+		const totalDed = sumDeductions(normalizedDeductions);
 		const netPayable = gross - totalDed;
 
 		if (netPayable < 0) {
 			throw new AppError('total_deductions exceeds gross_amount', StatusCodes.UNPROCESSABLE_ENTITY);
 		}
 
-		const fedBy = { id: user.id, name: user.name, email: user.email };
-		const po_id = requisitionAgainst === 'PO' && poWoId ? Number(poWoId) : null;
-		const wo_id = requisitionAgainst === 'WO' && poWoId ? Number(poWoId) : null;
-
-		// Validate retention cap — prevent cumulative over-deduction across requisitions
-		const retentionDeds = deductions.filter((d) => d.deduction_type === 'RETENTION');
-		if (retentionDeds.length > 0 && (po_id || wo_id)) {
-			const newRetentionAmt = retentionDeds.reduce((s, d) => s + (parseFloat(d.amount) || 0), 0);
+		// Validate retention cap / release balance under a row lock — prevents cumulative
+		// over-deduction or over-release across concurrent requisitions on the same PO/WO.
+		const retentionDeds = normalizedDeductions.filter((d) => d.deduction_type === 'RETENTION');
+		const newRetentionAmt = money.sum(retentionDeds.map((d) => d.amount));
+		if ((requisitionType === 'RETENTION_RELEASE' || newRetentionAmt > 0) && (po_id || wo_id)) {
 			const orderId = po_id || wo_id;
 			const OrderModel = po_id ? PurchaseOrder : WorkOrder;
-			const order = await OrderModel.findByPk(orderId, { attributes: ['retention_amount'] });
-			if (order && parseFloat(order.retention_amount) > 0) {
-				const idField = po_id ? 'po_id' : 'wo_id';
-				const summary = await analyticsRepo.getRetentionSummary({ idField, id: orderId, org_id: user.org_id });
-				const alreadyHeld = parseFloat(summary.retention_held) || 0;
-				const cap = parseFloat(order.retention_amount);
-				if (alreadyHeld + newRetentionAmt > cap + 0.005) {
-					throw new AppError(
-						`Retention cap exceeded. Contract cap: ₹${cap.toFixed(2)}, Already held: ₹${alreadyHeld.toFixed(2)}, New deduction: ₹${newRetentionAmt.toFixed(2)}. Max allowed: ₹${Math.max(0, cap - alreadyHeld).toFixed(2)}.`,
-						StatusCodes.UNPROCESSABLE_ENTITY,
-					);
-				}
+			const idField = po_id ? 'po_id' : 'wo_id';
+			const order = await OrderModel.findByPk(orderId, {
+				attributes: ['retention_amount'],
+				transaction,
+				lock: transaction.LOCK.UPDATE,
+			});
+			if (order) {
+				await validateRetentionCap({
+					requisitionType,
+					order,
+					idField,
+					orderId,
+					org_id: user.org_id,
+					newRetentionAmt: requisitionType === 'RETENTION_RELEASE' ? gross : newRetentionAmt,
+					transaction,
+				});
 			}
 		}
 
@@ -255,6 +379,8 @@ exports.createPaymentRequisition = async (req, payload) => {
 				budget_id: budgetId || null,
 				fed_by_id: user.id,
 				fed_by: fedBy,
+				created_by_id: user.id,
+				updated_by_id: user.id,
 				payment_date: paymentDate || null,
 				remark: remark || null,
 				term_condition: termCondition || null,
@@ -271,10 +397,35 @@ exports.createPaymentRequisition = async (req, payload) => {
 		await paymentRequisitionRepo.updateById(requisition.id, { requisition_no: requisitionNo }, { transaction });
 
 		// Persist deduction line-items
-		if (deductions.length > 0) {
-			const rows = normalizeDeductions(deductions, requisition.id);
+		if (normalizedDeductions.length > 0) {
+			const rows = normalizedDeductions.map((d) => ({ ...d, payment_requisition_id: requisition.id }));
 			await deductionRepo.bulkCreate(rows, { transaction });
 		}
+
+		// A requisition can in principle be created pre-approved (status passed
+		// directly) rather than approved later via updatePaymentRequisition — keep
+		// the PO/WO sync and TDS liability creation consistent regardless of which
+		// path took it there.
+		const finalStatus = status || 'PENDING';
+		if (finalStatus === 'APPROVED') {
+			const parentId = po_id || wo_id;
+			const paidAmount = poWoSyncAmount({ requisition_type: requisitionType, gross_amount: gross });
+			if (parentId && paidAmount !== null) {
+				const ParentModel = po_id ? PurchaseOrder : WorkOrder;
+				await syncPoWoPaymentFields(ParentModel, parentId, user.org_id, paidAmount, transaction);
+			}
+			const freshRequisition = await paymentRequisitionRepo.findById(requisition.id, { transaction });
+			await tdsLiabilityService.createLiabilitiesForApprovedRequisition(req, freshRequisition, transaction);
+		}
+
+		await auditLogService.record({
+			req,
+			entityType: 'payment_requisition',
+			entityId: requisition.id,
+			action: 'create',
+			newState: { requisition_no: requisitionNo, gross_amount: gross, total_deductions: totalDed, net_payable: netPayable, status: finalStatus },
+			transaction,
+		});
 
 		await transaction.commit();
 
@@ -340,11 +491,16 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 
 	try {
 		const { org_id } = req.user;
-		const existing = await paymentRequisitionRepo.findById(id);
 
-		if (!existing || existing.org_id !== org_id) {
+		// Lock the requisition row itself first so two concurrent updates (e.g. a
+		// double-click approve, or two approvers racing) on the same PR serialize
+		// instead of both reading the same "not yet approved" oldStatus and both
+		// applying their PO/WO sync / TDS liability creation.
+		const lockedRow = await PaymentRequisition.findOne({ where: { id }, transaction, lock: transaction.LOCK.UPDATE });
+		if (!lockedRow || lockedRow.org_id !== org_id) {
 			throw new AppError('Payment requisition not found', StatusCodes.NOT_FOUND);
 		}
+		const existing = await paymentRequisitionRepo.findById(id, { transaction });
 
 		const {
 			requisitionAgainst,
@@ -378,7 +534,34 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 		} = payload;
 
 		const gross = parseFloat(grossAmount ?? requisitionAmount ?? existing.gross_amount ?? existing.requisition_amount ?? 0);
-		const dedList = deductions !== undefined ? deductions : null;
+		const rawDedList = deductions !== undefined ? deductions : null;
+		const finalRequisitionType = requisitionType || existing.requisition_type;
+
+		// Deduction rows already backing a TDS liability are frozen — bulk-replacing
+		// them here would either silently desync the liability or hit the DB's
+		// RESTRICT FK; fail with a clear message instead.
+		if (rawDedList !== null) {
+			await assertDeductionsMutable(id, transaction);
+		}
+
+		const po_id = (requisitionAgainst || existing.requisition_against) === 'PO' && (poWoId ?? existing.po_id)
+			? Number(poWoId ?? existing.po_id)
+			: null;
+		const wo_id = (requisitionAgainst || existing.requisition_against) === 'WO' && (poWoId ?? existing.wo_id)
+			? Number(poWoId ?? existing.wo_id)
+			: null;
+
+		// Same normalize-before-totaling flow as createPaymentRequisition — see its
+		// comment for why (keeps the requisition's own stored totals in agreement
+		// with what's actually inserted into PaymentRequisitionDeductions).
+		let dedList = null;
+		if (rawDedList !== null) {
+			let taxableRatio = 1;
+			if ((po_id || wo_id) && rawDedList.some((d) => TAXABLE_BASE_DEDUCTION_TYPES.includes(d.deduction_type))) {
+				taxableRatio = await getTaxableRatio({ PurchaseOrder, WorkOrder, po_id, wo_id, transaction });
+			}
+			dedList = normalizeDeductions(rawDedList, { gross, taxableRatio });
+		}
 		const totalDed = dedList !== null ? sumDeductions(dedList) : parseFloat(existing.total_deductions || 0);
 		const netPayable = gross - totalDed;
 
@@ -407,12 +590,66 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 			authorized_at: isStatusTransition ? new Date() : existing.authorized_at,
 		};
 
-		const po_id = (requisitionAgainst || existing.requisition_against) === 'PO' && (poWoId ?? existing.po_id)
-			? Number(poWoId ?? existing.po_id)
-			: null;
-		const wo_id = (requisitionAgainst || existing.requisition_against) === 'WO' && (poWoId ?? existing.wo_id)
-			? Number(poWoId ?? existing.wo_id)
-			: null;
+		const oldStatus = existing.status;
+		const newStatus = approverOnlyFields.status;
+
+		// Re-validate the retention cap / release balance if this edit changed the
+		// deduction lines and the requisition still isn't rejected. The "already
+		// held" total from the DB still includes this requisition's own prior
+		// RETENTION amount (its rows aren't replaced until further down), so that
+		// prior amount is subtracted out before comparing against the new one —
+		// otherwise editing a retention line's amount would double-count it.
+		if (dedList !== null && (po_id || wo_id) && newStatus !== 'REJECTED') {
+			const retentionDeds = dedList.filter((d) => d.deduction_type === 'RETENTION');
+			const newRetentionAmt = money.sum(retentionDeds.map((d) => d.amount));
+			if (finalRequisitionType === 'RETENTION_RELEASE' || newRetentionAmt > 0) {
+				const orderId = po_id || wo_id;
+				const OrderModel = po_id ? PurchaseOrder : WorkOrder;
+				const idField = po_id ? 'po_id' : 'wo_id';
+				const order = await OrderModel.findByPk(orderId, {
+					attributes: ['retention_amount'],
+					transaction,
+					lock: transaction.LOCK.UPDATE,
+				});
+				if (order) {
+					const cap = parseFloat(order.retention_amount) || 0;
+					const summary = await analyticsRepo.getRetentionSummary({ idField, id: orderId, org_id, transaction });
+					const priorOwnRetention =
+						existing.requisition_type === 'REGULAR'
+							? money.sum((existing.deductions || []).filter((d) => d.deduction_type === 'RETENTION').map((d) => d.amount))
+							: 0;
+					const alreadyHeld = Math.max(0, money.round2((parseFloat(summary.retention_held) || 0) - priorOwnRetention));
+					const alreadyReleased = parseFloat(summary.retention_released) || 0;
+					const balance = Math.max(0, money.round2(alreadyHeld - alreadyReleased));
+
+					if (finalRequisitionType === 'RETENTION_RELEASE') {
+						if (money.gt(gross, balance)) {
+							throw new AppError(
+								`Cannot release ₹${gross.toFixed(2)}. Retention balance is only ₹${balance.toFixed(2)}.`,
+								StatusCodes.UNPROCESSABLE_ENTITY,
+							);
+						}
+					} else if (newRetentionAmt > 0 && money.gt(money.sum([alreadyHeld, newRetentionAmt]), cap)) {
+						throw new AppError(
+							`Retention cap exceeded. Contract cap: ₹${cap.toFixed(2)}, Already held: ₹${alreadyHeld.toFixed(2)}, New deduction: ₹${newRetentionAmt.toFixed(2)}.`,
+							StatusCodes.UNPROCESSABLE_ENTITY,
+						);
+					}
+				}
+			}
+		}
+
+		// Block reversing an APPROVED requisition once any TDS liability it
+		// generated has already been (partially) settled — that money has left
+		// the org's account and must be unwound via settlement reversal first.
+		if (oldStatus === 'APPROVED' && newStatus !== 'APPROVED' && isStatusTransition) {
+			await tdsLiabilityService.cancelLiabilitiesForRequisition(
+				req,
+				id,
+				remark || `Requisition status changed from APPROVED to ${newStatus}`,
+				transaction,
+			);
+		}
 
 		await paymentRequisitionRepo.updateById(
 			id,
@@ -442,6 +679,7 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 				budget_id: budgetId || null,
 				...authorizedByUpdate,
 				...authorizedAtUpdate,
+				updated_by_id: req.user.id,
 				payment_date: paymentDate || null,
 				term_condition: termCondition || null,
 				payment_term_id,
@@ -450,29 +688,50 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 			{ transaction },
 		);
 
-		// Replace deductions only when the caller explicitly sends the array
+		// Replace deductions only when the caller explicitly sends the array.
+		// dedList is already normalized (see above, computed before totalDed) —
+		// just attach the now-known requisition id.
 		if (dedList !== null) {
 			await deductionRepo.deleteByRequisitionId(id, { transaction });
 			if (dedList.length > 0) {
-				const rows = normalizeDeductions(dedList, Number(id));
+				const rows = dedList.map((d) => ({ ...d, payment_requisition_id: Number(id) }));
 				await deductionRepo.bulkCreate(rows, { transaction });
 			}
 		}
 
-		// Sync totalPaid on parent PO/WO when approval status changes
-		const oldStatus = existing.status;
-		const newStatus = approverOnlyFields.status;
+		// Sync totalPaid on parent PO/WO when approval status changes. RETENTION_RELEASE
+		// requisitions are skipped on both sides (poWoSyncAmount returns null for them) —
+		// see poWoSyncAmount's doc comment for why.
 		const parentId = po_id || wo_id || existing.po_id || existing.wo_id;
 		const ParentModel = (requisitionAgainst || existing.requisition_against) === 'PO' ? PurchaseOrder : WorkOrder;
+		const oldPaidAmount = poWoSyncAmount(existing);
+		const newPaidAmount = poWoSyncAmount({ requisition_type: finalRequisitionType, gross_amount: gross });
 
 		if (parentId) {
 			let amountDelta = 0;
-			if (oldStatus === 'APPROVED') amountDelta -= effectivePaidAmount(existing);
-			if (newStatus === 'APPROVED') amountDelta += netPayable;
+			if (oldStatus === 'APPROVED' && oldPaidAmount !== null) amountDelta -= oldPaidAmount;
+			if (newStatus === 'APPROVED' && newPaidAmount !== null) amountDelta += newPaidAmount;
 			if (amountDelta !== 0) {
 				await syncPoWoPaymentFields(ParentModel, parentId, org_id, amountDelta, transaction);
 			}
 		}
+
+		// Generate TDS liabilities the moment this requisition first becomes
+		// APPROVED (idempotent — safe even if called again on a no-op re-save).
+		if (newStatus === 'APPROVED' && oldStatus !== 'APPROVED') {
+			const freshRequisition = await paymentRequisitionRepo.findById(id, { transaction });
+			await tdsLiabilityService.createLiabilitiesForApprovedRequisition(req, freshRequisition, transaction);
+		}
+
+		await auditLogService.record({
+			req,
+			entityType: 'payment_requisition',
+			entityId: id,
+			action: 'update',
+			previousState: { status: oldStatus, gross_amount: existing.gross_amount, net_payable: existing.net_payable },
+			newState: { status: newStatus, gross_amount: gross, net_payable: netPayable },
+			transaction,
+		});
 
 		await transaction.commit();
 
@@ -493,19 +752,57 @@ exports.addDeduction = async (req, requisitionId, deductionPayload) => {
 	const transaction = await sequelize.transaction();
 	try {
 		const { org_id } = req.user;
-		const requisition = await paymentRequisitionRepo.findById(requisitionId);
+		const requisition = await paymentRequisitionRepo.findById(requisitionId, { transaction });
 
 		if (!requisition || requisition.org_id !== org_id) {
 			throw new AppError('Payment requisition not found', StatusCodes.NOT_FOUND);
 		}
 
-		const [row] = normalizeDeductions([deductionPayload], Number(requisitionId));
-		const deduction = await deductionRepo.bulkCreate([row], { transaction });
+		const orderId = requisition.po_id || requisition.wo_id;
+		const gross = parseFloat(requisition.gross_amount || requisition.requisition_amount || 0);
+
+		// Adding a RETENTION line here must pass the same cap check as the create
+		// flow — this endpoint used to bypass it entirely.
+		if (deductionPayload.deduction_type === 'RETENTION' && orderId) {
+			const OrderModel = requisition.po_id ? PurchaseOrder : WorkOrder;
+			const idField = requisition.po_id ? 'po_id' : 'wo_id';
+			const order = await OrderModel.findByPk(orderId, {
+				attributes: ['retention_amount'],
+				transaction,
+				lock: transaction.LOCK.UPDATE,
+			});
+			if (order) {
+				await validateRetentionCap({
+					requisitionType: requisition.requisition_type,
+					order,
+					idField,
+					orderId,
+					org_id,
+					newRetentionAmt: parseFloat(deductionPayload.amount) || 0,
+					transaction,
+				});
+			}
+		}
+
+		let taxableRatio = 1;
+		if (orderId && TAXABLE_BASE_DEDUCTION_TYPES.includes(deductionPayload.deduction_type)) {
+			taxableRatio = await getTaxableRatio({
+				PurchaseOrder,
+				WorkOrder,
+				po_id: requisition.po_id,
+				wo_id: requisition.wo_id,
+				transaction,
+			});
+		}
+		const [normalized] = normalizeDeductions([deductionPayload], { gross, taxableRatio });
+		const [deduction] = await deductionRepo.bulkCreate(
+			[{ ...normalized, payment_requisition_id: Number(requisitionId) }],
+			{ transaction },
+		);
 
 		// Recalculate totals
 		const existingDeductions = await deductionRepo.findByRequisitionId(requisitionId, { transaction });
 		const totalDed = existingDeductions.reduce((s, d) => s + parseFloat(d.amount || 0), 0);
-		const gross = parseFloat(requisition.gross_amount || requisition.requisition_amount || 0);
 		const netPayable = gross - totalDed;
 
 		if (netPayable < 0) {
@@ -514,12 +811,30 @@ exports.addDeduction = async (req, requisitionId, deductionPayload) => {
 
 		await paymentRequisitionRepo.updateById(
 			requisitionId,
-			{ total_deductions: totalDed, net_payable: netPayable, tds_amount: totalDed, total_amount: netPayable },
+			{ total_deductions: totalDed, net_payable: netPayable, tds_amount: totalDed, total_amount: netPayable, updated_by_id: req.user.id },
 			{ transaction },
 		);
 
+		// If this requisition is already APPROVED and the new line is a TDS-type
+		// deduction, create its liability right away. No PO/WO re-sync is needed:
+		// totalPaid tracks gross_amount requisitioned, which a deduction line never
+		// changes (only total_deductions/net_payable move).
+		if (requisition.status === 'APPROVED' && TDS_DEDUCTION_TYPES.includes(deduction.deduction_type)) {
+			const freshRequisition = await paymentRequisitionRepo.findById(requisitionId, { transaction });
+			await tdsLiabilityService.createLiabilitiesForApprovedRequisition(req, freshRequisition, transaction);
+		}
+
+		await auditLogService.record({
+			req,
+			entityType: 'payment_requisition',
+			entityId: Number(requisitionId),
+			action: 'add_deduction',
+			newState: { deduction_type: deduction.deduction_type, amount: deduction.amount },
+			transaction,
+		});
+
 		await transaction.commit();
-		return deduction[0];
+		return deduction;
 	} catch (err) {
 		await transaction.rollback();
 		throw err;
@@ -530,34 +845,92 @@ exports.updateDeduction = async (req, requisitionId, deductionId, deductionPaylo
 	const transaction = await sequelize.transaction();
 	try {
 		const { org_id } = req.user;
-		const requisition = await paymentRequisitionRepo.findById(requisitionId);
+		const requisition = await paymentRequisitionRepo.findById(requisitionId, { transaction });
 
 		if (!requisition || requisition.org_id !== org_id) {
 			throw new AppError('Payment requisition not found', StatusCodes.NOT_FOUND);
 		}
 
-		const deduction = await deductionRepo.findById(deductionId);
+		const deduction = await deductionRepo.findById(deductionId, { transaction });
 		if (!deduction || deduction.payment_requisition_id !== Number(requisitionId)) {
 			throw new AppError('Deduction not found', StatusCodes.NOT_FOUND);
 		}
 
-		const [normalized] = normalizeDeductions([deductionPayload], Number(requisitionId));
+		const existingLiability = await tdsLiabilityRepo.findByDeductionId(deductionId, { transaction });
+		if (existingLiability) {
+			throw new AppError(
+				'This deduction already has a TDS liability on record and can no longer be edited directly. Reverse the liability/settlement first.',
+				StatusCodes.CONFLICT,
+			);
+		}
+
+		const oldAmount = parseFloat(deduction.amount) || 0;
+		const gross = parseFloat(requisition.gross_amount || requisition.requisition_amount || 0);
+
+		let taxableRatio = 1;
+		if ((requisition.po_id || requisition.wo_id) && TAXABLE_BASE_DEDUCTION_TYPES.includes(deductionPayload.deduction_type)) {
+			taxableRatio = await getTaxableRatio({
+				PurchaseOrder,
+				WorkOrder,
+				po_id: requisition.po_id,
+				wo_id: requisition.wo_id,
+				transaction,
+			});
+		}
+		const [normalized] = normalizeDeductions([deductionPayload], { gross, taxableRatio });
 		await deductionRepo.updateById(deductionId, normalized, { transaction });
 
 		const allDeductions = await deductionRepo.findByRequisitionId(requisitionId, { transaction });
 		const totalDed = allDeductions.reduce((s, d) => s + parseFloat(d.amount || 0), 0);
-		const gross = parseFloat(requisition.gross_amount || requisition.requisition_amount || 0);
 		const netPayable = gross - totalDed;
 
 		if (netPayable < 0) {
 			throw new AppError('Updated deduction makes net_payable negative', StatusCodes.UNPROCESSABLE_ENTITY);
 		}
 
+		if (normalized.deduction_type === 'RETENTION') {
+			const orderId = requisition.po_id || requisition.wo_id;
+			if (orderId) {
+				const OrderModel = requisition.po_id ? PurchaseOrder : WorkOrder;
+				const idField = requisition.po_id ? 'po_id' : 'wo_id';
+				const order = await OrderModel.findByPk(orderId, {
+					attributes: ['retention_amount'],
+					transaction,
+					lock: transaction.LOCK.UPDATE,
+				});
+				const increase = money.round2(normalized.amount - oldAmount);
+				if (order && increase > 0) {
+					await validateRetentionCap({
+						requisitionType: requisition.requisition_type,
+						order,
+						idField,
+						orderId,
+						org_id,
+						newRetentionAmt: increase,
+						transaction,
+					});
+				}
+			}
+		}
+
 		await paymentRequisitionRepo.updateById(
 			requisitionId,
-			{ total_deductions: totalDed, net_payable: netPayable, tds_amount: totalDed, total_amount: netPayable },
+			{ total_deductions: totalDed, net_payable: netPayable, tds_amount: totalDed, total_amount: netPayable, updated_by_id: req.user.id },
 			{ transaction },
 		);
+
+		// No PO/WO re-sync needed here — totalPaid tracks gross_amount, which this
+		// endpoint never changes (only total_deductions/net_payable move).
+
+		await auditLogService.record({
+			req,
+			entityType: 'payment_requisition',
+			entityId: Number(requisitionId),
+			action: 'update_deduction',
+			previousState: { amount: oldAmount },
+			newState: { amount: normalized.amount },
+			transaction,
+		});
 
 		await transaction.commit();
 		return deductionRepo.findById(deductionId);
@@ -571,15 +944,23 @@ exports.deleteDeduction = async (req, requisitionId, deductionId) => {
 	const transaction = await sequelize.transaction();
 	try {
 		const { org_id } = req.user;
-		const requisition = await paymentRequisitionRepo.findById(requisitionId);
+		const requisition = await paymentRequisitionRepo.findById(requisitionId, { transaction });
 
 		if (!requisition || requisition.org_id !== org_id) {
 			throw new AppError('Payment requisition not found', StatusCodes.NOT_FOUND);
 		}
 
-		const deduction = await deductionRepo.findById(deductionId);
+		const deduction = await deductionRepo.findById(deductionId, { transaction });
 		if (!deduction || deduction.payment_requisition_id !== Number(requisitionId)) {
 			throw new AppError('Deduction not found', StatusCodes.NOT_FOUND);
+		}
+
+		const existingLiability = await tdsLiabilityRepo.findByDeductionId(deductionId, { transaction });
+		if (existingLiability) {
+			throw new AppError(
+				'This deduction already has a TDS liability on record and cannot be deleted. Reverse the liability/settlement first.',
+				StatusCodes.CONFLICT,
+			);
 		}
 
 		await deductionRepo.deleteById(deductionId, { transaction });
@@ -591,9 +972,21 @@ exports.deleteDeduction = async (req, requisitionId, deductionId) => {
 
 		await paymentRequisitionRepo.updateById(
 			requisitionId,
-			{ total_deductions: totalDed, net_payable: netPayable, tds_amount: totalDed, total_amount: netPayable },
+			{ total_deductions: totalDed, net_payable: netPayable, tds_amount: totalDed, total_amount: netPayable, updated_by_id: req.user.id },
 			{ transaction },
 		);
+
+		// No PO/WO re-sync needed here — totalPaid tracks gross_amount, which this
+		// endpoint never changes (only total_deductions/net_payable move).
+
+		await auditLogService.record({
+			req,
+			entityType: 'payment_requisition',
+			entityId: Number(requisitionId),
+			action: 'delete_deduction',
+			previousState: { deduction_type: deduction.deduction_type, amount: deduction.amount },
+			transaction,
+		});
 
 		await transaction.commit();
 	} catch (err) {
@@ -616,6 +1009,19 @@ exports.deletePaymentRequisition = async (req, id) => {
 
 	const transaction = await sequelize.transaction();
 	try {
+		// A requisition that ever generated a TDS liability can't be hard-deleted —
+		// its deduction rows are referenced (RESTRICT) by TdsLiabilities, and more
+		// importantly deleting it would destroy the trail back to a real government
+		// liability. Cancel (or refuse, if already settled) first via the same path
+		// used for a status reversal.
+		const liabilityCount = await TdsLiability.count({ where: { payment_requisition_id: id }, transaction });
+		if (liabilityCount > 0) {
+			throw new AppError(
+				'This requisition has TDS liability history and cannot be deleted. Change its status to REJECTED instead (via update) — that path cancels or blocks the liabilities correctly and preserves the record for audit.',
+				StatusCodes.CONFLICT,
+			);
+		}
+
 		// Child deductions are deleted via CASCADE on the FK, but we delete explicitly
 		// so the audit log is clear about what happened.
 		await deductionRepo.deleteByRequisitionId(id, { transaction });
@@ -624,11 +1030,20 @@ exports.deletePaymentRequisition = async (req, id) => {
 		if (existing.status === 'APPROVED') {
 			const parentId = existing.po_id || existing.wo_id;
 			const ParentModel = existing.requisition_against === 'PO' ? PurchaseOrder : WorkOrder;
-			const amount = effectivePaidAmount(existing);
-			if (parentId && amount > 0) {
+			const amount = poWoSyncAmount(existing);
+			if (parentId && amount !== null && amount > 0) {
 				await syncPoWoPaymentFields(ParentModel, parentId, org_id, -amount, transaction);
 			}
 		}
+
+		await auditLogService.record({
+			req,
+			entityType: 'payment_requisition',
+			entityId: Number(id),
+			action: 'delete',
+			previousState: { status: existing.status, gross_amount: existing.gross_amount, net_payable: existing.net_payable },
+			transaction,
+		});
 
 		await transaction.commit();
 	} catch (error) {
@@ -792,7 +1207,25 @@ async function buildRequisitionTemplateData(requisition) {
 		cost_center_name = cc?.name ?? null;
 	}
 
-	return { ...data, businessLogo, business, cost_center_name };
+	// Live taxable/GST/gross breakdown of the linked PO/WO — not stored on the
+	// requisition itself (wo_po_amount is just a snapshot of whatever base this
+	// requisition's % was applied to), fetched fresh so the print-out shows the
+	// same taxable-value context the TDS calculation actually used.
+	let po_wo_taxable = null;
+	let po_wo_tax = null;
+	let po_wo_grand_total = null;
+	const orderModel = data.po_id ? PurchaseOrder : data.wo_id ? WorkOrder : null;
+	const orderId = data.po_id || data.wo_id;
+	if (orderModel && orderId) {
+		const order = await orderModel.findByPk(orderId, { attributes: ['total_taxable', 'total_tax', 'grandTotal'] });
+		if (order) {
+			po_wo_taxable = parseFloat(order.total_taxable) || 0;
+			po_wo_tax = parseFloat(order.total_tax) || 0;
+			po_wo_grand_total = parseFloat(order.grandTotal) || 0;
+		}
+	}
+
+	return { ...data, businessLogo, business, cost_center_name, po_wo_taxable, po_wo_tax, po_wo_grand_total };
 }
 
 exports.generateRequisitionHtml = async (req) => {
