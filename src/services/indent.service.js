@@ -9,15 +9,24 @@ const {
 	IndentRepository,
 	IndentItemRepository,
 	IndentSerialRepository,
+	indentItemQtyLogRepository,
 } = require('../repository/index');
 const { fetch } = require('undici');
 const {
 	Indent,
 	Budget,
+	CostCenter,
 	IndentSerialItem,
 	IndentItem,
 	MasterUnit,
 	IndentDocument,
+	Department,
+	MasterPeriod,
+	MasterPlaceOfUse,
+	IndentRemark,
+	User,
+	organization,
+	Role,
 } = require('../models/index');
 const AppError = require('../utils/AppError');
 const { Op, literal } = require('sequelize');
@@ -29,6 +38,8 @@ const workflowEngine = require('./workflowEngine.service');
 const auditLogService = require('./auditLog.service');
 const indentQtyLogService = require('./indentQtyLog.service');
 const { createWorkflowDocumentService } = require('./workflowDocument.factory');
+const { generateInvoiceHTML, generateInvoiceHTMLPDF } = require('../pdf/htmlPdfGenerator');
+const { getImageAsBase64DataUrl } = require('../utils/s3Bucket');
 // const dataVisibility = require('./dataVisibility.service');
 
 const DOCUMENT_TYPE = 'indent';
@@ -363,6 +374,13 @@ exports.getAllIndents = async (req) => {
 						model: Budget,
 						as: 'budget',
 						attributes: ['budget_id'],
+						include: [
+							{
+								model: CostCenter,
+								as: 'cost_center',
+								attributes: ['id', 'name', 'code'],
+							},
+						],
 					},
 					{
 						model: IndentSerialItem,
@@ -885,13 +903,18 @@ exports.previewReissue = async (req, indentId) => {
 		plainPendingItems,
 		false,
 	);
-	const allocationMap = new Map(allocationResults.map((a) => [a.product_id, a]));
+	// Keyed by indent_item_id, not product_id — an indent can carry two lines for the same
+	// product in different UOMs (e.g. one CTN line, one PCS line), and keying by product_id
+	// let the second line's allocation silently overwrite the first's in the map.
+	const allocationMap = new Map(allocationResults.map((a) => [a.indent_item_id, a]));
 
 	const items = pendingItems.map((item) => {
-		const allocation = allocationMap.get(item.product_id);
+		const allocation = allocationMap.get(item.id);
 		return {
+			indent_item_id: item.id,
 			product_id: item.product_id,
 			item_name: item.item_name,
+			uom_name: item.uom_name,
 			pending_qty: parseFloat(item.balance_indent_qty),
 			available_now: parseFloat(allocation?.issued_qty || 0),
 			still_short: parseFloat(allocation?.qty_for_purchase_order || 0),
@@ -926,13 +949,15 @@ exports.reissuePendingQuantity = async (req, indentId) => {
 		true,
 		reissueIdempotencyKey,
 	);
-	const allocationMap = new Map(allocationResults.map((a) => [a.product_id, a]));
+	// See previewReissue's comment above — must key by indent_item_id, not product_id, or a
+	// second line for the same product overwrites the first's allocation in this map.
+	const allocationMap = new Map(allocationResults.map((a) => [a.indent_item_id, a]));
 
 	const transaction = await sequelize.transaction();
 	const reissued = [];
 	try {
 		for (const item of pendingItems) {
-			const allocation = allocationMap.get(item.product_id);
+			const allocation = allocationMap.get(item.id);
 			const newlyIssued = parseFloat(allocation?.issued_qty || 0);
 			if (newlyIssued <= 0) continue;
 
@@ -1106,6 +1131,169 @@ exports.getIndentById = async (req, id) => {
 exports.getIndentWorkflow = async (req, id) => {
 	return indentWorkflow.getWorkflow(req, id);
 };
+
+/**
+ * Print-preview HTML for an Indent, mirroring purchase-order.service.js /
+ * work-order.service.js's generateInvoiceHtml — but showing requested vs. issued vs.
+ * balance_indent_qty (pending re-issue) per item, plus the indent_item_qty_log history of
+ * `reissued` events (see indentQtyLog.service.js), since an Indent has no vendor/tax data
+ * of its own to print.
+ */
+exports.generateInvoiceHtml = async (req) => {
+	const { id } = req.params;
+
+	const indent = await IndentRepository.findById({
+		where: { id },
+		include: [
+			{ model: MasterUnit, as: 'unit' },
+			{ model: Department, as: 'department' },
+			{ model: MasterPeriod, as: 'period' },
+			{ model: MasterPlaceOfUse, as: 'placeOfUse' },
+			{ model: IndentRemark, as: 'remark' },
+			{
+				model: IndentItem,
+				as: 'IndentItems',
+				include: [{ model: Budget, as: 'budget' }],
+			},
+		],
+	});
+
+	if (!indent) throw new AppError('Indent not found', StatusCodes.NOT_FOUND);
+
+	// findByIndentIds spreads `options` over its default `where`, replacing it rather than
+	// merging, so indent_id must be included here alongside the extra filters.
+	const qtyLogs = await indentItemQtyLogRepository.findByIndentIds([id], {
+		where: { indent_id: id, field: 'balance_indent_qty', source: 'reissued' },
+	});
+
+	const response = await calculateIndentInvoice(indent, qtyLogs);
+
+	const html = await generateInvoiceHTML({ ...response, copyTitle: 'INDENT COPY' }, 'indentTemplate');
+	return `<div class="preview-page">\n${html}\n</div>`;
+};
+
+exports.downloadInvoicePdf = async (req) => {
+	const { html = '' } = req.body;
+	const pdfPath = await generateInvoiceHTMLPDF(html, 'indentTemplate', { multi: true });
+	return pdfPath;
+};
+
+async function calculateIndentInvoice(indent, qtyLogs) {
+	const invoiceData = indent.get({ plain: true });
+
+	const itemById = new Map(
+		(invoiceData.IndentItems || []).map((item) => [item.id, item]),
+	);
+
+	// Logo lives on the org-admin user, not on MasterUnit, so userData must be fetched
+	// regardless of which branch supplies `business` below — the original version only
+	// looked it up in the no-unit fallback branch, which meant the logo never rendered for
+	// the (near-universal) case of an indent with a unit_id set.
+	let businessLogo = null;
+	let business = null;
+	const unit = invoiceData.unit;
+
+	const orgRole = await Role.findOne({ where: { code: 'org_admin' }, attributes: ['id'] });
+	const userData = await User.findOne({
+		where: { org_id: invoiceData.org_id },
+		include: [
+			{ model: organization, as: 'organization' },
+			{
+				model: Role,
+				as: 'userRoles',
+				through: { attributes: [] },
+				attributes: ['id', 'name', 'code'],
+				where: orgRole?.id,
+			},
+		],
+	});
+	if (userData?.logo) {
+		businessLogo = await getImageAsBase64DataUrl(userData.logo);
+	}
+
+	if (unit) {
+		business = {
+			org_name: unit.unit_name || unit.unitName || '',
+			city: unit.city,
+			pincode: unit.pincode,
+			org_gst_number: unit.gstin,
+			org_email: unit.company_email,
+		};
+		const unitAddressLine = [unit.address1, unit.address2, unit.landmark].filter(Boolean).join(', ');
+		business.address = `${unitAddressLine ? `${unitAddressLine},<br>` : ''}
+			${unit.city || ''} - ${unit.pincode || ''}, ${unit.state || ''}<br>`;
+	} else if (userData) {
+		business = userData.organization;
+		business.address = `${business.org_address || ''},<br>
+			${business.city || ''} - ${business.pincode || ''}, ${business?._state?.state_name || ''}<br>`;
+	}
+
+	const productItems = (invoiceData.IndentItems || []).map((item) => {
+		const requestedQty = parseFloat(item.qty || 0);
+		const issuedQty = parseFloat(item.qty_issued || 0);
+		const pendingQty = parseFloat(item.balance_indent_qty || 0);
+		const qtyForPurchaseOrder = parseFloat(item.qty_for_purchase_order || 0);
+
+		let statusLabel;
+		if (pendingQty > 0) {
+			statusLabel = 'Pending Re-issue';
+		} else if (requestedQty > 0 && issuedQty >= requestedQty) {
+			statusLabel = 'Fully Issued';
+		} else if (issuedQty > 0) {
+			statusLabel = 'Partially Issued';
+		} else {
+			statusLabel = 'Open';
+		}
+
+		return {
+			...item,
+			requestedQty,
+			issuedQty,
+			pendingQty,
+			qtyForPurchaseOrder,
+			statusLabel,
+		};
+	});
+
+	const reissueHistory = (qtyLogs || []).map((log) => {
+		const plain = log.get ? log.get({ plain: true }) : log;
+		const sourceItem = itemById.get(plain.indent_item_id);
+		return {
+			...plain,
+			item_name: sourceItem?.item_name || `Item #${plain.indent_item_id}`,
+			uom_name: sourceItem?.uom_name || '',
+			issued_qty: Math.abs(parseFloat(plain.delta || 0)),
+		};
+	});
+
+	return {
+		...invoiceData,
+		businessLogo,
+		business,
+		combineInvoiceNumber: invoiceData.indent_no || `IND-${invoiceData.id}`,
+		indentDate: formatIndentDate(invoiceData.indent_date),
+		lastDate: formatIndentDate(invoiceData.last_date),
+		productItems,
+		reissueHistory,
+		totalRequestedQty: productItems.reduce((sum, item) => sum + item.requestedQty, 0),
+		totalIssuedQty: productItems.reduce((sum, item) => sum + item.issuedQty, 0),
+		totalPendingQty: productItems.reduce((sum, item) => sum + item.pendingQty, 0),
+		pendingReissueItemCount: productItems.filter((item) => item.pendingQty > 0).length,
+	};
+}
+
+function formatIndentDate(val) {
+	if (!val) return '';
+	try {
+		return new Date(val).toLocaleDateString('en-IN', {
+			day: '2-digit',
+			month: '2-digit',
+			year: 'numeric',
+		});
+	} catch {
+		return '';
+	}
+}
 
 exports.reopenIndent = async (req, id, remarks) => {
 	return indentWorkflow.reopen(req, id, remarks, {
