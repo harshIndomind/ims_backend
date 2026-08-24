@@ -22,7 +22,11 @@ exports.validationDispatchOrder = [
 			return true;
 		}),
 
-	body('recipientName').optional({ checkFalsy: true }).isString().trim(),
+	body('recipientName')
+		.notEmpty()
+		.withMessage('Recipient name is required')
+		.isString()
+		.trim(),
 
 	body('recipientEmail')
 		.optional({ checkFalsy: true })
