@@ -80,9 +80,14 @@ exports.generateInvoiceHTMLPDF = async (dataOrHtml, template, options = {}) => {
 		.toString()
 		.padStart(2, '0')}`;
 
-	const isWorkOrder = template === 'workOrderTemplate';
-	const docPrefix = isWorkOrder ? 'work_order' : 'purchase_order';
-	const docFolder = isWorkOrder ? 'work-orders' : 'purchase-orders';
+	const docNamesByTemplate = {
+		workOrderTemplate: { prefix: 'work_order', folder: 'work-orders' },
+		indentTemplate: { prefix: 'indent', folder: 'indents' },
+	};
+	const { prefix: docPrefix, folder: docFolder } = docNamesByTemplate[template] || {
+		prefix: 'purchase_order',
+		folder: 'purchase-orders',
+	};
 
 	const pdfName = `${docPrefix}_${formatted}.pdf`;
 

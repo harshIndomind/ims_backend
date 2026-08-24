@@ -59,6 +59,18 @@ router.post(
 );
 
 router.post(
+	'/:id/html',
+	checkPermission('indent', 'view'),
+	indentController.generateInvoiceHtml,
+);
+
+router.post(
+	'/:id/pdf',
+	checkPermission('indent', 'view'),
+	indentController.downloadInvoicePdf,
+);
+
+router.post(
 	'/:id/reject',
 	checkPermission('indent', 'reject'),
 	indentController.rejectIndent,

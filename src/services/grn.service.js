@@ -261,6 +261,19 @@ exports.createGRN = async (req) => {
 	}
 };
 
+// Same fallback chain used for PO print/export UOM display (purchase-order.service.js) —
+// PurchaseOrderItem.uomSnapshot/productSnapshot are free-form JSON captured at PO create/update
+// time, not a live join, so this just reads what was stored on that PO item.
+function uomDisplayFor(poItem) {
+	return (
+		poItem.uomSnapshot?.unit?.name ||
+		poItem.uomSnapshot?.unit?.code ||
+		poItem.productSnapshot?.baseUnit?.name ||
+		poItem.productSnapshot?.baseUnit?.code ||
+		'Base'
+	);
+}
+
 // Drives the Create GRN screen's receivable-lines list. Non-QC POs behave exactly as before
 // (ordered qty minus already-received across active GRNs, per PO item). QC-required POs are
 // sourced from *approved* qc_inspection_items instead — one line per QC round still holding
@@ -296,6 +309,7 @@ exports.getReceivableLinesForPurchaseOrder = async (req, purchaseOrderId) => {
 					qc_no: null,
 					product_id: item.product_id,
 					product_name: item.productSnapshot?.name || null,
+					uom_name: uomDisplayFor(item),
 					stock_type: item.stock_type,
 					batch_id: item.batch_id,
 					ordered_qty: orderedQty,
@@ -332,6 +346,7 @@ exports.getReceivableLinesForPurchaseOrder = async (req, purchaseOrderId) => {
 				qc_no: qcItem.inspection.qc_no,
 				product_id: qcItem.product_id,
 				product_name: qcItem.productSnapshot?.name || null,
+				uom_name: uomDisplayFor(poItem),
 				stock_type: qcItem.stock_type,
 				batch_id: qcItem.batch_id,
 				ordered_qty: parseFloat(poItem.qty),
