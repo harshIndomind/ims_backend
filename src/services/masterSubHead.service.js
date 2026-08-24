@@ -47,6 +47,17 @@ exports.updateMasterSubHead = async (id, payload) => {
 		throw new AppError('Sub Head not found', StatusCodes.NOT_FOUND);
 	}
 
+	const amountCount = await MasterSubHeadAmount.count({
+		where: { sub_head_id: id },
+	});
+	if (amountCount > 0) {
+		logger.warn('Blocked update of Sub Head with amounts assigned', { id, amountCount });
+		throw new AppError(
+			'Cannot update this sub head — amounts are already assigned to it in Sub Head Amount.',
+			StatusCodes.CONFLICT,
+		);
+	}
+
 	await masterSubHeadRepo.update(MasterSubHead, {
 		sh_code,
 		sh_name,
@@ -119,6 +130,11 @@ exports.getMasterSubHeadById = async (id) => {
 		logger.warn('Sub Head not found', { id });
 		throw new AppError('Sub Head not found', StatusCodes.NOT_FOUND);
 	}
+
+	const amountCount = await MasterSubHeadAmount.count({
+		where: { sub_head_id: id },
+	});
+	MasterSubHead.dataValues.has_amount = amountCount > 0;
 
 	logger.info('Sub Head fetched', { id });
 

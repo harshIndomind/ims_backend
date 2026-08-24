@@ -49,6 +49,17 @@ exports.updateMasterMajorHead = async (id, payload) => {
 		throw new AppError('Master Major Head not found', StatusCodes.NOT_FOUND);
 	}
 
+	const amountCount = await MasterMajorHeadAmount.count({
+		where: { major_head_id: id },
+	});
+	if (amountCount > 0) {
+		logger.warn('Blocked update of Master Major Head with amounts assigned', { id, amountCount });
+		throw new AppError(
+			'Cannot update this major head — amounts are already assigned to it in Major Head Amount.',
+			StatusCodes.CONFLICT,
+		);
+	}
+
 	await masterMajorHeadRepo.update(masterMajorHead, {
 		m_code,
 		m_name,
@@ -107,6 +118,11 @@ exports.getMasterMajorHeadById = async (id) => {
 		logger.warn('Master Major Head not found', { id });
 		throw new AppError('Master Major Head not found', StatusCodes.NOT_FOUND);
 	}
+
+	const amountCount = await MasterMajorHeadAmount.count({
+		where: { major_head_id: id },
+	});
+	masterMajorHead.dataValues.has_amount = amountCount > 0;
 
 	logger.info('Master Major Head fetched', { id });
 
