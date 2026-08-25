@@ -84,3 +84,13 @@ exports.uploadAttachment = catchAsync(async (req, res) => {
 	const attachment = await qcInspectionService.uploadAttachment(req, req.params.id, req.file);
 	ApiResponse.send(res, 201, 'Attachment uploaded successfully', attachment);
 });
+
+exports.generateInvoiceHtml = catchAsync(async (req, res) => {
+	const html = await qcInspectionService.generateInvoiceHtml(req);
+	res.json({ html });
+});
+
+exports.downloadInvoicePdf = catchAsync(async (req, res) => {
+	const pdfUrl = await qcInspectionService.downloadInvoicePdf(req);
+	res.json({ pdfUrl });
+});

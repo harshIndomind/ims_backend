@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>
+        <%= invoice.copyTitle %>
+    </title>
+    <style>
+        html,
+        body {
+            font-family: 'Arial', sans-serif;
+            color: #333;
+            background-color: #ffffff;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+            padding: 15px 20px;
+            background: #f1f1f1;
+            color: #333;
+            border-radius: 6px;
+        }
+
+        .logo {
+            width: 200px;
+            min-width: 125px;
+            height: auto;
+            border-radius: 4px;
+            padding: 4px;
+        }
+
+        .header-left {
+            min-width: 33.3%;
+        }
+
+        .header-center {
+            min-width: 33.3%;
+            text-align: center;
+            flex: 1;
+        }
+
+        .header-center h2 {
+            margin: 0;
+            font-size: 22px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: bold;
+        }
+
+        .header-right {
+            min-width: 33.3%;
+            text-align: right;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
+        .header-right h4 {
+            margin: 0 0 4px;
+            font-size: 12px;
+            color: #333;
+            text-transform: uppercase;
+        }
+
+        .info-section {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 5px;
+            margin-bottom: 15px;
+            padding: 10px;
+            background-color: #fff;
+            border: 1px dotted #ccc;
+            border-radius: 6px;
+        }
+
+        .customer-info {
+            width: 55%;
+            padding: 10px 14px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            font-size: 10px;
+            line-height: 1.4;
+        }
+
+        .customer-info h4,
+        .invoice-info h4 {
+            margin: 0 0 8px 0;
+            color: #2c3e50;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 3px;
+        }
+
+        .customer-detail,
+        .info-detail {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5px;
+        }
+
+        .invoice-info {
+            width: 45%;
+            padding: 10px 14px;
+            border-radius: 4px;
+            font-size: 10px;
+            line-height: 1.4;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 2px 0;
+        }
+
+        .info-row strong {
+            color: #555;
+            width: 45%;
+            font-weight: 500;
+        }
+
+        .info-row span {
+            width: 55%;
+            text-align: right;
+            color: #333;
+            word-break: break-word;
+        }
+
+        /* Summary strip */
+        .summary-strip {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 15px 0;
+        }
+
+        .summary-tile {
+            flex: 1;
+            min-width: 100px;
+            border: 1px solid #dcdcdc;
+            border-radius: 6px;
+            padding: 8px 10px;
+            text-align: center;
+            background: #fafbfc;
+        }
+
+        .summary-tile .value {
+            font-size: 16px;
+            font-weight: bold;
+            color: #2980b9;
+        }
+
+        .summary-tile.warn .value {
+            color: #e67e22;
+        }
+
+        .summary-tile.danger .value {
+            color: #c0392b;
+        }
+
+        .summary-tile .label {
+            font-size: 9px;
+            text-transform: uppercase;
+            color: #777;
+            letter-spacing: 0.4px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            background-color: #fff;
+            box-shadow: 0 0 5px rgba(0, 0, 0, 0.05);
+        }
+
+        th,
+        td {
+            padding: 6px 8px;
+            font-size: 10px;
+            vertical-align: middle;
+            border: 0.2px solid #dcdcdc;
+        }
+
+        th {
+            background-color: #2980b9;
+            color: #fff;
+            text-align: center;
+            font-weight: bold;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f9fbfc;
+        }
+
+        tfoot th {
+            background-color: #2980b9;
+            font-weight: 600;
+        }
+
+        .status-pill {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-size: 9px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .status-pending {
+            background: #eee;
+            color: #666;
+        }
+
+        .status-passed {
+            background: #d9f2e3;
+            color: #1e8449;
+        }
+
+        .status-partial {
+            background: #dbeafe;
+            color: #1d4ed8;
+        }
+
+        .status-failed {
+            background: #fdecea;
+            color: #c0392b;
+        }
+
+        .section-title {
+            font-size: 13px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin: 22px 0 6px;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 4px;
+        }
+
+        .footer-cols {
+            display: flex;
+            flex-direction: column;
+            margin-top: 20px;
+            font-size: 12px;
+            gap: 20px;
+        }
+
+        .footer-col-left,
+        .footer-col-right {
+            width: 100%;
+            border: 1px dotted #ccc;
+            border-radius: 4px;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+
+        .table-scroll {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .table-scroll table {
+            min-width: 620px;
+        }
+
+        .preview-page {
+            background: white;
+            margin-bottom: 40px;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .invoice-section {
+            position: relative;
+        }
+
+        .watermark {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) rotate(-30deg);
+            font-size: 120px;
+            color: rgba(255, 0, 0, 0.12);
+            font-weight: 900;
+            pointer-events: none;
+            user-select: none;
+            z-index: 0;
+        }
+
+        @media print {
+            body {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                color-adjust: exact !important;
+                background-color: #fff !important;
+                margin: 0;
+            }
+
+            .header {
+                background: #f1f1f1 !important;
+                color: #333 !important;
+                -webkit-print-color-adjust: exact !important;
+            }
+
+            th {
+                background-color: #2980b9 !important;
+                color: #fff !important;
+            }
+
+            .summary-tile {
+                -webkit-print-color-adjust: exact !important;
+            }
+
+            .preview-page {
+                background: none;
+                margin: 0;
+                padding: 0;
+                border-radius: 0;
+                box-shadow: none;
+                page-break-after: always;
+                page-break-inside: auto;
+                break-inside: auto;
+            }
+
+            .invoice-section,
+            .table-scroll,
+            .footer-cols,
+            .footer-col-left,
+            .footer-col-right {
+                page-break-inside: auto;
+                break-inside: auto;
+            }
+
+            .table-scroll {
+                overflow: visible;
+            }
+
+            tr {
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
+        }
+
+        @media screen and (max-width: 620px) {
+            .header {
+                flex-direction: column;
+                gap: 8px;
+                padding: 10px;
+            }
+
+            .header-left,
+            .header-center,
+            .header-right {
+                min-width: unset;
+                width: 100%;
+                text-align: left;
+            }
+
+            .logo {
+                width: 120px;
+                min-width: 80px;
+            }
+
+            .info-section {
+                flex-direction: column;
+            }
+
+            .customer-info,
+            .invoice-info {
+                width: 100% !important;
+                padding: 0;
+            }
+
+            .footer-cols {
+                flex-direction: column;
+                gap: 12px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="invoice-section">
+        <% if (invoice.status === 'rejected') { %>
+            <div class="watermark">REJECTED</div>
+        <% } else if (invoice.status === 'cancelled') { %>
+            <div class="watermark">CANCELLED</div>
+        <% } %>
+
+        <div class="header">
+            <div class="header-left">
+                <% if(invoice.businessLogo){ %>
+                    <img src="<%= invoice.businessLogo %>" alt="Company Logo" class="logo" />
+                <% } else { %>
+                    <img src="https://placehold.co/100x60" alt="Company Logo" class="logo" />
+                <% } %>
+            </div>
+
+            <div class="header-center">
+                <h2>Quality Control Inspection</h2>
+            </div>
+
+            <div class="header-right">
+                <h4>
+                    <%= invoice?.business?.org_name ?? '' %>
+                </h4>
+                <p>
+                    <% if(invoice?.business?.address) {%>
+                        <%- invoice?.business?.address %><br>
+                    <% } %>
+                    <% if(invoice?.business?.org_gst_number) {%>
+                        <strong>GSTIN:</strong> <%- invoice?.business?.org_gst_number %><br>
+                    <% } %>
+                    <% if(invoice?.business?.org_email) {%>
+                        <strong>Email:</strong> <%- invoice?.business?.org_email %><br>
+                    <% } %>
+                </p>
+                <h5><strong>
+                        <%= invoice?.copyTitle %>
+                    </strong></h5>
+            </div>
+        </div>
+
+        <div class="info-section">
+            <div class="customer-info">
+                <h4>Order Details</h4>
+                <div class="customer-detail">
+                    <div class="info-row">
+                        <strong><%= invoice.documentLabel %>:</strong>
+                        <span><%= invoice.documentNo %></span>
+                    </div>
+                    <div class="info-row">
+                        <strong>Vendor:</strong>
+                        <span><%= invoice.vendorInfo?.vendor_name || invoice.vendorInfo?.name || '' %></span>
+                    </div>
+                    <div class="info-row">
+                        <strong>Unit:</strong>
+                        <span><%= invoice.unit?.unit_name || invoice.unit?.unitName || '' %></span>
+                    </div>
+                    <div class="info-row">
+                        <strong>Department:</strong>
+                        <span><%= invoice.department?.name || invoice.department?.depName || '' %></span>
+                    </div>
+                    <% if (invoice.acknowledgement) { %>
+                    <div class="info-row">
+                        <strong>Acknowledgement:</strong>
+                        <span><%= invoice.acknowledgement?.ack_no || invoice.acknowledgement?.id || '' %></span>
+                    </div>
+                    <% } %>
+                </div>
+            </div>
+
+            <div class="invoice-info">
+                <h4>Inspection Details</h4>
+                <div class="info-detail">
+                    <div class="info-row">
+                        <strong>QC No:</strong>
+                        <span><%= invoice?.qc_no || '' %></span>
+                    </div>
+                    <div class="info-row">
+                        <strong>Status:</strong>
+                        <span><%= (invoice?.status || '').replace('_', ' ').toUpperCase() %></span>
+                    </div>
+                    <div class="info-row">
+                        <strong>Overall Result:</strong>
+                        <span><%= (invoice?.overall_result || '').toUpperCase() %></span>
+                    </div>
+                    <div class="info-row">
+                        <strong>Inspector:</strong>
+                        <span><%= invoice.inspector?.name || '' %></span>
+                    </div>
+                    <% if (invoice.template?.name) { %>
+                    <div class="info-row">
+                        <strong>Template:</strong>
+                        <span><%= invoice.template.name %></span>
+                    </div>
+                    <% } %>
+                    <% if (invoice.completed_at) { %>
+                    <div class="info-row">
+                        <strong>Completed On:</strong>
+                        <span><%= new Date(invoice.completed_at).toLocaleDateString('en-IN') %></span>
+                    </div>
+                    <% } %>
+                    <% if (invoice.approved_at) { %>
+                    <div class="info-row">
+                        <strong>Approved On:</strong>
+                        <span><%= new Date(invoice.approved_at).toLocaleDateString('en-IN') %></span>
+                    </div>
+                    <% } %>
+                </div>
+            </div>
+        </div>
+
+        <!-- Summary -->
+        <div class="summary-strip">
+            <div class="summary-tile">
+                <div class="value"><%= invoice.productItems.length %></div>
+                <div class="label">Total Items</div>
+            </div>
+            <div class="summary-tile">
+                <div class="value"><%= invoice.totals.orderedQty.toFixed(2) %></div>
+                <div class="label">Ordered Qty</div>
+            </div>
+            <div class="summary-tile">
+                <div class="value"><%= invoice.totals.currentReceivedQty.toFixed(2) %></div>
+                <div class="label">Received (This Round)</div>
+            </div>
+            <div class="summary-tile">
+                <div class="value"><%= invoice.totals.currentAcceptedQty.toFixed(2) %></div>
+                <div class="label">Accepted (This Round)</div>
+            </div>
+            <div class="summary-tile <%= invoice.totals.currentRejectedQty > 0 ? 'danger' : '' %>">
+                <div class="value"><%= invoice.totals.currentRejectedQty.toFixed(2) %></div>
+                <div class="label">Rejected (This Round)</div>
+            </div>
+            <div class="summary-tile <%= invoice.totals.reworkQty > 0 ? 'warn' : '' %>">
+                <div class="value"><%= invoice.totals.reworkQty.toFixed(2) %></div>
+                <div class="label">Rework Qty</div>
+            </div>
+        </div>
+
+        <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th rowspan="2">Sr. No.</th>
+                        <th rowspan="2">Item</th>
+                        <th rowspan="2">Ordered<br>Qty</th>
+                        <th colspan="3">Accepted Qty</th>
+                        <th colspan="3">Rejected Qty</th>
+                        <th rowspan="2">Rework<br>Qty</th>
+                        <th rowspan="2">Result</th>
+                        <th rowspan="2">Rejection<br>Reason</th>
+                    </tr>
+                    <tr>
+                        <th>Previous</th>
+                        <th>This Round</th>
+                        <th>Total</th>
+                        <th>Previous</th>
+                        <th>This Round</th>
+                        <th>Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <% invoice.productItems.forEach((item, index) => { %>
+                    <tr>
+                        <td style="text-align:center;"><%= index + 1 %></td>
+                        <td>
+                            <%= item.item_name %>
+                            <% if (item.item_code) { %>
+                                <br><small><strong>Code:</strong> <%= item.item_code %></small>
+                            <% } %>
+                        </td>
+                        <td style="text-align:right;"><%= item.orderedQty.toFixed(2) %></td>
+                        <td style="text-align:right;"><%= item.previouslyAcceptedQty.toFixed(2) %></td>
+                        <td style="text-align:right;"><%= item.currentAcceptedQty.toFixed(2) %></td>
+                        <td style="text-align:right;"><strong><%= item.totalAcceptedQty.toFixed(2) %></strong></td>
+                        <td style="text-align:right;"><%= item.previouslyRejectedQty.toFixed(2) %></td>
+                        <td style="text-align:right;"><%= item.currentRejectedQty.toFixed(2) %></td>
+                        <td style="text-align:right;"><strong><%= item.totalRejectedQty.toFixed(2) %></strong></td>
+                        <td style="text-align:right;"><%= item.reworkQty.toFixed(2) %></td>
+                        <td style="text-align:center;">
+                            <% if (item.result === 'passed') { %>
+                                <span class="status-pill status-passed">Passed</span>
+                            <% } else if (item.result === 'failed') { %>
+                                <span class="status-pill status-failed">Failed</span>
+                            <% } else if (item.result === 'partial') { %>
+                                <span class="status-pill status-partial">Partial</span>
+                            <% } else { %>
+                                <span class="status-pill status-pending">Pending</span>
+                            <% } %>
+                        </td>
+                        <td><%= item.rejectionReasonName %></td>
+                    </tr>
+                    <% }) %>
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <th colspan="2" style="text-align:right;">Total</th>
+                        <th style="text-align:right;"><%= invoice.totals.orderedQty.toFixed(2) %></th>
+                        <th style="text-align:right;"><%= invoice.totals.previouslyAcceptedQty.toFixed(2) %></th>
+                        <th style="text-align:right;"><%= invoice.totals.currentAcceptedQty.toFixed(2) %></th>
+                        <th style="text-align:right;"><%= invoice.totals.totalAcceptedQty.toFixed(2) %></th>
+                        <th style="text-align:right;"><%= invoice.totals.previouslyRejectedQty.toFixed(2) %></th>
+                        <th style="text-align:right;"><%= invoice.totals.currentRejectedQty.toFixed(2) %></th>
+                        <th style="text-align:right;"><%= invoice.totals.totalRejectedQty.toFixed(2) %></th>
+                        <th style="text-align:right;"><%= invoice.totals.reworkQty.toFixed(2) %></th>
+                        <th></th>
+                        <th></th>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+
+        <% const checklistRows = invoice.productItems.flatMap((item) => item.checklistResults.map((r) => ({ ...r, item_name: item.item_name }))); %>
+        <% if (checklistRows.length > 0) { %>
+            <div class="section-title">Inspection Checklist</div>
+            <div class="table-scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Item</th>
+                            <th>Parameter</th>
+                            <th>Observed Value</th>
+                            <th>Result</th>
+                            <th>Remarks</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <% checklistRows.forEach((r) => { %>
+                        <tr>
+                            <td><%= r.item_name %></td>
+                            <td><%= r.parameter_name %></td>
+                            <td style="text-align:center;"><%= r.observed_value %></td>
+                            <td style="text-align:center;">
+                                <% if (r.result === 'pass') { %>
+                                    <span class="status-pill status-passed">Pass</span>
+                                <% } else if (r.result === 'fail') { %>
+                                    <span class="status-pill status-failed">Fail</span>
+                                <% } else { %>
+                                    <%= r.result %>
+                                <% } %>
+                            </td>
+                            <td><%= r.remarks %></td>
+                        </tr>
+                        <% }) %>
+                    </tbody>
+                </table>
+            </div>
+        <% } %>
+
+        <div class="footer-cols">
+            <div class="footer-col-left">
+                <% if (invoice.remarks) { %>
+                    <div style="font-size:11px; line-height:1.6;">
+                        <div style="font-weight:bold;">Remarks</div>
+                        <div><%= invoice.remarks %></div>
+                    </div>
+                <% } %>
+            </div>
+        </div>
+
+        <div style="margin-top:40px; color:#333; font-size:10px; width:100%; box-sizing:border-box; padding-bottom:20px;">
+            <div style="display:flex; justify-content:space-between; margin-bottom:50px;">
+                <div>Inspected By</div>
+                <div>Verified By</div>
+                <div>Approved By</div>
+                <div>Store In-charge</div>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>
