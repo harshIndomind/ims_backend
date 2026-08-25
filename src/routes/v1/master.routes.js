@@ -15,5 +15,6 @@ router.use(`/transporter`, require('./masterTransporter.routes'));
 router.use(`/units`, require('./masterUnit.routes'));
 router.use(`/place-of-use`, require('./masterPlaceOfUse.routes'));
 router.use(`/`, require('./orderDispatchLookup.routes'));
+router.use('/additional-notes-templates', require('./masterAdditionalNotesTemplate.routes'));
 
 module.exports = router;
