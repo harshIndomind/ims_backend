@@ -29,6 +29,7 @@ const {
 	Role,
 } = require('../models/index');
 const AppError = require('../utils/AppError');
+const { roundQty } = require('../utils/qty');
 const { Op, literal } = require('sequelize');
 const logger = require('../utils/logger');
 const { StatusCodes } = require('http-status-codes');
@@ -684,9 +685,9 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 		for (const i of indent.IndentItems) {
 			const allocation = allocationMap.get(i.product_id);
 			const dryRun = dryRunMap.get(i.product_id);
-			const issuedQty = allocation?.issued_qty || 0;
+			const issuedQty = roundQty(allocation?.issued_qty || 0);
 			const baseIssuedQty = allocation?.base_issued_qty ?? issuedQty;
-			const purchaseQty = Math.max(0, parseFloat(i.qty || 0) - issuedQty);
+			const purchaseQty = roundQty(Math.max(0, parseFloat(i.qty || 0) - issuedQty));
 			const previousQtyForPurchaseOrder = parseFloat(i.qty_for_purchase_order || 0);
 			const previousBalanceIndentQty = parseFloat(i.balance_indent_qty || 0);
 
@@ -958,18 +959,18 @@ exports.reissuePendingQuantity = async (req, indentId) => {
 	try {
 		for (const item of pendingItems) {
 			const allocation = allocationMap.get(item.id);
-			const newlyIssued = parseFloat(allocation?.issued_qty || 0);
+			const newlyIssued = roundQty(allocation?.issued_qty || 0);
 			if (newlyIssued <= 0) continue;
 
 			const newlyIssuedBase = parseFloat(allocation?.base_issued_qty ?? allocation?.issued_qty ?? 0);
 			const previousBalance = parseFloat(item.balance_indent_qty);
-			const updatedBalance = previousBalance - newlyIssued;
+			const updatedBalance = roundQty(previousBalance - newlyIssued);
 			await item.update(
 				{
-					qty_issued: parseFloat(item.qty_issued || 0) + newlyIssued,
+					qty_issued: roundQty(parseFloat(item.qty_issued || 0) + newlyIssued),
 					base_qty_issued: parseFloat(item.base_qty_issued || 0) + newlyIssuedBase,
 					balance_indent_qty: updatedBalance,
-					qty_updated_by_verifier: parseFloat(item.qty_updated_by_verifier || 0) + newlyIssued,
+					qty_updated_by_verifier: roundQty(parseFloat(item.qty_updated_by_verifier || 0) + newlyIssued),
 					// Keep the item's batch_id in sync with whichever batch this re-issue actually
 					// drew from (resolveCurrentBatchIdForReissue may have picked a different, newer
 					// batch than the one recorded at indent creation).
