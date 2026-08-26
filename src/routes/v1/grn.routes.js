@@ -15,6 +15,8 @@ router.get(
 	checkPermission('goods-receipt-note', 'view'),
 	grnController.getReceivableLinesForPurchaseOrder,
 );
+router.post('/:id/html', checkPermission('goods-receipt-note', 'view'), grnController.generateInvoiceHtml);
+router.post('/:id/pdf', checkPermission('goods-receipt-note', 'view'), grnController.downloadInvoicePdf);
 router.get('/:id', checkPermission('goods-receipt-note', 'view'), grnController.getGRNById);
 router.patch('/:id/cancel', checkPermission('goods-receipt-note', 'cancel'), grnController.cancelGRN);
 
