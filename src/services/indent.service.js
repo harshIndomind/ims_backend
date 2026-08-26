@@ -462,11 +462,27 @@ exports.verifyIndentQuantity = async (req, indent_ids) => {
 		}
 
 		if (Array.isArray(indent.IndentItems) && indent.IndentItems.length > 0) {
-			console.log('indent.IndentItems ', indent.IndentItems);
+			// Plain objects, not raw Sequelize instances — matches verifyIndent/approveIndent's
+			// plainIndentItems pattern elsewhere in this file, and keeps the cross-service
+			// payload to VCP lean instead of serializing full model/association metadata.
+			const plainItems = indent.IndentItems.map((i) => i.get({ plain: true }));
+			console.log('indent.IndentItems ', plainItems);
 
 			const { allocationResults } =
-				await verifyIndentQuantityWithProductServices(req, indent.IndentItems);
-			verifiedQuantities = allocationResults ?? [];
+				await verifyIndentQuantityWithProductServices(req, plainItems);
+
+			// VCP's allocationResults only carry a bare uom_id (and only for some
+			// stock types) — the human-readable label lives on IndentItem itself
+			// (uom_name, denormalized at indent-creation time), so merge it back
+			// in here for the verify/approve modal to display.
+			const uomByItemId = new Map(
+				plainItems.map((i) => [i.id, { uom_id: i.uom_id, uom_name: i.uom_name }]),
+			);
+			verifiedQuantities = (allocationResults ?? []).map((r) => ({
+				...r,
+				uom_id: r.uom_id ?? uomByItemId.get(r.indent_item_id)?.uom_id ?? null,
+				uom_name: uomByItemId.get(r.indent_item_id)?.uom_name ?? null,
+			}));
 
 			console.log('Verify Indent Quantity Response ', allocationResults);
 		}

@@ -84,6 +84,7 @@ exports.generateInvoiceHTMLPDF = async (dataOrHtml, template, options = {}) => {
 		workOrderTemplate: { prefix: 'work_order', folder: 'work-orders' },
 		indentTemplate: { prefix: 'indent', folder: 'indents' },
 		qcTemplate: { prefix: 'qc_inspection', folder: 'qc-inspections' },
+		mrnTemplate: { prefix: 'mrn', folder: 'mrns' },
 	};
 	const { prefix: docPrefix, folder: docFolder } = docNamesByTemplate[template] || {
 		prefix: 'purchase_order',

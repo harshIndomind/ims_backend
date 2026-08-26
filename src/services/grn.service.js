@@ -10,10 +10,17 @@ const {
 	PurchaseOrderItem,
 	QcInspection,
 	QcInspectionItem,
+	Indent,
+	MasterUnit,
+	User,
+	organization,
+	Role,
 } = require('../models/index');
 const { shortCloseRequestItemsRepository } = require('../repository/index');
 const AppError = require('../utils/AppError');
 const logger = require('../utils/logger');
+const { generateInvoiceHTML, generateInvoiceHTMLPDF } = require('../pdf/htmlPdfGenerator');
+const { getImageAsBase64DataUrl } = require('../utils/s3Bucket');
 const {
 	VCP_SERVICE_API_BASE_URL,
 	VCP_SERVICE_PRODUCT_ENDPOINT,
@@ -514,3 +521,145 @@ exports.getGRNById = async (req, id) => {
 	if (!grn) throw new AppError('Goods Receipt Note not found', StatusCodes.NOT_FOUND);
 	return grn;
 };
+
+/**
+ * Print-preview HTML for an MRN (GoodsReceiptNote), mirroring indent.service.js /
+ * purchase-order.service.js's generateInvoiceHtml. A GRN has no unit/department of its own —
+ * the "requesting unit" for the letterhead is resolved through its PO's originating Indent
+ * (purchaseOrder.indent.unit), same fallback chain as indent/PO printing.
+ */
+exports.generateInvoiceHtml = async (req) => {
+	const { id } = req.params;
+	const { org_id } = req.user;
+
+	const grn = await GoodsReceiptNote.findOne({
+		where: { id, org_id },
+		include: [
+			{
+				model: GoodsReceiptNoteItem,
+				as: 'items',
+				include: [
+					{ model: PurchaseOrderItem, as: 'purchaseOrderItem' },
+					{
+						model: QcInspectionItem,
+						as: 'qcInspectionItem',
+						include: [{ model: QcInspection, as: 'inspection', attributes: ['qc_no'] }],
+					},
+				],
+			},
+			{
+				model: PurchaseOrder,
+				as: 'purchaseOrder',
+				include: [{ model: Indent, as: 'indent', include: [{ model: MasterUnit, as: 'unit' }] }],
+			},
+		],
+	});
+
+	if (!grn) throw new AppError('Material Receipt Note not found', StatusCodes.NOT_FOUND);
+
+	const response = await calculateGrnInvoice(grn);
+	const html = await generateInvoiceHTML({ ...response, copyTitle: 'MRN COPY' }, 'mrnTemplate');
+	return `<div class="preview-page">\n${html}\n</div>`;
+};
+
+exports.downloadInvoicePdf = async (req) => {
+	const { html = '' } = req.body;
+	const pdfPath = await generateInvoiceHTMLPDF(html, 'mrnTemplate', { multi: true });
+	return pdfPath;
+};
+
+async function calculateGrnInvoice(grn) {
+	const invoiceData = grn.get({ plain: true });
+
+	let businessLogo = null;
+	let business = null;
+	const unit = invoiceData.purchaseOrder?.indent?.unit;
+
+	const orgRole = await Role.findOne({ where: { code: 'org_admin' }, attributes: ['id'] });
+	const userData = await User.findOne({
+		where: { org_id: invoiceData.org_id },
+		include: [
+			{ model: organization, as: 'organization' },
+			{
+				model: Role,
+				as: 'userRoles',
+				through: { attributes: [] },
+				attributes: ['id', 'name', 'code'],
+				where: orgRole?.id,
+			},
+		],
+	});
+	if (userData?.logo) {
+		businessLogo = await getImageAsBase64DataUrl(userData.logo);
+	}
+
+	if (unit) {
+		business = {
+			org_name: unit.unit_name || unit.unitName || '',
+			city: unit.city,
+			pincode: unit.pincode,
+			org_gst_number: unit.gstin,
+			org_email: unit.company_email,
+		};
+		const unitAddressLine = [unit.address1, unit.address2, unit.landmark].filter(Boolean).join(', ');
+		business.address = `${unitAddressLine ? `${unitAddressLine},<br>` : ''}
+			${unit.city || ''} - ${unit.pincode || ''}, ${unit.state || ''}<br>`;
+	} else if (userData) {
+		business = userData.organization;
+		business.address = `${business.org_address || ''},<br>
+			${business.city || ''} - ${business.pincode || ''}, ${business?._state?.state_name || ''}<br>`;
+	}
+
+	const vendorInfo = invoiceData.purchaseOrder?.vendorInfo || {};
+	const poNumber =
+		invoiceData.purchaseOrder?.doc_number ||
+		`${invoiceData.purchaseOrder?.poPrefix || ''}${invoiceData.purchaseOrder?.poNo || ''}${invoiceData.purchaseOrder?.poPostfix || ''}`;
+
+	const productItems = (invoiceData.items || []).map((item) => {
+		const poItem = item.purchaseOrderItem || {};
+		const snapshot = poItem.productSnapshot || {};
+		const uomName =
+			poItem.uomSnapshot?.unit?.name ||
+			poItem.uomSnapshot?.unit?.code ||
+			snapshot.baseUnit?.name ||
+			snapshot.baseUnit?.code ||
+			'Base';
+
+		return {
+			...item,
+			item_name: snapshot.name || '',
+			item_code: snapshot.code || snapshot.item_code || '',
+			specification: poItem.specification || '',
+			uom_name: uomName,
+			ordered_qty: parseFloat(poItem.qty || 0),
+			received_qty: parseFloat(item.received_qty || 0),
+			qc_no: item.qcInspectionItem?.inspection?.qc_no || null,
+		};
+	});
+
+	return {
+		...invoiceData,
+		businessLogo,
+		business,
+		vendorInfo,
+		poNumber,
+		mrnNumber: `${invoiceData.grnPrefix || ''}${invoiceData.grnNo || ''}${invoiceData.grnPostfix || ''}`,
+		mrnDate: formatGrnDate(invoiceData.grn_date),
+		productItems,
+		totalOrderedQty: productItems.reduce((sum, item) => sum + item.ordered_qty, 0),
+		totalReceivedQty: productItems.reduce((sum, item) => sum + item.received_qty, 0),
+	};
+}
+
+function formatGrnDate(val) {
+	if (!val) return '';
+	try {
+		return new Date(val).toLocaleDateString('en-IN', {
+			day: '2-digit',
+			month: '2-digit',
+			year: 'numeric',
+		});
+	} catch {
+		return '';
+	}
+}
