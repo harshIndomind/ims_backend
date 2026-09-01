@@ -9,6 +9,7 @@ module.exports = {
     masterPeriodRepo: require('./masterPeriod.repository'),
     masterMajorHeadAmountRepo: require('./masterMajorHeadAmount.repository'),
     masterSubHeadAmountRepo: require('./masterSubHeadAmount.repository'),
+    masterSubHeadCostCenterAmountRepo: require('./masterSubHeadCostCenterAmount.repository'),
     budgetRepo: require('./budget.repository'),
     userRoleRepo: require('./userRole.repository'),
     AdminUserRepository: require('./admin-user.repository'),
