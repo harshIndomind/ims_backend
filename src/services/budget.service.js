@@ -10,6 +10,7 @@ const {
 	MasterMajorHeadAmount,
 	MasterSubHead,
 	MasterSubHeadAmount,
+	MasterSubHeadCostCenterAmount,
 	Budget,
 	IndentItem,
 	organization,
@@ -64,11 +65,66 @@ const validateBudgetPayload = (payload) => {
 	}
 };
 
+// A budget's cost center is not picked freely — it must be a real cost-centre split of
+// the chosen sub-head amount (MasterSubHeadCostCenterAmount), so major_head/sub_head/
+// period/major_head_amount/sub_head_amount/cost_center are all derived from that one
+// allocation row rather than trusted independently off the request body. This is what
+// keeps the ceiling-enforcement scope (the allocation) and the report/display tag
+// (Budget.cost_center_id) from ever disagreeing.
+const resolveCostCenterAllocation = async (org_id, payload) => {
+	const { sub_head_cost_center_amount_id, major_head_id, sub_head_id, period_id } = payload;
+
+	if (!sub_head_cost_center_amount_id) {
+		throw new AppError(
+			'A cost center allocation must be selected for this budget',
+			StatusCodes.BAD_REQUEST,
+		);
+	}
+
+	const allocation = await MasterSubHeadCostCenterAmount.findByPk(sub_head_cost_center_amount_id, {
+		include: [
+			{ model: MasterSubHeadAmount, as: 'subHeadAmount', attributes: ['id', 'major_head_amount_id'] },
+		],
+	});
+
+	if (!allocation) {
+		throw new AppError('Cost center allocation not found', StatusCodes.NOT_FOUND);
+	}
+	if (allocation.org_id && Number(allocation.org_id) !== Number(org_id)) {
+		throw new AppError(
+			'Cost center allocation does not belong to your organization',
+			StatusCodes.FORBIDDEN,
+		);
+	}
+	if (
+		(major_head_id && Number(major_head_id) !== Number(allocation.major_head_id)) ||
+		(sub_head_id && Number(sub_head_id) !== Number(allocation.sub_head_id)) ||
+		(period_id && Number(period_id) !== Number(allocation.period_id))
+	) {
+		throw new AppError(
+			'Cost center allocation does not match the selected major head, sub head and period',
+			StatusCodes.BAD_REQUEST,
+		);
+	}
+
+	return {
+		major_head_id: allocation.major_head_id,
+		sub_head_id: allocation.sub_head_id,
+		period_id: allocation.period_id,
+		major_head_amount_id: allocation.subHeadAmount.major_head_amount_id,
+		sub_head_amount_id: allocation.sub_head_amount_id,
+		cost_center_id: allocation.cost_center_id,
+		sub_head_cost_center_amount_id: allocation.id,
+	};
+};
+
 exports.createBudget = async (req, payload) => {
 	validateBudgetPayload(payload);
 	await validateBudgetDateInPeriod(payload.date, payload.period_id);
 	const { org_id } = req.user;
-	const budget = await budgetRepo.create({ ...payload, org_id });
+
+	const resolvedAllocation = await resolveCostCenterAllocation(org_id, payload);
+	const budget = await budgetRepo.create({ ...payload, ...resolvedAllocation, org_id });
 
 	if (budget) {
 		budgetID = `BUD-${String(budget.id).padStart(6, '0')}`;
@@ -114,7 +170,13 @@ exports.updateBudget = async (req, id, payload) => {
 	const effectivePeriodId = payload.period_id ?? budget.period_id;
 	await validateBudgetDateInPeriod(effectiveDate, effectivePeriodId);
 
-	const updated = await budgetRepo.updateById(id, payload);
+	const resolvedAllocation = await resolveCostCenterAllocation(req.user.org_id, {
+		...payload,
+		sub_head_cost_center_amount_id:
+			payload.sub_head_cost_center_amount_id ?? budget.sub_head_cost_center_amount_id,
+	});
+
+	const updated = await budgetRepo.updateById(id, { ...payload, ...resolvedAllocation });
 
 	await auditLogService.recordChange({
 		req,
