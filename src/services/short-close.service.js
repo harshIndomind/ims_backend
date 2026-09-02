@@ -384,9 +384,14 @@ exports.approveShortCloseRequest = async (req, id) => {
 						poWoItem.product_id,
 						poWoItem.selected_uom_id ?? null,
 						transaction,
+						{ req, source: 'short_close_released', sourceRefId: request.id },
 					);
 				} else {
-					await applyIndentQtyDeltaForWorkOrder(qty, doc.indent_id, poWoItem.product_id, transaction);
+					await applyIndentQtyDeltaForWorkOrder(qty, doc.indent_id, poWoItem.product_id, transaction, {
+						req,
+						source: 'short_close_released',
+						sourceRefId: request.id,
+					});
 				}
 			}
 

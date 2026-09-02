@@ -32,6 +32,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'payment_requisition_id',
 				as: 'deductions',
 			});
+			PaymentRequisition.hasMany(models.TdsLiability, {
+				foreignKey: 'payment_requisition_id',
+				as: 'tdsLiabilities',
+			});
 		}
 	}
 
@@ -177,6 +181,14 @@ module.exports = (sequelize, DataTypes) => {
 			},
 			fed_by: {
 				type: DataTypes.JSON,
+				allowNull: true,
+			},
+			created_by_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
+			updated_by_id: {
+				type: DataTypes.INTEGER,
 				allowNull: true,
 			},
 			authorized_by_id: {

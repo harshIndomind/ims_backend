@@ -9,6 +9,7 @@ module.exports = {
     masterPeriodRepo: require('./masterPeriod.repository'),
     masterMajorHeadAmountRepo: require('./masterMajorHeadAmount.repository'),
     masterSubHeadAmountRepo: require('./masterSubHeadAmount.repository'),
+    masterSubHeadCostCenterAmountRepo: require('./masterSubHeadCostCenterAmount.repository'),
     budgetRepo: require('./budget.repository'),
     userRoleRepo: require('./userRole.repository'),
     AdminUserRepository: require('./admin-user.repository'),
@@ -46,6 +47,6 @@ module.exports = {
     masterQcRejectionReasonRepository: require('./masterQcRejectionReason.repository'),
     shortCloseRequestItemsRepository: require('./shortCloseRequestItems.repository'),
     masterShortCloseReasonRepository: require('./masterShortCloseReason.repository'),
-     additionalNoteTemplateRepo: require('./additionalNoteTemplate.repository'),
-    
+    additionalNoteTemplateRepo: require('./additionalNoteTemplate.repository'),
+    indentItemQtyLogRepository: require('./indentItemQtyLog.repository'),
 }

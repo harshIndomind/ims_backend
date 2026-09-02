@@ -10,6 +10,13 @@ router.get('/generate-grn-number', checkPermission('goods-receipt-note', 'view')
 router.get('/', checkPermission('goods-receipt-note', 'view'), grnController.getAllGRNs);
 router.post('/', checkPermission('goods-receipt-note', 'create'), grnController.createGRN);
 router.get('/purchase-order/:purchaseOrderId', checkPermission('goods-receipt-note', 'view'), grnController.getGRNsByPurchaseOrder);
+router.get(
+	'/purchase-order/:purchaseOrderId/receivable',
+	checkPermission('goods-receipt-note', 'view'),
+	grnController.getReceivableLinesForPurchaseOrder,
+);
+router.post('/:id/html', checkPermission('goods-receipt-note', 'view'), grnController.generateInvoiceHtml);
+router.post('/:id/pdf', checkPermission('goods-receipt-note', 'view'), grnController.downloadInvoicePdf);
 router.get('/:id', checkPermission('goods-receipt-note', 'view'), grnController.getGRNById);
 router.patch('/:id/cancel', checkPermission('goods-receipt-note', 'cancel'), grnController.cancelGRN);
 

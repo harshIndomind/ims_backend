@@ -1,6 +1,24 @@
 const ExcelJS = require('exceljs');
 const AppError = require('../utils/AppError');
 const logger = require('../utils/logger');
+const { indentItemQtyLogRepository } = require('../repository/index');
+
+const QTY_LOG_SOURCE_LABELS = {
+	indent_approved: 'Indent Approved',
+	po_submitted: 'PO Submitted',
+	po_updated: 'PO Updated',
+	po_deleted: 'PO Deleted',
+	wo_created: 'WO Created',
+	wo_updated: 'WO Updated',
+	wo_deleted: 'WO Deleted',
+	short_close_released: 'Short Close Released',
+	reissued: 'Re-issued',
+};
+
+const QTY_LOG_FIELD_LABELS = {
+	qty_for_purchase_order: 'Qty For Purchase Order',
+	balance_indent_qty: 'Balance / Re-issue Qty',
+};
 
 exports.generateExcel = async (data, filePath) => {
 	const result = data.rows.map((d) => d.get({ plain: true }));
@@ -159,8 +177,71 @@ exports.generateExcel = async (data, filePath) => {
 		autoFitColumns(worksheet)
 	});
 
+	await addQtyHistorySheet(workbook, result);
+
 	await workbook.xlsx.writeFile(filePath);
 };
+
+// Separate sheet: every logged change to an indent item's qty_for_purchase_order /
+// balance_indent_qty balances — indent approval, PO/WO create/submit/update/delete, Short
+// Close release, and manual re-issue. See indentQtyLog.service.js — only events recorded
+// after that logging shipped are present; nothing before it can be reconstructed.
+async function addQtyHistorySheet(workbook, indents) {
+	const indentIds = indents.map((i) => i.id);
+	if (indentIds.length === 0) return;
+
+	const logs = await indentItemQtyLogRepository.findByIndentIds(indentIds, {
+		include: [
+			{ association: 'indent', attributes: ['indent_no'] },
+			{ association: 'indentItem', attributes: ['item_name', 'item_code'] },
+		],
+		raw: false,
+	});
+
+	const sheet = workbook.addWorksheet('Reissue & Qty History');
+
+	const headerRow = sheet.addRow([
+		'Indent No',
+		'Product Name',
+		'Product Code',
+		'Field',
+		'Source',
+		'Source Ref ID',
+		'Previous Qty',
+		'Delta',
+		'New Qty',
+		'Performed By',
+		'Date',
+		'Remarks',
+	]);
+	headerRow.eachCell((cell) => {
+		cell.font = { bold: true };
+		cell.fill = {
+			type: 'pattern',
+			pattern: 'solid',
+			fgColor: { argb: 'FFD9EAF7' },
+		};
+	});
+
+	logs.forEach((log) => {
+		sheet.addRow([
+			log.indent?.indent_no || log.indent_id,
+			log.indentItem?.item_name || '-',
+			log.indentItem?.item_code || '-',
+			QTY_LOG_FIELD_LABELS[log.field] || log.field,
+			QTY_LOG_SOURCE_LABELS[log.source] || log.source,
+			log.source_ref_id ?? '-',
+			log.previous_value,
+			log.delta,
+			log.new_value,
+			log.performed_by?.name || log.performed_by?.email || '-',
+			log.createdAt ? new Date(log.createdAt).toLocaleString() : '-',
+			log.remarks || '-',
+		]);
+	});
+
+	autoFitColumns(sheet);
+}
 
 function autoFitColumns(worksheet) {
 	worksheet.columns.forEach((column) => {

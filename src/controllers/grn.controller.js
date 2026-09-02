@@ -27,7 +27,22 @@ exports.getGRNsByPurchaseOrder = catchAsync(async (req, res) => {
 	ApiResponse.send(res, 200, 'Goods Receipt Notes fetched successfully', grns);
 });
 
+exports.getReceivableLinesForPurchaseOrder = catchAsync(async (req, res) => {
+	const result = await grnService.getReceivableLinesForPurchaseOrder(req, req.params.purchaseOrderId);
+	ApiResponse.send(res, 200, 'Receivable lines fetched successfully', result);
+});
+
 exports.getGRNById = catchAsync(async (req, res) => {
 	const grn = await grnService.getGRNById(req, req.params.id);
 	ApiResponse.send(res, 200, 'Goods Receipt Note fetched successfully', grn);
+});
+
+exports.generateInvoiceHtml = catchAsync(async (req, res) => {
+	const html = await grnService.generateInvoiceHtml(req);
+	res.json({ html });
+});
+
+exports.downloadInvoicePdf = catchAsync(async (req, res) => {
+	const pdfUrl = await grnService.downloadInvoicePdf(req);
+	res.json({ pdfUrl });
 });

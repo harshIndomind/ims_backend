@@ -224,6 +224,16 @@ exports.getIndentById = catchAsync(async (req, res) => {
 	});
 });
 
+exports.generateInvoiceHtml = catchAsync(async (req, res) => {
+	const html = await indentService.generateInvoiceHtml(req);
+	res.json({ html });
+});
+
+exports.downloadInvoicePdf = catchAsync(async (req, res) => {
+	const pdfUrl = await indentService.downloadInvoicePdf(req);
+	res.json({ pdfUrl });
+});
+
 exports.getIndentWorkflow = catchAsync(async (req, res) => {
 	const { id } = req.params;
 	const data = await indentService.getIndentWorkflow(req, id);

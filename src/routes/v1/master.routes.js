@@ -6,6 +6,7 @@ router.use(`/sub-head`, require('./masterSubHead.routes'));
 router.use(`/period`, require('./masterPeriod.routes'));
 router.use(`/major-head-amount`, require('./masterMajorHeadAmount.routes'));
 router.use(`/sub-head-amount`, require('./masterSubHeadAmount.routes'));
+router.use(`/sub-head-cost-center-amount`, require('./masterSubHeadCostCenterAmount.routes'));
 router.use(`/budget`, require('./budget.routes'));
 router.use(`/cost-center`, require('./costCenter.routes'));
 router.use(`/accounts`, require('./masterAccounts.routes'));

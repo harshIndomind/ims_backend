@@ -36,6 +36,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'cost_center_id',
 				as: 'cost_center',
 			});
+			Budget.belongsTo(models.MasterSubHeadCostCenterAmount, {
+				foreignKey: 'sub_head_cost_center_amount_id',
+				as: 'subHeadCostCenterAmount',
+			});
 			Budget.belongsTo(models.Department, {
 				foreignKey: 'department_id',
 				as: 'department',
@@ -100,6 +104,10 @@ module.exports = (sequelize, DataTypes) => {
 			},
 			sub_head_amount_id: {
 				type: DataTypes.INTEGER,
+			},
+			sub_head_cost_center_amount_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
 			},
 			budget_head_id: {
 				type: DataTypes.STRING(50),

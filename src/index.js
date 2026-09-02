@@ -162,6 +162,16 @@ async function prepareAndStartServer() {
 	);
 
 	app.use(
+		`${apiPrefix}/v1/tds-liabilities`,
+		require('./routes/v1/tds-liability.routes'),
+	);
+
+	app.use(
+		`${apiPrefix}/v1/tds-settlements`,
+		require('./routes/v1/tds-settlement.routes'),
+	);
+
+	app.use(
 		`${apiPrefix}/v1/workflow-definitions`,
 		require('./routes/v1/workflow-definitions.routes'),
 	);

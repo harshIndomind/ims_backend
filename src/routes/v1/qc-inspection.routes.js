@@ -62,6 +62,9 @@ router.post(
 	qcInspectionController.uploadAttachment,
 );
 
+router.post('/:id/html', checkPermission('quality-control', 'view'), qcInspectionController.generateInvoiceHtml);
+router.post('/:id/pdf', checkPermission('quality-control', 'view'), qcInspectionController.downloadInvoicePdf);
+
 router.get('/:id', checkPermission('quality-control', 'view'), qcInspectionController.getInspectionById);
 
 module.exports = router;

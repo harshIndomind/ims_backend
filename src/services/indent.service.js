@@ -9,17 +9,27 @@ const {
 	IndentRepository,
 	IndentItemRepository,
 	IndentSerialRepository,
+	indentItemQtyLogRepository,
 } = require('../repository/index');
 const { fetch } = require('undici');
 const {
 	Indent,
 	Budget,
+	CostCenter,
 	IndentSerialItem,
 	IndentItem,
 	MasterUnit,
 	IndentDocument,
+	Department,
+	MasterPeriod,
+	MasterPlaceOfUse,
+	IndentRemark,
+	User,
+	organization,
+	Role,
 } = require('../models/index');
 const AppError = require('../utils/AppError');
+const { roundQty } = require('../utils/qty');
 const { Op, literal } = require('sequelize');
 const logger = require('../utils/logger');
 const { StatusCodes } = require('http-status-codes');
@@ -27,7 +37,10 @@ const parseDate = require('../utils/parse-date');
 const crypto = require('crypto');
 const workflowEngine = require('./workflowEngine.service');
 const auditLogService = require('./auditLog.service');
+const indentQtyLogService = require('./indentQtyLog.service');
 const { createWorkflowDocumentService } = require('./workflowDocument.factory');
+const { generateInvoiceHTML, generateInvoiceHTMLPDF } = require('../pdf/htmlPdfGenerator');
+const { getImageAsBase64DataUrl } = require('../utils/s3Bucket');
 // const dataVisibility = require('./dataVisibility.service');
 
 const DOCUMENT_TYPE = 'indent';
@@ -362,6 +375,13 @@ exports.getAllIndents = async (req) => {
 						model: Budget,
 						as: 'budget',
 						attributes: ['budget_id'],
+						include: [
+							{
+								model: CostCenter,
+								as: 'cost_center',
+								attributes: ['id', 'name', 'code'],
+							},
+						],
 					},
 					{
 						model: IndentSerialItem,
@@ -442,11 +462,27 @@ exports.verifyIndentQuantity = async (req, indent_ids) => {
 		}
 
 		if (Array.isArray(indent.IndentItems) && indent.IndentItems.length > 0) {
-			console.log('indent.IndentItems ', indent.IndentItems);
+			// Plain objects, not raw Sequelize instances — matches verifyIndent/approveIndent's
+			// plainIndentItems pattern elsewhere in this file, and keeps the cross-service
+			// payload to VCP lean instead of serializing full model/association metadata.
+			const plainItems = indent.IndentItems.map((i) => i.get({ plain: true }));
+			console.log('indent.IndentItems ', plainItems);
 
 			const { allocationResults } =
-				await verifyIndentQuantityWithProductServices(req, indent.IndentItems);
-			verifiedQuantities = allocationResults ?? [];
+				await verifyIndentQuantityWithProductServices(req, plainItems);
+
+			// VCP's allocationResults only carry a bare uom_id (and only for some
+			// stock types) — the human-readable label lives on IndentItem itself
+			// (uom_name, denormalized at indent-creation time), so merge it back
+			// in here for the verify/approve modal to display.
+			const uomByItemId = new Map(
+				plainItems.map((i) => [i.id, { uom_id: i.uom_id, uom_name: i.uom_name }]),
+			);
+			verifiedQuantities = (allocationResults ?? []).map((r) => ({
+				...r,
+				uom_id: r.uom_id ?? uomByItemId.get(r.indent_item_id)?.uom_id ?? null,
+				uom_name: uomByItemId.get(r.indent_item_id)?.uom_name ?? null,
+			}));
 
 			console.log('Verify Indent Quantity Response ', allocationResults);
 		}
@@ -665,9 +701,11 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 		for (const i of indent.IndentItems) {
 			const allocation = allocationMap.get(i.product_id);
 			const dryRun = dryRunMap.get(i.product_id);
-			const issuedQty = allocation?.issued_qty || 0;
+			const issuedQty = roundQty(allocation?.issued_qty || 0);
 			const baseIssuedQty = allocation?.base_issued_qty ?? issuedQty;
-			const purchaseQty = Math.max(0, parseFloat(i.qty || 0) - issuedQty);
+			const purchaseQty = roundQty(Math.max(0, parseFloat(i.qty || 0) - issuedQty));
+			const previousQtyForPurchaseOrder = parseFloat(i.qty_for_purchase_order || 0);
+			const previousBalanceIndentQty = parseFloat(i.balance_indent_qty || 0);
 
 			await i.update(
 				{
@@ -685,6 +723,31 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 				},
 				{ transaction },
 			);
+
+			await indentQtyLogService.record({
+				req,
+				indentItemId: i.id,
+				indentId: id,
+				productId: i.product_id,
+				field: 'qty_for_purchase_order',
+				delta: purchaseQty - previousQtyForPurchaseOrder,
+				previousValue: previousQtyForPurchaseOrder,
+				newValue: purchaseQty,
+				source: 'indent_approved',
+				transaction,
+			});
+			await indentQtyLogService.record({
+				req,
+				indentItemId: i.id,
+				indentId: id,
+				productId: i.product_id,
+				field: 'balance_indent_qty',
+				delta: purchaseQty - previousBalanceIndentQty,
+				previousValue: previousBalanceIndentQty,
+				newValue: purchaseQty,
+				source: 'indent_approved',
+				transaction,
+			});
 
 			if (i.stock_type === 'serial' && allocation?.issuedSerials?.length > 0) {
 				await IndentSerialRepository.update(
@@ -751,14 +814,59 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 };
 
 /**
+ * A batch-type IndentItem's `batch_id` is pinned to whichever batch was selected (FEFO
+ * suggestion, user-editable) at indent-creation time. verify-stock only ever checks that
+ * one batch's qty — so if that batch was empty (hence the backorder) and stock later
+ * arrives in a *different*, newly-received batch, the pinned batch_id never sees it and
+ * re-issue keeps reporting 0 available forever. Re-resolve to whichever current batch has
+ * stock, FEFO order (soonest expiry first, undated last), same policy as the frontend's
+ * indent-creation suggestion — see docs/architecture/vcp-batch-fifo-fefo-design.
+ */
+async function resolveCurrentBatchIdForReissue(req, productId) {
+	const url = `${VCP_SERVICE_API_BASE_URL}${VCP_SERVICE_PRODUCT_ENDPOINT}/${productId}`;
+	const token = req.cookies.accessToken;
+	const response = await fetch(url, {
+		method: 'GET',
+		// VCP's verifyToken reads req.cookies.accessToken, not the Authorization header —
+		// this is a server-to-server fetch so no cookie jar carries it automatically.
+		headers: { Authorization: `Bearer ${token}`, Cookie: `accessToken=${token}` },
+	});
+	if (!response.ok) {
+		logger.warn('resolveCurrentBatchIdForReissue: product fetch failed', {
+			productId,
+			status: response.status,
+		});
+		return null;
+	}
+
+	const { data } = await response.json();
+	const batches = (data?.batches || []).filter((b) => parseFloat(b.qty || 0) > 0);
+	logger.info('resolveCurrentBatchIdForReissue', {
+		productId,
+		allBatches: (data?.batches || []).map((b) => ({ id: b.id, qty: b.qty, expiry_date: b.expiry_date })),
+		batchesWithStock: batches.map((b) => b.id),
+	});
+	if (batches.length === 0) return null;
+
+	batches.sort((a, b) => {
+		const aTime = a.expiry_date ? new Date(a.expiry_date).getTime() : Infinity;
+		const bTime = b.expiry_date ? new Date(b.expiry_date).getTime() : Infinity;
+		return aTime - bTime;
+	});
+	return batches[0].id;
+}
+
+/**
  * Shared by previewReissue and reissuePendingQuantity: fetches the approved indent and
  * its items still owed (balance_indent_qty > 0), and builds the request payload VCP's
  * verify-stock expects. For serial items, the stored serial_items still includes ones
  * already issued at approval time; VCP's verify-stock requires every serial it's handed
  * to currently be unsold (it throws if any aren't), so only the not-yet-issued serials
- * may be sent here.
+ * may be sent here. For batch items, batch_id is re-resolved to whatever currently has
+ * stock (see resolveCurrentBatchIdForReissue) instead of the stale batch_id captured at
+ * indent creation.
  */
-async function getPendingReissueItems(indentId) {
+async function getPendingReissueItems(req, indentId) {
 	const indent = await fetchIndentForWorkflowAction(indentId);
 
 	if (indent.status !== 'approved') {
@@ -773,13 +881,26 @@ async function getPendingReissueItems(indentId) {
 	);
 
 	// Request exactly what's still owed — VCP decides how much of that is actually available now.
-	const plainPendingItems = pendingItems.map((i) => {
-		const plain = i.get({ plain: true });
-		if (plain.stock_type === 'serial') {
-			plain.serial_items = (plain.serial_items || []).filter((s) => !s.is_issued);
-		}
-		return { ...plain, qty: parseFloat(i.balance_indent_qty) };
-	});
+	const plainPendingItems = await Promise.all(
+		pendingItems.map(async (i) => {
+			const plain = i.get({ plain: true });
+			if (plain.stock_type === 'serial') {
+				plain.serial_items = (plain.serial_items || []).filter((s) => !s.is_issued);
+			}
+			if (plain.stock_type === 'batch') {
+				const originalBatchId = plain.batch_id;
+				const currentBatchId = await resolveCurrentBatchIdForReissue(req, plain.product_id);
+				if (currentBatchId != null) plain.batch_id = currentBatchId;
+				logger.info('getPendingReissueItems: batch resolution', {
+					product_id: plain.product_id,
+					originalBatchId,
+					resolvedBatchId: currentBatchId,
+					finalBatchId: plain.batch_id,
+				});
+			}
+			return { ...plain, qty: parseFloat(i.balance_indent_qty) };
+		}),
+	);
 
 	return { indent, pendingItems, plainPendingItems };
 }
@@ -790,7 +911,7 @@ async function getPendingReissueItems(indentId) {
  * before committing to a re-issue. Mirrors verifyIndent's advisory dry run.
  */
 exports.previewReissue = async (req, indentId) => {
-	const { pendingItems, plainPendingItems } = await getPendingReissueItems(indentId);
+	const { pendingItems, plainPendingItems } = await getPendingReissueItems(req, indentId);
 	if (pendingItems.length === 0) {
 		return { indent_id: indentId, items: [] };
 	}
@@ -799,13 +920,18 @@ exports.previewReissue = async (req, indentId) => {
 		plainPendingItems,
 		false,
 	);
-	const allocationMap = new Map(allocationResults.map((a) => [a.product_id, a]));
+	// Keyed by indent_item_id, not product_id — an indent can carry two lines for the same
+	// product in different UOMs (e.g. one CTN line, one PCS line), and keying by product_id
+	// let the second line's allocation silently overwrite the first's in the map.
+	const allocationMap = new Map(allocationResults.map((a) => [a.indent_item_id, a]));
 
 	const items = pendingItems.map((item) => {
-		const allocation = allocationMap.get(item.product_id);
+		const allocation = allocationMap.get(item.id);
 		return {
+			indent_item_id: item.id,
 			product_id: item.product_id,
 			item_name: item.item_name,
+			uom_name: item.uom_name,
 			pending_qty: parseFloat(item.balance_indent_qty),
 			available_now: parseFloat(allocation?.issued_qty || 0),
 			still_short: parseFloat(allocation?.qty_for_purchase_order || 0),
@@ -828,7 +954,7 @@ exports.previewReissue = async (req, indentId) => {
  * no longer there.
  */
 exports.reissuePendingQuantity = async (req, indentId) => {
-	const { pendingItems, plainPendingItems } = await getPendingReissueItems(indentId);
+	const { pendingItems, plainPendingItems } = await getPendingReissueItems(req, indentId);
 	if (pendingItems.length === 0) {
 		return { indent_id: indentId, reissued: [] };
 	}
@@ -840,24 +966,33 @@ exports.reissuePendingQuantity = async (req, indentId) => {
 		true,
 		reissueIdempotencyKey,
 	);
-	const allocationMap = new Map(allocationResults.map((a) => [a.product_id, a]));
+	// See previewReissue's comment above — must key by indent_item_id, not product_id, or a
+	// second line for the same product overwrites the first's allocation in this map.
+	const allocationMap = new Map(allocationResults.map((a) => [a.indent_item_id, a]));
 
 	const transaction = await sequelize.transaction();
 	const reissued = [];
 	try {
 		for (const item of pendingItems) {
-			const allocation = allocationMap.get(item.product_id);
-			const newlyIssued = parseFloat(allocation?.issued_qty || 0);
+			const allocation = allocationMap.get(item.id);
+			const newlyIssued = roundQty(allocation?.issued_qty || 0);
 			if (newlyIssued <= 0) continue;
 
 			const newlyIssuedBase = parseFloat(allocation?.base_issued_qty ?? allocation?.issued_qty ?? 0);
-			const updatedBalance = parseFloat(item.balance_indent_qty) - newlyIssued;
+			const previousBalance = parseFloat(item.balance_indent_qty);
+			const updatedBalance = roundQty(previousBalance - newlyIssued);
 			await item.update(
 				{
-					qty_issued: parseFloat(item.qty_issued || 0) + newlyIssued,
+					qty_issued: roundQty(parseFloat(item.qty_issued || 0) + newlyIssued),
 					base_qty_issued: parseFloat(item.base_qty_issued || 0) + newlyIssuedBase,
 					balance_indent_qty: updatedBalance,
-					qty_updated_by_verifier: parseFloat(item.qty_updated_by_verifier || 0) + newlyIssued
+					qty_updated_by_verifier: roundQty(parseFloat(item.qty_updated_by_verifier || 0) + newlyIssued),
+					// Keep the item's batch_id in sync with whichever batch this re-issue actually
+					// drew from (resolveCurrentBatchIdForReissue may have picked a different, newer
+					// batch than the one recorded at indent creation).
+					...(item.stock_type === 'batch' && allocation?.batch_id != null
+						? { batch_id: allocation.batch_id }
+						: {}),
 				},
 				{ transaction },
 			);
@@ -868,6 +1003,19 @@ exports.reissuePendingQuantity = async (req, indentId) => {
 					{ where: { serial_no: { [Op.in]: allocation.issuedSerials } }, transaction },
 				);
 			}
+
+			await indentQtyLogService.record({
+				req,
+				indentItemId: item.id,
+				indentId,
+				productId: item.product_id,
+				field: 'balance_indent_qty',
+				delta: -newlyIssued,
+				previousValue: previousBalance,
+				newValue: updatedBalance,
+				source: 'reissued',
+				transaction,
+			});
 
 			reissued.push({
 				product_id: item.product_id,
@@ -1000,6 +1148,169 @@ exports.getIndentById = async (req, id) => {
 exports.getIndentWorkflow = async (req, id) => {
 	return indentWorkflow.getWorkflow(req, id);
 };
+
+/**
+ * Print-preview HTML for an Indent, mirroring purchase-order.service.js /
+ * work-order.service.js's generateInvoiceHtml — but showing requested vs. issued vs.
+ * balance_indent_qty (pending re-issue) per item, plus the indent_item_qty_log history of
+ * `reissued` events (see indentQtyLog.service.js), since an Indent has no vendor/tax data
+ * of its own to print.
+ */
+exports.generateInvoiceHtml = async (req) => {
+	const { id } = req.params;
+
+	const indent = await IndentRepository.findById({
+		where: { id },
+		include: [
+			{ model: MasterUnit, as: 'unit' },
+			{ model: Department, as: 'department' },
+			{ model: MasterPeriod, as: 'period' },
+			{ model: MasterPlaceOfUse, as: 'placeOfUse' },
+			{ model: IndentRemark, as: 'remark' },
+			{
+				model: IndentItem,
+				as: 'IndentItems',
+				include: [{ model: Budget, as: 'budget' }],
+			},
+		],
+	});
+
+	if (!indent) throw new AppError('Indent not found', StatusCodes.NOT_FOUND);
+
+	// findByIndentIds spreads `options` over its default `where`, replacing it rather than
+	// merging, so indent_id must be included here alongside the extra filters.
+	const qtyLogs = await indentItemQtyLogRepository.findByIndentIds([id], {
+		where: { indent_id: id, field: 'balance_indent_qty', source: 'reissued' },
+	});
+
+	const response = await calculateIndentInvoice(indent, qtyLogs);
+
+	const html = await generateInvoiceHTML({ ...response, copyTitle: 'INDENT COPY' }, 'indentTemplate');
+	return `<div class="preview-page">\n${html}\n</div>`;
+};
+
+exports.downloadInvoicePdf = async (req) => {
+	const { html = '' } = req.body;
+	const pdfPath = await generateInvoiceHTMLPDF(html, 'indentTemplate', { multi: true });
+	return pdfPath;
+};
+
+async function calculateIndentInvoice(indent, qtyLogs) {
+	const invoiceData = indent.get({ plain: true });
+
+	const itemById = new Map(
+		(invoiceData.IndentItems || []).map((item) => [item.id, item]),
+	);
+
+	// Logo lives on the org-admin user, not on MasterUnit, so userData must be fetched
+	// regardless of which branch supplies `business` below — the original version only
+	// looked it up in the no-unit fallback branch, which meant the logo never rendered for
+	// the (near-universal) case of an indent with a unit_id set.
+	let businessLogo = null;
+	let business = null;
+	const unit = invoiceData.unit;
+
+	const orgRole = await Role.findOne({ where: { code: 'org_admin' }, attributes: ['id'] });
+	const userData = await User.findOne({
+		where: { org_id: invoiceData.org_id },
+		include: [
+			{ model: organization, as: 'organization' },
+			{
+				model: Role,
+				as: 'userRoles',
+				through: { attributes: [] },
+				attributes: ['id', 'name', 'code'],
+				where: orgRole?.id,
+			},
+		],
+	});
+	if (userData?.logo) {
+		businessLogo = await getImageAsBase64DataUrl(userData.logo);
+	}
+
+	if (unit) {
+		business = {
+			org_name: unit.unit_name || unit.unitName || '',
+			city: unit.city,
+			pincode: unit.pincode,
+			org_gst_number: unit.gstin,
+			org_email: unit.company_email,
+		};
+		const unitAddressLine = [unit.address1, unit.address2, unit.landmark].filter(Boolean).join(', ');
+		business.address = `${unitAddressLine ? `${unitAddressLine},<br>` : ''}
+			${unit.city || ''} - ${unit.pincode || ''}, ${unit.state || ''}<br>`;
+	} else if (userData) {
+		business = userData.organization;
+		business.address = `${business.org_address || ''},<br>
+			${business.city || ''} - ${business.pincode || ''}, ${business?._state?.state_name || ''}<br>`;
+	}
+
+	const productItems = (invoiceData.IndentItems || []).map((item) => {
+		const requestedQty = parseFloat(item.qty || 0);
+		const issuedQty = parseFloat(item.qty_issued || 0);
+		const pendingQty = parseFloat(item.balance_indent_qty || 0);
+		const qtyForPurchaseOrder = parseFloat(item.qty_for_purchase_order || 0);
+
+		let statusLabel;
+		if (pendingQty > 0) {
+			statusLabel = 'Pending Re-issue';
+		} else if (requestedQty > 0 && issuedQty >= requestedQty) {
+			statusLabel = 'Fully Issued';
+		} else if (issuedQty > 0) {
+			statusLabel = 'Partially Issued';
+		} else {
+			statusLabel = 'Open';
+		}
+
+		return {
+			...item,
+			requestedQty,
+			issuedQty,
+			pendingQty,
+			qtyForPurchaseOrder,
+			statusLabel,
+		};
+	});
+
+	const reissueHistory = (qtyLogs || []).map((log) => {
+		const plain = log.get ? log.get({ plain: true }) : log;
+		const sourceItem = itemById.get(plain.indent_item_id);
+		return {
+			...plain,
+			item_name: sourceItem?.item_name || `Item #${plain.indent_item_id}`,
+			uom_name: sourceItem?.uom_name || '',
+			issued_qty: Math.abs(parseFloat(plain.delta || 0)),
+		};
+	});
+
+	return {
+		...invoiceData,
+		businessLogo,
+		business,
+		combineInvoiceNumber: invoiceData.indent_no || `IND-${invoiceData.id}`,
+		indentDate: formatIndentDate(invoiceData.indent_date),
+		lastDate: formatIndentDate(invoiceData.last_date),
+		productItems,
+		reissueHistory,
+		totalRequestedQty: productItems.reduce((sum, item) => sum + item.requestedQty, 0),
+		totalIssuedQty: productItems.reduce((sum, item) => sum + item.issuedQty, 0),
+		totalPendingQty: productItems.reduce((sum, item) => sum + item.pendingQty, 0),
+		pendingReissueItemCount: productItems.filter((item) => item.pendingQty > 0).length,
+	};
+}
+
+function formatIndentDate(val) {
+	if (!val) return '';
+	try {
+		return new Date(val).toLocaleDateString('en-IN', {
+			day: '2-digit',
+			month: '2-digit',
+			year: 'numeric',
+		});
+	} catch {
+		return '';
+	}
+}
 
 exports.reopenIndent = async (req, id, remarks) => {
 	return indentWorkflow.reopen(req, id, remarks, {

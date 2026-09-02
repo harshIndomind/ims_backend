@@ -44,7 +44,7 @@ exports.getVisibilityTree = async (userId, orgId) => {
 			order: [['unitName', 'ASC']],
 		}),
 		Department.findAll({
-			where: { org_id: orgId, unit_id: { [Op.ne]: null } },
+			where: { org_id: orgId, unit_id: { [Op.ne]: null }, is_active: 1 },
 			attributes: ['id', 'name', 'unit_id', 'depCd'],
 			order: [['name', 'ASC']],
 		}),
@@ -102,7 +102,7 @@ exports.getMyVisibility = async (user) => {
 				order: [['unitName', 'ASC']],
 			}),
 			Department.findAll({
-				where: { org_id: user.org_id, unit_id: { [Op.ne]: null } },
+				where: { org_id: user.org_id, unit_id: { [Op.ne]: null }, is_active: 1 },
 				attributes: ['id', 'name', 'unit_id', 'depCd', 'depName'],
 				order: [['name', 'ASC']],
 			}),
@@ -110,7 +110,7 @@ exports.getMyVisibility = async (user) => {
 		const mappings = departments.map((d) => ({ unit_id: d.unit_id, department_id: d.id }));
 		return {
 			units: units.map((u) => ({ id: u.id, unitName: u.unitName || u.unit_name, unitCd: u.unitCd, unit_short_name: u.unit_short_name })),
-			departments: departments.map((d) => ({ id: d.id, name: d.name, unit_id: d.unit_id, depCd: d.depCd })),
+			departments: departments.map((d) => ({ id: d.id, name: d.name, unit_id: d.unit_id, depCd: d.depCd, })),
 			mappings,
 		};
 	}
@@ -130,7 +130,7 @@ exports.getMyVisibility = async (user) => {
 			order: [['unitName', 'ASC']],
 		}),
 		Department.findAll({
-			where: { id: { [Op.in]: deptIds } },
+			where: { id: { [Op.in]: deptIds }, is_active: 1 },
 			attributes: ['id', 'name', 'unit_id', 'depCd', 'depName'],
 			order: [['name', 'ASC']],
 		}),
@@ -177,7 +177,7 @@ exports.saveVisibility = async (userId, mappings, orgId, createdBy) => {
 				attributes: ['id'],
 			}),
 			Department.findAll({
-				where: { id: { [Op.in]: deptIds }, org_id: orgId },
+				where: { id: { [Op.in]: deptIds }, org_id: orgId, is_active: 1 },
 				attributes: ['id'],
 			}),
 		]);

@@ -10,9 +10,17 @@ const {
 	PurchaseOrderItem,
 	QcInspection,
 	QcInspectionItem,
+	Indent,
+	MasterUnit,
+	User,
+	organization,
+	Role,
 } = require('../models/index');
+const { shortCloseRequestItemsRepository } = require('../repository/index');
 const AppError = require('../utils/AppError');
 const logger = require('../utils/logger');
+const { generateInvoiceHTML, generateInvoiceHTMLPDF } = require('../pdf/htmlPdfGenerator');
+const { getImageAsBase64DataUrl } = require('../utils/s3Bucket');
 const {
 	VCP_SERVICE_API_BASE_URL,
 	VCP_SERVICE_PRODUCT_ENDPOINT,
@@ -65,7 +73,7 @@ exports.createGRN = async (req) => {
 	const { purchase_order_id, grnDetail = {}, grn_date, remarks, items } = req.body;
 
 	if (!Array.isArray(items) || items.length === 0) {
-		throw new AppError('GRN must include at least one item', StatusCodes.BAD_REQUEST);
+		throw new AppError('MRN must include at least one item', StatusCodes.BAD_REQUEST);
 	}
 
 	const po = await PurchaseOrder.findOne({
@@ -107,7 +115,7 @@ exports.createGRN = async (req) => {
 		}
 		if (qcItem.inspection.status !== 'approved') {
 			throw new AppError(
-				`Cannot create a GRN from QC inspection ${qcItem.inspection.qc_no} — it is "${qcItem.inspection.status}", not approved`,
+				`Cannot create an MRN from QC inspection ${qcItem.inspection.qc_no} — it is "${qcItem.inspection.status}", not approved`,
 				StatusCodes.CONFLICT,
 			);
 		}
@@ -170,11 +178,15 @@ exports.createGRN = async (req) => {
 
 	// --- Phase 1: record the receipt in VCP's stock ledger (always succeeds — no availability check for a receipt) ---
 	const receiptIdempotencyKey = `GRN-PO-${purchase_order_id}-${crypto.randomUUID()}`;
-	await callVcpStockEndpoint(req, '/receive-stock', {
+	const vcpReceipt = await callVcpStockEndpoint(req, '/receive-stock', {
 		idempotencyKey: receiptIdempotencyKey,
 		items: linesToReceive.map(({ poItem, input }) => ({
 			product_id: poItem.product_id,
-			batch_id: poItem.batch_id || null,
+			batch_id: poItem.batch_id || input.batch_id || null,
+			batch_no: input.batch_no || undefined,
+			mfd: input.mfd || undefined,
+			expiry_date: input.expiry_date || undefined,
+			sell_price: input.sell_price != null ? parseFloat(input.sell_price) : undefined,
 			qty: parseFloat(input.received_qty || 0),
 			selected_uom_id: poItem.selected_uom_id || null,
 			serial_nos: input.serial_nos || undefined,
@@ -183,6 +195,9 @@ exports.createGRN = async (req) => {
 			reference_line_id: poItem.id,
 		})),
 	});
+
+	// VCP returns the resolved batch_id for each line (including newly created batches).
+	const resolvedBatchIds = (vcpReceipt.results || []).map((r) => r.batch_id || null);
 
 	// --- Phase 2: persist the GRN in SCM — compensate VCP if this fails ---
 	const transaction = await sequelize.transaction();
@@ -201,13 +216,13 @@ exports.createGRN = async (req) => {
 			{ transaction },
 		);
 
-		for (const { poItem, input, effectiveReceivedQty, qcInspectionItemId } of linesToReceive) {
+		for (const [i, { poItem, input, effectiveReceivedQty, qcInspectionItemId }] of linesToReceive.entries()) {
 			await GoodsReceiptNoteItem.create(
 				{
 					goods_receipt_note_id: grn.id,
 					purchase_order_item_id: poItem.id,
 					product_id: poItem.product_id,
-					batch_id: poItem.batch_id || null,
+					batch_id: resolvedBatchIds[i] || poItem.batch_id || input.batch_id || null,
 					stock_type: poItem.stock_type,
 					received_qty: effectiveReceivedQty,
 					serial_nos: input.serial_nos || null,
@@ -226,14 +241,14 @@ exports.createGRN = async (req) => {
 		return grn;
 	} catch (scmError) {
 		await transaction.rollback();
-		logger.error('SCM GRN persist failed after VCP stock receipt — attempting rollback', { scmError });
+		logger.error('SCM MRN persist failed after VCP stock receipt — attempting rollback', { scmError });
 
 		try {
 			await callVcpStockEndpoint(req, '/rollback-receive-stock', {
 				idempotencyKey: receiptIdempotencyKey,
-				items: linesToReceive.map(({ poItem, input }) => ({
+				items: linesToReceive.map(({ poItem, input }, i) => ({
 					product_id: poItem.product_id,
-					batch_id: poItem.batch_id || null,
+					batch_id: resolvedBatchIds[i] || poItem.batch_id || input.batch_id || null,
 					qty: parseFloat(input.received_qty || 0),
 					selected_uom_id: poItem.selected_uom_id || null,
 					serial_nos: input.serial_nos || undefined,
@@ -242,7 +257,7 @@ exports.createGRN = async (req) => {
 				})),
 			});
 		} catch (rollbackError) {
-			logger.error('CRITICAL: VCP rollback-receive-stock failed. Stock received but GRN NOT recorded. Manual correction required.', {
+			logger.error('CRITICAL: VCP rollback-receive-stock failed. Stock received but MRN NOT recorded. Manual correction required.', {
 				purchase_order_id,
 				items,
 				rollbackError,
@@ -251,6 +266,154 @@ exports.createGRN = async (req) => {
 
 		throw scmError;
 	}
+};
+
+// Same fallback chain used for PO print/export UOM display (purchase-order.service.js) —
+// PurchaseOrderItem.uomSnapshot/productSnapshot are free-form JSON captured at PO create/update
+// time, not a live join, so this just reads what was stored on that PO item.
+function uomDisplayFor(poItem) {
+	return (
+		poItem.uomSnapshot?.unit?.name ||
+		poItem.uomSnapshot?.unit?.code ||
+		poItem.productSnapshot?.baseUnit?.name ||
+		poItem.productSnapshot?.baseUnit?.code ||
+		'Base'
+	);
+}
+
+// Drives the Create GRN screen's receivable-lines list. Non-QC POs behave exactly as before
+// (ordered qty minus already-received across active GRNs, per PO item). QC-required POs are
+// sourced from *approved* qc_inspection_items instead — one line per QC round still holding
+// undrawn accepted_qty — because a single PO item can carry several QC rounds (partial
+// deliveries / re-inspections) each independently capped; collapsing to one row per PO item
+// would lose which specific QC round a receipt should be traced back to. Rejected qty is never
+// receivable and is surfaced only for context.
+exports.getReceivableLinesForPurchaseOrder = async (req, purchaseOrderId) => {
+	const { org_id } = req.user;
+	const po = await PurchaseOrder.findOne({
+		where: { id: purchaseOrderId, org_id },
+		include: [{ model: PurchaseOrderItem, as: 'items' }],
+	});
+	if (!po) throw new AppError('Purchase Order not found', StatusCodes.NOT_FOUND);
+
+	async function alreadyReceivedFor(where) {
+		return parseFloat(
+			(await GoodsReceiptNoteItem.sum('received_qty', {
+				where,
+				include: [{ model: GoodsReceiptNote, as: 'goodsReceiptNote', attributes: [], where: { status: 'active' } }],
+			})) || 0,
+		);
+	}
+
+	if (!po.po_qc_check) {
+		const lines = await Promise.all(
+			po.items.map(async (item) => {
+				const alreadyReceived = await alreadyReceivedFor({ purchase_order_item_id: item.id });
+				const orderedQty = parseFloat(item.qty);
+				return {
+					purchase_order_item_id: item.id,
+					qc_inspection_item_id: null,
+					qc_no: null,
+					product_id: item.product_id,
+					product_name: item.productSnapshot?.name || null,
+					uom_name: uomDisplayFor(item),
+					stock_type: item.stock_type,
+					batch_id: item.batch_id,
+					ordered_qty: orderedQty,
+					accepted_qty: null,
+					rejected_qty: null,
+					already_received_qty: alreadyReceived,
+					remaining_qty: Math.max(0, orderedQty - alreadyReceived),
+				};
+			}),
+		);
+		return { po_qc_check: false, lines: lines.filter((l) => l.remaining_qty > 0.001), awaiting_qc: [] };
+	}
+
+	const poItemsById = new Map(po.items.map((i) => [i.id, i]));
+	const qcItems = await QcInspectionItem.findAll({
+		where: { po_wo_item_id: { [Op.in]: po.items.map((i) => i.id) } },
+		include: [
+			{
+				model: QcInspection,
+				as: 'inspection',
+				where: { document_type: 'purchase_order', document_id: po.id, status: 'approved' },
+			},
+		],
+	});
+
+	const lines = await Promise.all(
+		qcItems.map(async (qcItem) => {
+			const poItem = poItemsById.get(qcItem.po_wo_item_id);
+			const alreadyDrawn = await alreadyReceivedFor({ qc_inspection_item_id: qcItem.id });
+			const acceptedQty = parseFloat(qcItem.accepted_qty);
+			return {
+				purchase_order_item_id: poItem.id,
+				qc_inspection_item_id: qcItem.id,
+				qc_no: qcItem.inspection.qc_no,
+				product_id: qcItem.product_id,
+				product_name: qcItem.productSnapshot?.name || null,
+				uom_name: uomDisplayFor(poItem),
+				stock_type: qcItem.stock_type,
+				batch_id: qcItem.batch_id,
+				ordered_qty: parseFloat(poItem.qty),
+				accepted_qty: acceptedQty,
+				rejected_qty: parseFloat(qcItem.rejected_qty),
+				already_received_qty: alreadyDrawn,
+				remaining_qty: Math.max(0, acceptedQty - alreadyDrawn),
+			};
+		}),
+	);
+	const receivable = lines.filter((l) => l.remaining_qty > 0.001);
+
+	// PO items with no receivable line fall into distinct situations that must not be conflated
+	// under one "awaiting QC" message:
+	//  - awaiting_qc: no approved QC round exists yet for this item at all.
+	//  - fully_received: approved QC exists and its accepted_qty has been fully drawn into GRNs,
+	//    and that accepted_qty already covers the full ordered_qty — nothing more is expected.
+	//  - short_closed: Σaccepted_qty + Σapproved-short-close covers the full ordered_qty — same
+	//    "nothing more expected" outcome as fully_received, just settled via Short Close instead
+	//    of (or in addition to) physical receipt, rather than every unit being received.
+	//  - gap_needs_resolution: approved QC is fully drawn and Σaccepted_qty + Σshort-closed is
+	//    still short of ordered_qty (typically because some qty was rejected and neither
+	//    resupplied nor short-closed) — needs another QC round against a fresh delivery, or a
+	//    Short Close, to settle the shortfall. Mirrors short-close.service.js's
+	//    computeRemainingForItem formula (ordered − accepted − short-closed) so this screen and
+	//    the Short Close screen never disagree about whether a line is still open.
+	const receivablePoItemIds = new Set(receivable.map((l) => l.purchase_order_item_id));
+	const linesByPoItemId = new Map();
+	for (const line of lines) {
+		if (!linesByPoItemId.has(line.purchase_order_item_id)) linesByPoItemId.set(line.purchase_order_item_id, []);
+		linesByPoItemId.get(line.purchase_order_item_id).push(line);
+	}
+	const awaiting_qc = await Promise.all(
+		po.items
+			.filter((item) => !receivablePoItemIds.has(item.id))
+			.map(async (item) => {
+				const orderedQty = parseFloat(item.qty);
+				const itemQcLines = linesByPoItemId.get(item.id) || [];
+				const totalAcceptedQty = itemQcLines.reduce((sum, l) => sum + l.accepted_qty, 0);
+				const shortClosedQty = parseFloat(
+					await shortCloseRequestItemsRepository.sumApprovedQtyForPoWoItem(item.id),
+				);
+				let status;
+				if (itemQcLines.length === 0) status = 'awaiting_qc';
+				else if (totalAcceptedQty >= orderedQty - 0.001) status = 'fully_received';
+				else if (totalAcceptedQty + shortClosedQty >= orderedQty - 0.001) status = 'short_closed';
+				else status = 'gap_needs_resolution';
+				return {
+					purchase_order_item_id: item.id,
+					product_id: item.product_id,
+					product_name: item.productSnapshot?.name || null,
+					ordered_qty: orderedQty,
+					accepted_qty: totalAcceptedQty,
+					short_closed_qty: shortClosedQty,
+					status,
+				};
+			}),
+	);
+
+	return { po_qc_check: true, lines: receivable, awaiting_qc };
 };
 
 exports.getAllGRNs = async (req) => {
@@ -268,7 +431,7 @@ exports.getAllGRNs = async (req) => {
 		where,
 		include: [
 			{ model: GoodsReceiptNoteItem, as: 'items' },
-			{ model: PurchaseOrder, as: 'purchaseOrder', attributes: ['id', 'poPrefix', 'poNo', 'poPostfix', 'vendorInfo'] },
+			{ model: PurchaseOrder, as: 'purchaseOrder', attributes: ['id', 'doc_number', 'poPrefix', 'poNo', 'poPostfix', 'vendorInfo'] },
 		],
 		order: [['createdAt', 'DESC']],
 		limit: limit ? parseInt(limit, 10) : 20,
@@ -319,7 +482,7 @@ exports.cancelGRN = async (req, id) => {
 		});
 		return grn;
 	} catch (scmError) {
-		logger.error('SCM GRN cancel persist failed after VCP stock rollback — attempting to restore stock', { scmError });
+		logger.error('SCM MRN cancel persist failed after VCP stock rollback — attempting to restore stock', { scmError });
 
 		try {
 			await callVcpStockEndpoint(req, '/receive-stock', {
@@ -327,7 +490,7 @@ exports.cancelGRN = async (req, id) => {
 				items: rollbackItems,
 			});
 		} catch (restoreError) {
-			logger.error('CRITICAL: VCP receive-stock restore failed after a failed GRN cancel. Stock was rolled back but GRN NOT marked cancelled. Manual correction required.', {
+			logger.error('CRITICAL: VCP receive-stock restore failed after a failed MRN cancel. Stock was rolled back but MRN NOT marked cancelled. Manual correction required.', {
 				grnId: grn.id,
 				restoreError,
 			});
@@ -358,3 +521,145 @@ exports.getGRNById = async (req, id) => {
 	if (!grn) throw new AppError('Goods Receipt Note not found', StatusCodes.NOT_FOUND);
 	return grn;
 };
+
+/**
+ * Print-preview HTML for an MRN (GoodsReceiptNote), mirroring indent.service.js /
+ * purchase-order.service.js's generateInvoiceHtml. A GRN has no unit/department of its own —
+ * the "requesting unit" for the letterhead is resolved through its PO's originating Indent
+ * (purchaseOrder.indent.unit), same fallback chain as indent/PO printing.
+ */
+exports.generateInvoiceHtml = async (req) => {
+	const { id } = req.params;
+	const { org_id } = req.user;
+
+	const grn = await GoodsReceiptNote.findOne({
+		where: { id, org_id },
+		include: [
+			{
+				model: GoodsReceiptNoteItem,
+				as: 'items',
+				include: [
+					{ model: PurchaseOrderItem, as: 'purchaseOrderItem' },
+					{
+						model: QcInspectionItem,
+						as: 'qcInspectionItem',
+						include: [{ model: QcInspection, as: 'inspection', attributes: ['qc_no'] }],
+					},
+				],
+			},
+			{
+				model: PurchaseOrder,
+				as: 'purchaseOrder',
+				include: [{ model: Indent, as: 'indent', include: [{ model: MasterUnit, as: 'unit' }] }],
+			},
+		],
+	});
+
+	if (!grn) throw new AppError('Material Receipt Note not found', StatusCodes.NOT_FOUND);
+
+	const response = await calculateGrnInvoice(grn);
+	const html = await generateInvoiceHTML({ ...response, copyTitle: 'MRN COPY' }, 'mrnTemplate');
+	return `<div class="preview-page">\n${html}\n</div>`;
+};
+
+exports.downloadInvoicePdf = async (req) => {
+	const { html = '' } = req.body;
+	const pdfPath = await generateInvoiceHTMLPDF(html, 'mrnTemplate', { multi: true });
+	return pdfPath;
+};
+
+async function calculateGrnInvoice(grn) {
+	const invoiceData = grn.get({ plain: true });
+
+	let businessLogo = null;
+	let business = null;
+	const unit = invoiceData.purchaseOrder?.indent?.unit;
+
+	const orgRole = await Role.findOne({ where: { code: 'org_admin' }, attributes: ['id'] });
+	const userData = await User.findOne({
+		where: { org_id: invoiceData.org_id },
+		include: [
+			{ model: organization, as: 'organization' },
+			{
+				model: Role,
+				as: 'userRoles',
+				through: { attributes: [] },
+				attributes: ['id', 'name', 'code'],
+				where: orgRole?.id,
+			},
+		],
+	});
+	if (userData?.logo) {
+		businessLogo = await getImageAsBase64DataUrl(userData.logo);
+	}
+
+	if (unit) {
+		business = {
+			org_name: unit.unit_name || unit.unitName || '',
+			city: unit.city,
+			pincode: unit.pincode,
+			org_gst_number: unit.gstin,
+			org_email: unit.company_email,
+		};
+		const unitAddressLine = [unit.address1, unit.address2, unit.landmark].filter(Boolean).join(', ');
+		business.address = `${unitAddressLine ? `${unitAddressLine},<br>` : ''}
+			${unit.city || ''} - ${unit.pincode || ''}, ${unit.state || ''}<br>`;
+	} else if (userData) {
+		business = userData.organization;
+		business.address = `${business.org_address || ''},<br>
+			${business.city || ''} - ${business.pincode || ''}, ${business?._state?.state_name || ''}<br>`;
+	}
+
+	const vendorInfo = invoiceData.purchaseOrder?.vendorInfo || {};
+	const poNumber =
+		invoiceData.purchaseOrder?.doc_number ||
+		`${invoiceData.purchaseOrder?.poPrefix || ''}${invoiceData.purchaseOrder?.poNo || ''}${invoiceData.purchaseOrder?.poPostfix || ''}`;
+
+	const productItems = (invoiceData.items || []).map((item) => {
+		const poItem = item.purchaseOrderItem || {};
+		const snapshot = poItem.productSnapshot || {};
+		const uomName =
+			poItem.uomSnapshot?.unit?.name ||
+			poItem.uomSnapshot?.unit?.code ||
+			snapshot.baseUnit?.name ||
+			snapshot.baseUnit?.code ||
+			'Base';
+
+		return {
+			...item,
+			item_name: snapshot.name || '',
+			item_code: snapshot.code || snapshot.item_code || '',
+			specification: poItem.specification || '',
+			uom_name: uomName,
+			ordered_qty: parseFloat(poItem.qty || 0),
+			received_qty: parseFloat(item.received_qty || 0),
+			qc_no: item.qcInspectionItem?.inspection?.qc_no || null,
+		};
+	});
+
+	return {
+		...invoiceData,
+		businessLogo,
+		business,
+		vendorInfo,
+		poNumber,
+		mrnNumber: `${invoiceData.grnPrefix || ''}${invoiceData.grnNo || ''}${invoiceData.grnPostfix || ''}`,
+		mrnDate: formatGrnDate(invoiceData.grn_date),
+		productItems,
+		totalOrderedQty: productItems.reduce((sum, item) => sum + item.ordered_qty, 0),
+		totalReceivedQty: productItems.reduce((sum, item) => sum + item.received_qty, 0),
+	};
+}
+
+function formatGrnDate(val) {
+	if (!val) return '';
+	try {
+		return new Date(val).toLocaleDateString('en-IN', {
+			day: '2-digit',
+			month: '2-digit',
+			year: 'numeric',
+		});
+	} catch {
+		return '';
+	}
+}

@@ -32,6 +32,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'sub_head_amount_id',
 				as: 'budgets',
 			});
+			MasterSubHeadAmount.hasMany(models.MasterSubHeadCostCenterAmount, {
+				foreignKey: 'sub_head_amount_id',
+				as: 'costCenterAmounts',
+			});
 		}
 	}
 	MasterSubHeadAmount.init(

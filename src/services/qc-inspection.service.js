@@ -29,6 +29,11 @@ const {
 	QcTemplateItem,
 	MasterQcRejectionReason,
 	User,
+	Indent,
+	MasterUnit,
+	Department,
+	organization,
+	Role,
 } = require('../models/index');
 const {
 	qcInspectionRepository,
@@ -39,7 +44,8 @@ const {
 const workflowEngine = require('./workflowEngine.service');
 const auditLogService = require('./auditLog.service');
 const { createWorkflowDocumentService } = require('./workflowDocument.factory');
-const { s3, PutObjectCommand, generateSignedUrl } = require('../utils/s3Bucket');
+const { s3, PutObjectCommand, generateSignedUrl, getImageAsBase64DataUrl } = require('../utils/s3Bucket');
+const { generateInvoiceHTML, generateInvoiceHTMLPDF } = require('../pdf/htmlPdfGenerator');
 
 const DOCUMENT_TYPE = 'qc_inspection';
 
@@ -868,3 +874,178 @@ exports.uploadAttachment = async (req, id, file) => {
 		uploaded_by: actorSnapshot(req.user),
 	});
 };
+
+/**
+ * Print-preview HTML for a QC Inspection, mirroring indent.service.js's generateInvoiceHtml.
+ * A QcInspection has no vendor/unit of its own (it's polymorphic over PO/WO) so the underlying
+ * PO/WO — including its indent's unit/department — is fetched here purely for header display.
+ */
+exports.generateInvoiceHtml = async (req) => {
+	const { id } = req.params;
+	const inspection = await fetchInspectionOrThrow(req, id);
+	const [withDocumentNo] = await attachDocumentNumbers([inspection]);
+
+	const response = await calculateQcInvoice(inspection, withDocumentNo);
+
+	const html = await generateInvoiceHTML({ ...response, copyTitle: 'QC INSPECTION COPY' }, 'qcTemplate');
+	return `<div class="preview-page">\n${html}\n</div>`;
+};
+
+exports.downloadInvoicePdf = async (req) => {
+	const { html = '' } = req.body;
+	const pdfPath = await generateInvoiceHTMLPDF(html, 'qcTemplate', { multi: true });
+	return pdfPath;
+};
+
+async function calculateQcInvoice(inspection, withDocumentNo) {
+	const invoiceData = inspection.get({ plain: true });
+
+	// Logo lives on the org-admin user, not on MasterUnit — same lookup indent.service.js uses.
+	let businessLogo = null;
+	let business = null;
+
+	const config = resolveDocConfig(invoiceData.document_type);
+	const doc = await config.model.findOne({
+		where: { id: invoiceData.document_id },
+		include: [
+			{
+				model: Indent,
+				as: 'indent',
+				attributes: ['id', 'unit_id', 'department_id'],
+				include: [
+					{ model: MasterUnit, as: 'unit' },
+					{ model: Department, as: 'department' },
+				],
+			},
+		],
+	});
+	const unit = doc?.indent?.unit ?? null;
+	const department = doc?.indent?.department ?? null;
+
+	const orgRole = await Role.findOne({ where: { code: 'org_admin' }, attributes: ['id'] });
+	const userData = await User.findOne({
+		where: { org_id: invoiceData.org_id },
+		include: [
+			{ model: organization, as: 'organization' },
+			{
+				model: Role,
+				as: 'userRoles',
+				through: { attributes: [] },
+				attributes: ['id', 'name', 'code'],
+				where: orgRole?.id,
+			},
+		],
+	});
+	if (userData?.logo) {
+		businessLogo = await getImageAsBase64DataUrl(userData.logo);
+	}
+
+	if (unit) {
+		business = {
+			org_name: unit.unit_name || unit.unitName || '',
+			city: unit.city,
+			pincode: unit.pincode,
+			org_gst_number: unit.gstin,
+			org_email: unit.company_email,
+		};
+		const unitAddressLine = [unit.address1, unit.address2, unit.landmark].filter(Boolean).join(', ');
+		business.address = `${unitAddressLine ? `${unitAddressLine},<br>` : ''}
+			${unit.city || ''} - ${unit.pincode || ''}, ${unit.state || ''}<br>`;
+	} else if (userData) {
+		business = userData.organization;
+		business.address = `${business.org_address || ''},<br>
+			${business.city || ''} - ${business.pincode || ''}, ${business?._state?.state_name || ''}<br>`;
+	}
+
+	const vendorInfo = doc?.vendorInfo || null;
+	const documentLabel = config.label;
+	const documentNo = withDocumentNo?.document_no || `${documentLabel} #${invoiceData.document_id}`;
+
+	const productItems = (invoiceData.items || []).map((item) => {
+		const orderedQty = parseFloat(item.ordered_qty || 0);
+		// total_received_qty is cumulative across every QC round for this po_wo_item (it can
+		// legitimately exceed orderedQty — a replacement shipment for previously rejected units
+		// still counts as received). Breaking Received/Accepted/Rejected into Previous/This
+		// Round/Total columns (rather than only showing the cumulative figure) keeps that
+		// reconciled and legible instead of looking like an error against Ordered Qty.
+		const previouslyReceivedQty = parseFloat(item.previously_received_qty || 0);
+		const currentReceivedQty = parseFloat(item.current_received_qty || 0);
+		const totalReceivedQty = parseFloat(item.total_received_qty || 0);
+		const previouslyAcceptedQty = parseFloat(item.previously_accepted_qty || 0);
+		const currentAcceptedQty = parseFloat(item.accepted_qty || 0);
+		const totalAcceptedQty = previouslyAcceptedQty + currentAcceptedQty;
+		const previouslyRejectedQty = parseFloat(item.previously_rejected_qty || 0);
+		const currentRejectedQty = parseFloat(item.rejected_qty || 0);
+		const totalRejectedQty = previouslyRejectedQty + currentRejectedQty;
+		const reworkQty = parseFloat(item.rework_qty || 0);
+
+		return {
+			...item,
+			item_name: item.productSnapshot?.name || 'N/A',
+			item_code: item.productSnapshot?.code || item.productSnapshot?.item_code || '',
+			orderedQty,
+			previouslyReceivedQty,
+			currentReceivedQty,
+			totalReceivedQty,
+			previouslyAcceptedQty,
+			currentAcceptedQty,
+			totalAcceptedQty,
+			previouslyRejectedQty,
+			currentRejectedQty,
+			totalRejectedQty,
+			reworkQty,
+			rejectionReasonName: item.rejectionReason?.name || '',
+			checklistResults: (item.results || [])
+				.filter((r) => r.result !== 'na')
+				.map((r) => ({
+					parameter_name: r.templateItem?.parameter_name || '',
+					observed_value: r.observed_value || '',
+					result: r.result,
+					remarks: r.remarks || '',
+				})),
+		};
+	});
+
+	const totals = productItems.reduce(
+		(acc, item) => {
+			acc.orderedQty += item.orderedQty;
+			acc.previouslyReceivedQty += item.previouslyReceivedQty;
+			acc.currentReceivedQty += item.currentReceivedQty;
+			acc.totalReceivedQty += item.totalReceivedQty;
+			acc.previouslyAcceptedQty += item.previouslyAcceptedQty;
+			acc.currentAcceptedQty += item.currentAcceptedQty;
+			acc.totalAcceptedQty += item.totalAcceptedQty;
+			acc.previouslyRejectedQty += item.previouslyRejectedQty;
+			acc.currentRejectedQty += item.currentRejectedQty;
+			acc.totalRejectedQty += item.totalRejectedQty;
+			acc.reworkQty += item.reworkQty;
+			return acc;
+		},
+		{
+			orderedQty: 0,
+			previouslyReceivedQty: 0,
+			currentReceivedQty: 0,
+			totalReceivedQty: 0,
+			previouslyAcceptedQty: 0,
+			currentAcceptedQty: 0,
+			totalAcceptedQty: 0,
+			previouslyRejectedQty: 0,
+			currentRejectedQty: 0,
+			totalRejectedQty: 0,
+			reworkQty: 0,
+		},
+	);
+
+	return {
+		...invoiceData,
+		businessLogo,
+		business,
+		vendorInfo,
+		unit,
+		department,
+		documentLabel,
+		documentNo,
+		productItems,
+		totals,
+	};
+}

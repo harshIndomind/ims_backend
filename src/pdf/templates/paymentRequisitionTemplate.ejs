@@ -417,36 +417,64 @@
     <% } %>
 
     <!-- Financial Summary -->
+    <%
+        const fmt2 = (n) => Number(n || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        const deductionRows = (invoice.deductions || []).filter((d) => Number(d.amount) > 0);
+        const isRetentionRelease = invoice.requisition_type === 'RETENTION_RELEASE';
+    %>
     <div class="section-heading">Financial Summary</div>
     <table class="financials-table">
         <thead>
             <tr>
-                <th style="text-align:left; width:60%">Description</th>
+                <th style="text-align:left; width:55%">Description</th>
                 <th style="width:20%">%</th>
-                <th style="width:20%">Amount (₹)</th>
+                <th style="width:25%">Amount (₹)</th>
             </tr>
         </thead>
         <tbody>
+            <% if (invoice.po_wo_grand_total !== null) { %>
             <tr>
-                <td class="label"><%= invoice.requisition_against %> / WO Basic Amount</td>
+                <td class="label"><%= invoice.requisition_against %> Taxable Value</td>
                 <td class="value">—</td>
-                <td class="value"><%= Number(invoice.wo_po_amount || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                <td class="value"><%= fmt2(invoice.po_wo_taxable) %></td>
             </tr>
             <tr>
-                <td class="label">Requisition Value</td>
+                <td class="label">Add: GST</td>
+                <td class="value">—</td>
+                <td class="value"><%= fmt2(invoice.po_wo_tax) %></td>
+            </tr>
+            <tr>
+                <td class="label"><strong><%= invoice.requisition_against %> Gross Value (Total)</strong></td>
+                <td class="value">—</td>
+                <td class="value"><strong><%= fmt2(invoice.po_wo_grand_total) %></strong></td>
+            </tr>
+            <% } %>
+
+            <% if (isRetentionRelease) { %>
+            <tr>
+                <td class="label">Retention Release Amount</td>
+                <td class="value">—</td>
+                <td class="value"><%= fmt2(invoice.gross_amount) %></td>
+            </tr>
+            <% } else { %>
+            <tr>
+                <td class="label">Requisition Value (Base: ₹<%= fmt2(invoice.wo_po_amount) %>)</td>
                 <td class="value"><%= Number(invoice.requisition_value_percent || 0).toFixed(2) %>%</td>
-                <td class="value"><%= Number(invoice.requisition_amount || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                <td class="value"><%= fmt2(invoice.gross_amount) %></td>
             </tr>
+            <% deductionRows.forEach((d) => { %>
             <tr>
-                <td class="label">TDS Deduction</td>
-                <td class="value"><%= Number(invoice.tds_percent || 0).toFixed(2) %>%</td>
-                <td class="value"><%= Number(invoice.tds_amount || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                <td class="label"><%= d.deduction_name || d.deduction_type %> Deduction</td>
+                <td class="value"><%= d.percentage !== null && d.percentage !== undefined ? Number(d.percentage).toFixed(2) + '%' : '—' %></td>
+                <td class="value">− <%= fmt2(d.amount) %></td>
             </tr>
+            <% }); %>
+            <% } %>
         </tbody>
         <tfoot>
             <tr>
-                <td colspan="2" style="text-align:right; padding-right:12px;">Total Payable Amount</td>
-                <td class="value">₹ <%= Number(invoice.total_amount || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) %></td>
+                <td colspan="2" style="text-align:right; padding-right:12px;">Net Payable Amount</td>
+                <td class="value">₹ <%= fmt2(invoice.net_payable) %></td>
             </tr>
         </tfoot>
     </table>
