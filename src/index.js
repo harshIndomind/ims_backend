@@ -21,12 +21,12 @@ const metricsMiddleware = require('./middlewares/metricsMiddleware');
 const { register } = require('./utils/metrics');
 const logger = require('./utils/logger');
 
-const limiter = rateLimit({
-	windowMs: 1 * 60 * 1000,
-	limit: 100,
-	standardHeaders: 'draft-8',
-	legacyHeaders: false,
-});
+// const limiter = rateLimit({
+// 	windowMs: 1 * 60 * 1000,
+// 	limit: 100,
+// 	standardHeaders: 'draft-8',
+// 	legacyHeaders: false,
+// });
 
 async function prepareAndStartServer() {
 	app.use(helmet());

@@ -47,5 +47,6 @@ module.exports = {
     masterQcRejectionReasonRepository: require('./masterQcRejectionReason.repository'),
     shortCloseRequestItemsRepository: require('./shortCloseRequestItems.repository'),
     masterShortCloseReasonRepository: require('./masterShortCloseReason.repository'),
+    additionalNoteTemplateRepo: require('./additionalNoteTemplate.repository'),
     indentItemQtyLogRepository: require('./indentItemQtyLog.repository'),
 }
