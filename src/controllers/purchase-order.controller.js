@@ -77,8 +77,13 @@ exports.downloadInvoicePdf = catchAsync(async (req, res) => {
 		const { id } = req.params;
 		const { copies = [], html = '' } = req.body;
 
+		// Landscape only for same-state orders — CGST+SGST doubles the item table's tax
+		// columns versus IGST, which is what pushes portrait A4 past its printable width. See
+		// htmlPdfGenerator.js's generateInvoiceHTMLPDF for the full explanation.
+		const sameState = await purchaseOrderService.getSameState(id);
 		const pdfPath = await generateInvoiceHTMLPDF(html, 'defaultTemplate', {
 			multi: true,
+			landscape: sameState,
 		});
 
 		res.json({ pdfUrl: pdfPath });
