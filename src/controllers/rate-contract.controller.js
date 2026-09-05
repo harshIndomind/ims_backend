@@ -66,6 +66,24 @@ exports.getRateContractByProductId = catchAsync(async (req, res) => {
 	});
 });
 
+exports.getRateContractsByProductIds = catchAsync(async (req, res) => {
+	const { product_ids, unit_id, date, supplier_id } = req.body;
+
+	const ids = Array.isArray(product_ids) ? product_ids : [];
+
+	const data = await rateContractService.getRateContractsByProductIds(ids, {
+		unit_id,
+		date,
+		org_id: req.user.org_id,
+		supplier_id,
+	});
+
+	res.status(StatusCodes.OK).json({
+		message: 'Rate Contracts Fetched Successfully',
+		data,
+	});
+});
+
 exports.approveRateContract = catchAsync(async (req, res) => {
 	const { id } = req.params;
 

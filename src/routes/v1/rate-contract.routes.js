@@ -37,6 +37,12 @@ router.get(
 	RateContractController.getRateContractByProductId
 );
 
+router.post(
+	'/check-batch',
+	checkPermission('rate-contract', 'view'),
+	RateContractController.getRateContractsByProductIds
+);
+
 router.get(
 	'/:id',
 	checkPermission('rate-contract', 'view'),

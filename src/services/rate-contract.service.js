@@ -713,3 +713,90 @@ exports.getRateContractByProductId = async (product_id, { unit_id, date, org_id,
 	logger.info("rc", {rc})
 	return rc;
 };
+
+// Batched version of getRateContractByProductId: resolves the rate contract for many
+// products in 2 queries total (instead of 2 queries PER product), so forms with long
+// item lists (PO/WO) don't fire one HTTP round-trip per line item on load.
+exports.getRateContractsByProductIds = async (
+	productIds,
+	{ unit_id, date, org_id, supplier_id } = {},
+) => {
+	const ids = [...new Set((productIds || []).map(Number).filter(Boolean))];
+	if (!ids.length) return {};
+
+	const rcWhere = { status: 'approved' };
+	if (org_id) rcWhere.org_id = Number(org_id);
+	if (supplier_id) rcWhere.supplier_id = Number(supplier_id);
+	if (date) {
+		const checkDate = new Date(date);
+		checkDate.setHours(12, 0, 0, 0);
+		rcWhere.effective_date = { [Op.lte]: checkDate };
+		rcWhere[Op.or] = [{ end_date: null }, { end_date: { [Op.gte]: checkDate } }];
+	}
+
+	// Step 1: one query for every product - find each product's candidate RC rows,
+	// newest approved first, so the first row seen per product_id is the one to keep.
+	const productRecords = await RateContractProduct.findAll({
+		where: { product_id: { [Op.in]: ids } },
+		include: [
+			{
+				model: RateContract,
+				as: 'rateContract',
+				where: rcWhere,
+				required: true,
+				attributes: ['id', 'approved_at'],
+			},
+		],
+		order: [[{ model: RateContract, as: 'rateContract' }, 'approved_at', 'DESC']],
+	});
+
+	const latestByProduct = new Map();
+	for (const rec of productRecords) {
+		if (!latestByProduct.has(rec.product_id)) {
+			latestByProduct.set(rec.product_id, rec);
+		}
+	}
+	if (!latestByProduct.size) return {};
+
+	// Step 2: one query to reload full RC data for the DISTINCT contracts matched -
+	// many products commonly share the same rate contract, so this is rarely as
+	// large as latestByProduct.size.
+	const distinctRcIds = [
+		...new Set([...latestByProduct.values()].map((r) => r.rateContract.id)),
+	];
+	const fullRcs = await RateContract.findAll({
+		where: { id: { [Op.in]: distinctRcIds } },
+		include: defaultIncludes,
+	});
+	const fullRcById = new Map(fullRcs.map((rc) => [rc.id, rc]));
+
+	const result = {};
+	for (const [productId, productRecord] of latestByProduct.entries()) {
+		const fullRc = fullRcById.get(productRecord.rateContract.id);
+		if (!fullRc) continue;
+
+		const rc = fullRc.toJSON();
+
+		const unitMappings = rc.unit_product_mapping || [];
+		if (unit_id && unitMappings.length > 0) {
+			const isUnitMapped = unitMappings.some(
+				(mapping) =>
+					Number(mapping.unit_id) === Number(unit_id) &&
+					Number(mapping.product_id) === Number(productId),
+			);
+			if (!isUnitMapped) continue;
+		}
+
+		rc.contract_rate = productRecord.contract_rate;
+		rc.uom_id = productRecord.uom_id;
+		rc.product_discount = productRecord.discount;
+		rc.special_discount = productRecord.special_discount;
+		rc.special_discount_details = productRecord.special_discount_details;
+		rc.product_id = productRecord.product_id;
+		rc.productSnapshot = productRecord.productSnapshot;
+
+		result[productId] = rc;
+	}
+
+	return result;
+};
