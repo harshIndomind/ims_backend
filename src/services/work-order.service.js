@@ -4,7 +4,11 @@ const {
 	workOrderRepository,
 	workOrderItemsRepository,
 	IndentItemRepository,
+	documentChargesRepository,
 } = require('../repository/index');
+const { calculateDocumentTotals, legacyCustomFieldsToCharges } = require('../utils/charge-tax-engine.util');
+const { round2 } = require('../utils/money');
+const { toEngineItems, chargeBreakdownToRows, dbRowsToCharges } = require('../utils/document-charges.helper');
 const paymentRequisitionAnalyticsRepo = require('../repository/payment-requisition-analytics.repository');
 const logger = require('../utils/logger');
 const { sequelize } = require('../models/index');
@@ -133,6 +137,7 @@ exports.createWorkOrder = async (req) => {
 			additionalNotes,
 			customField1,
 			customField2,
+			charges,
 			price_term_id,
 			gst_term_id,
 			payment_term_id,
@@ -168,6 +173,16 @@ exports.createWorkOrder = async (req) => {
 			transaction,
 		});
 
+		// Backend is the source of truth for persisted financial totals — see
+		// charge-tax-engine.util.js and purchase-order.service.js's identical convention.
+		const sameState = Boolean(state_same);
+		const totals = calculateDocumentTotals({
+			items: toEngineItems(productItems),
+			charges: charges || [],
+			sameState,
+			roundOff: Boolean(isRoundOff),
+		});
+
 		const woObject = {
 			org_id,
 			indent_id,
@@ -176,9 +191,9 @@ exports.createWorkOrder = async (req) => {
 			doc_number: docNumber,
 			doc_sequence_no: sequenceNo,
 			doc_fiscal_year: fiscalYear,
-			total_taxable: parseFloat(total_taxable || 0),
-			total_tax: parseFloat(total_tax || 0),
-			grandTotal: parseFloat(grandTotal || 0),
+			total_taxable: totals.totalTaxable,
+			total_tax: totals.totalTax,
+			grandTotal: totals.grandTotal,
 			bankSnapshot,
 			isRoundOff,
 			paymentType: payment_type,
@@ -189,7 +204,7 @@ exports.createWorkOrder = async (req) => {
 			remarks: additionalRemarks,
 			same_state: state_same,
 			status: 'draft',
-			remainingAmount: grandTotal,
+			remainingAmount: totals.grandTotal,
 			wo_qc_check,
 			price_term_id,
 			gst_term_id,
@@ -208,12 +223,7 @@ exports.createWorkOrder = async (req) => {
 					: null,
 			retention_amount:
 				workOrderDetail.retention != null
-					? parseFloat(
-							(
-								(parseFloat(workOrderDetail.retention) / 100) *
-								parseFloat(grandTotal || 0)
-							).toFixed(2),
-						)
+					? round2((parseFloat(workOrderDetail.retention) / 100) * totals.grandTotal)
 					: null,
 			delivery_term_days
 		};
@@ -229,7 +239,9 @@ exports.createWorkOrder = async (req) => {
 			transaction,
 		});
 
-		for (const item of productItems) {
+		for (let i = 0; i < productItems.length; i++) {
+			const item = productItems[i];
+			const computedItem = totals.items[i];
 			const woItemObject = {
 				work_order_id: workOrder.id,
 				product_id: item.product_id,
@@ -245,11 +257,11 @@ exports.createWorkOrder = async (req) => {
 				discount: parseFloat(item.discount || 0),
 				discount_price_type: item.discount_price_type,
 				tax_id: item.tax_id,
-				igst: parseFloat(item.igst || 0),
-				cgst: parseFloat(item.cgst || 0),
-				sgst: parseFloat(item.sgst || 0),
-				cess: parseFloat(item.cess || 0),
-				total: parseFloat(item.total || 0),
+				igst: computedItem.igst,
+				cgst: computedItem.cgst,
+				sgst: computedItem.sgst,
+				cess: computedItem.cess,
+				total: computedItem.total,
 				stock_type: item.stock_type,
 				note: item.note,
 				selected_uom_id:
@@ -267,6 +279,13 @@ exports.createWorkOrder = async (req) => {
 				});
 			}
 		}
+
+		await documentChargesRepository.bulkReplaceForDocument(
+			DOCUMENT_TYPE,
+			workOrder.id,
+			chargeBreakdownToRows([...totals.preTaxCharges, ...totals.postTaxCharges]),
+			{ transaction },
+		);
 
 		await transaction.commit();
 		return workOrder;
@@ -299,6 +318,7 @@ exports.updateWorkOrder = async (req) => {
 			additionalNotes,
 			customField1,
 			customField2,
+			charges,
 			price_term_id,
 			gst_term_id,
 			payment_term_id,
@@ -326,6 +346,14 @@ exports.updateWorkOrder = async (req) => {
 			throw new AppError('Work order not found.');
 		}
 
+		const sameState = Boolean(state_same);
+		const totals = calculateDocumentTotals({
+			items: toEngineItems(productItems),
+			charges: charges || [],
+			sameState,
+			roundOff: Boolean(isRoundOff),
+		});
+
 		const woObject = {
 			indent_id,
 			vendorId: vendorInfo.vendor_id || null,
@@ -334,9 +362,9 @@ exports.updateWorkOrder = async (req) => {
 			woPrefix: workOrderDetail.woPrefix || null,
 			woNo: workOrderDetail.woNumber || null,
 			woPostfix: workOrderDetail.woPostfix || null,
-			total_taxable: parseFloat(total_taxable || 0),
-			total_tax: parseFloat(total_tax || 0),
-			grandTotal: parseFloat(grandTotal || 0),
+			total_taxable: totals.totalTaxable,
+			total_tax: totals.totalTax,
+			grandTotal: totals.grandTotal,
 			isRoundOff,
 			paymentType: payment_type,
 			vendorInfo,
@@ -345,7 +373,7 @@ exports.updateWorkOrder = async (req) => {
 			customFields: [customField1, customField2],
 			remarks: additionalRemarks,
 			same_state: state_same,
-			remainingAmount: grandTotal,
+			remainingAmount: totals.grandTotal,
 			wo_qc_check,
 			price_term_id,
 			gst_term_id,
@@ -364,19 +392,16 @@ exports.updateWorkOrder = async (req) => {
 					: null,
 			retention_amount:
 				workOrderDetail.retention != null
-					? parseFloat(
-							(
-								(parseFloat(workOrderDetail.retention) / 100) *
-								parseFloat(grandTotal || 0)
-							).toFixed(2),
-						)
+					? round2((parseFloat(workOrderDetail.retention) / 100) * totals.grandTotal)
 					: null,
 			delivery_term_days
 		};
 
 		await workOrderRepository.update(workOrder, woObject, { transaction });
 
-		for (const item of productItems) {
+		for (let i = 0; i < productItems.length; i++) {
+			const item = productItems[i];
+			const computedItem = totals.items[i];
 			const woItemObject = {
 				work_order_id: workOrder.id,
 				product_id: item.product_id,
@@ -392,11 +417,11 @@ exports.updateWorkOrder = async (req) => {
 				discount: parseFloat(item.discount || 0),
 				discount_price_type: item.discount_price_type,
 				tax_id: item.tax_id,
-				igst: parseFloat(item.igst || 0),
-				cgst: parseFloat(item.cgst || 0),
-				sgst: parseFloat(item.sgst || 0),
-				cess: parseFloat(item.cess || 0),
-				total: parseFloat(item.total || 0),
+				igst: computedItem.igst,
+				cgst: computedItem.cgst,
+				sgst: computedItem.sgst,
+				cess: computedItem.cess,
+				total: computedItem.total,
 				stock_type: item.stock_type,
 				note: item.note,
 				selected_uom_id:
@@ -436,6 +461,13 @@ exports.updateWorkOrder = async (req) => {
 				});
 			}
 		}
+
+		await documentChargesRepository.bulkReplaceForDocument(
+			DOCUMENT_TYPE,
+			workOrder.id,
+			chargeBreakdownToRows([...totals.preTaxCharges, ...totals.postTaxCharges]),
+			{ transaction },
+		);
 
 		await transaction.commit();
 		return workOrder;
@@ -620,8 +652,16 @@ exports.getWorkOrderById = async (req) => {
 
 	const woDetail = workOrder.get({ plain: true });
 
+	const chargeRows = await documentChargesRepository.getForDocument(DOCUMENT_TYPE, id);
+	// Pre-existing WO created before this engine has zero document_charges rows — reconstruct
+	// equivalent charges from its legacy customFields, same convention as PO's read path.
+	const charges = chargeRows.length > 0
+		? dbRowsToCharges(chargeRows)
+		: legacyCustomFieldsToCharges(woDetail.customFields);
+
 	return {
 		...woDetail,
+		charges,
 		productItems: woDetail.items.map((item) => ({
 			...item,
 			item_type: item.productSnapshot.item_type,
@@ -665,6 +705,7 @@ exports.deleteWorkOrder = async (req) => {
 		}
 
 		await PaymentRequisition.destroy({ where: { wo_id: id }, transaction });
+		await documentChargesRepository.bulkReplaceForDocument(DOCUMENT_TYPE, id, [], { transaction });
 
 		const orderFileKeys = await orderDispatchService.deleteAllForDocument(DOCUMENT_TYPE, id, transaction);
 
@@ -684,6 +725,14 @@ exports.deleteWorkOrder = async (req) => {
 		}
 		throw error;
 	}
+};
+
+// Landscape is only actually needed for a same-state WO — CGST+SGST split doubles the item
+// table's tax columns (4 vs IGST's 2), which is what pushes portrait A4 past its printable
+// width; an inter-state WO's narrower table fits portrait fine. See htmlPdfGenerator.js.
+exports.getSameState = async (id) => {
+	const wo = await workOrderRepository.findById(id, { attributes: ['same_state'] });
+	return Boolean(wo?.same_state);
 };
 
 exports.generateInvoiceHtml = async (req) => {
@@ -731,8 +780,11 @@ exports.generateInvoiceHtml = async (req) => {
 };
 
 exports.downloadInvoicePdf = async (req) => {
+	const { id } = req.params;
 	const { html = '' } = req.body;
-	const pdfPath = await generateInvoiceHTMLPDF(html, 'workOrderTemplate', { multi: true });
+	// Landscape only for same-state orders — see getSameState above.
+	const sameState = await exports.getSameState(id);
+	const pdfPath = await generateInvoiceHTMLPDF(html, 'workOrderTemplate', { multi: true, landscape: sameState });
 	return pdfPath;
 };
 
@@ -756,6 +808,26 @@ async function calculateWorkOrderInvoice(workOrder) {
 	const totalIgst = !invoiceData.same_state
 		? invoiceData.items.reduce((sum, item) => sum + parseFloat(item.igst || 0), 0)
 		: 0;
+
+	// Charges (contingency/freight/packing/etc.) — see the matching comment in
+	// purchase-order.service.js's calculateSaleInvoice.
+	const chargeRows = await documentChargesRepository.getForDocument(DOCUMENT_TYPE, invoiceData.id);
+	const charges = chargeRows.map((row) => ({
+		name: row.name,
+		calculationType: row.calculation_type,
+		value: parseFloat(row.value),
+		operation: row.operation,
+		applyOn: row.apply_on,
+		taxTreatment: row.tax_treatment,
+		taxableAmount: parseFloat(row.taxable_amount),
+		cgst: parseFloat(row.cgst),
+		sgst: parseFloat(row.sgst),
+		igst: parseFloat(row.igst),
+		total: parseFloat(row.total),
+	}));
+	const totalCgstWithCharges = totalCgst + charges.reduce((sum, c) => sum + c.cgst, 0);
+	const totalSgstWithCharges = totalSgst + charges.reduce((sum, c) => sum + c.sgst, 0);
+	const totalIgstWithCharges = totalIgst + charges.reduce((sum, c) => sum + c.igst, 0);
 
 	const [state, orgRole] = await Promise.all([
 		getState(invoiceData.vendorInfo?.state_id),
@@ -858,9 +930,10 @@ async function calculateWorkOrderInvoice(workOrder) {
 		}),
 		additionalRemarks: invoiceData.remarks,
 		combineInvoiceNumber: invoiceData.doc_number || `${invoiceData.woPrefix || ''}${invoiceData.woNo || ''}${invoiceData.woPostfix || ''}`,
-		totalCgst,
-		totalSgst,
-		totalIgst,
+		totalCgst: totalCgstWithCharges,
+		totalSgst: totalSgstWithCharges,
+		totalIgst: totalIgstWithCharges,
+		charges,
 		totalDiscountAmount: invoiceData.items.reduce((sum, item) => {
 			if (item.discount_price_type === 'percentage') {
 				return sum + ((item.price * item.discount) / 100) * parseFloat(item.qty);
@@ -1329,8 +1402,11 @@ exports.getWorkOrderWorkflow = async (req, id) => {
  * buildPurchaseOrderPdfBuffer) but through the 'workOrderTemplate' template.
  */
 async function buildWorkOrderPdfBuffer(id) {
-	const html = await exports.generateInvoiceHtml({ params: { id }, body: {} });
-	const pdfUrl = await generateInvoiceHTMLPDF(html, 'workOrderTemplate', { multi: true });
+	const [html, sameState] = await Promise.all([
+		exports.generateInvoiceHtml({ params: { id }, body: {} }),
+		exports.getSameState(id),
+	]);
+	const pdfUrl = await generateInvoiceHTMLPDF(html, 'workOrderTemplate', { multi: true, landscape: sameState });
 	const relativePath = pdfUrl.split('/storage/')[1];
 	if (!relativePath) return null;
 	return fs.readFile(path.join(__dirname, '../../storage', relativePath));

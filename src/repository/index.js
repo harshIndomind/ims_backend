@@ -49,4 +49,5 @@ module.exports = {
     masterShortCloseReasonRepository: require('./masterShortCloseReason.repository'),
     additionalNoteTemplateRepo: require('./additionalNoteTemplate.repository'),
     indentItemQtyLogRepository: require('./indentItemQtyLog.repository'),
+    documentChargesRepository: require('./documentCharges.repository'),
 }

@@ -101,10 +101,22 @@ exports.generateInvoiceHTMLPDF = async (dataOrHtml, template, options = {}) => {
 	const browser = await puppeteer.launch();
 	const page = await browser.newPage();
 
+	// Without an explicit viewport, Puppeteer lays the page out at its default 800x600 CSS-px
+	// viewport, then squeezes that onto an A4 page with the margins below. Matching the viewport
+	// to the actual printable width (A4 minus 10mm+10mm margins) makes the page reflow to fit
+	// instead of overflowing past the print margin — necessary but not sufficient on its own:
+	// a wide, many-column item table (PO/WO's own GST-breakdown table, especially with a
+	// same-state CGST+SGST split and long product descriptions) can still exceed even portrait's
+	// ~718px printable width on its own content, which is why PO/WO explicitly request
+	// `landscape` below rather than relying on portrait + a viewport tweak alone.
+	const landscape = options.landscape === true;
+	const viewportWidth = landscape ? 1040 : 718;
+	await page.setViewport({ width: viewportWidth, height: 1000 });
 	await page.setContent(html, { waitUntil: 'networkidle0' });
 	await page.pdf({
 		path: pdfPath,
 		format: 'A4',
+		landscape,
 		printBackground: true,
 		margin: { top: '10mm', bottom: '10mm', left: '10mm', right: '10mm' },
 	});

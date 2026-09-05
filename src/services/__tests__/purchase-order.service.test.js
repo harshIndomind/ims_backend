@@ -14,6 +14,12 @@ jest.mock('../../grpc/clients/product.client', () => ({}));
 jest.mock('../../grpc/clients/productUom.client', () => ({}));
 jest.mock('undici', () => ({ fetch: jest.fn() }));
 jest.mock('../auditLog.service', () => ({ record: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('../document-header-codes.service', () => ({
+	resolveUnitAndMajorHeadCodes: jest.fn().mockResolvedValue({ unitShortCode: 'U1', majorHeadCode: 'M1' }),
+}));
+jest.mock('../document-numbering.service', () => ({
+	generateDocumentNumber: jest.fn().mockResolvedValue({ docNumber: 'PO-1', sequenceNo: 1, fiscalYear: '2025-26' }),
+}));
 
 const mockTransaction = { commit: jest.fn(), rollback: jest.fn() };
 
@@ -46,6 +52,10 @@ jest.mock('../../repository/index', () => ({
 	// indentQtyLog.service.js (invoked internally by applyIndentQtyDelta) pulls this from the
 	// same repository index — must be present or it crashes with "not a function".
 	indentItemQtyLogRepository: { create: jest.fn().mockResolvedValue({}) },
+	documentChargesRepository: {
+		getForDocument: jest.fn().mockResolvedValue([]),
+		bulkReplaceForDocument: jest.fn().mockResolvedValue([]),
+	},
 }));
 
 const { sequelize } = require('../../models/index');
@@ -415,5 +425,97 @@ describe('deletePurchaseOrder — qty_for_purchase_order', () => {
 			expect.objectContaining({ where: { id: 999 } }),
 		);
 		expect(PaymentRequisition.destroy).toHaveBeenCalled();
+	});
+});
+
+// ─── Charge + tax engine integration ──────────────────────────────────────────
+
+describe('createPurchaseOrder — charge-tax engine is authoritative', () => {
+	const { documentChargesRepository } = require('../../repository/index');
+
+	const req = {
+		user: { org_id: 1, roles: ['org_admin'] },
+		body: {
+			indent_id: 5,
+			purchaseOrderDetail: {},
+			vendorInfo: {},
+			state_same: true,
+			// Deliberately wrong client-sent totals — must be ignored, not persisted.
+			total_taxable: 1,
+			total_tax: 1,
+			grandTotal: 1,
+			productItems: [
+				baseProductItem({
+					qty: 1,
+					price: 100000,
+					discount: 0,
+					qty_for_purchase_order: 10,
+					taxSnapshot: { rate: 18 },
+					igst: 999,
+					cgst: 999,
+					sgst: 999,
+					total: 999,
+				}),
+			],
+			charges: [
+				{
+					name: 'Freight',
+					calculationType: 'FIXED',
+					value: 2000,
+					operation: '+',
+					applyOn: 'NET_TAXABLE_AMOUNT',
+					taxTreatment: 'SPECIFIC_RATE',
+					taxRate: 18,
+				},
+			],
+		},
+	};
+
+	it('recomputes totals server-side and persists document_charges, ignoring client-sent totals', async () => {
+		mockIndentFindOne.mockResolvedValue({ budgetType: 'value-wise' });
+		poRepo.create.mockResolvedValue({ id: 500 });
+		poItemRepo.create.mockResolvedValue({ id: 900 });
+
+		await poService.createPurchaseOrder(req, req.body);
+
+		// item 100000@18% = 118000; freight 2000@18% = 2360 -> taxable 102000, tax 18360, grand 120360
+		expect(poRepo.create).toHaveBeenCalledWith(
+			expect.objectContaining({ total_taxable: 102000, total_tax: 18360, grandTotal: 120360 }),
+			expect.anything(),
+		);
+		// Per-item tax fields also come from the engine, not the (deliberately wrong) client values.
+		expect(poItemRepo.create).toHaveBeenCalledWith(
+			expect.objectContaining({ igst: 0, cgst: 9000, sgst: 9000, total: 118000 }),
+			expect.anything(),
+		);
+		expect(documentChargesRepository.bulkReplaceForDocument).toHaveBeenCalledWith(
+			'purchase_order',
+			500,
+			expect.arrayContaining([
+				expect.objectContaining({ name: 'Freight', taxable_amount: 2000, cgst: 180, sgst: 180, total: 2360 }),
+			]),
+			expect.anything(),
+		);
+	});
+});
+
+describe('getPurchaseOrderById — legacy customFields fall back to equivalent charges', () => {
+	it('adapts legacy customFields into charges when no document_charges rows exist', async () => {
+		const { documentChargesRepository, purchaseOrderRepository } = require('../../repository/index');
+		documentChargesRepository.getForDocument.mockResolvedValue([]);
+		purchaseOrderRepository.findOne = jest.fn().mockResolvedValue({
+			get: () => ({
+				id: 100,
+				org_id: 1,
+				items: [],
+				customFields: [{ name: 'TCS', valueType: 'percentage', operationType: '+', amount: '5' }, null],
+			}),
+		});
+
+		const response = await poService.getPurchaseOrderById({ params: { id: 100 }, user: { org_id: 1 } });
+
+		expect(response.charges).toEqual([
+			expect.objectContaining({ name: 'TCS', calculationType: 'PERCENTAGE', value: 5, applyOn: 'AFTER_TAX', taxTreatment: 'NON_TAXABLE' }),
+		]);
 	});
 });

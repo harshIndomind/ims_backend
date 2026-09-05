@@ -603,39 +603,20 @@
                                         </div>
                         </div>
 
-                                    <!-- <% if (invoice.customField1 && invoice.customField1.calculatedValue) { %>
-                                        <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-                                            <span><strong>
-                                                    <%= invoice.customField1.label || ' Additional Charge / Discount' %>
-                                                        <%= invoice.customField1.valueType==='percentage' ?
-                                                            `(${invoice.customField1.value}%)` : '' %>
-                                                </strong></span>
-                                            <span>
-                                                <% if (invoice.customField1.operationType=='-' ) { %>-<% } %>
-                                                        <%= parseFloat(invoice.customField1.calculatedValue).toFixed(2)
-                                                            %>
-                                            </span>
-                                        </div>
-                                        <% } %> -->
-
-                                            <!-- <% if (invoice.customField2 && invoice.customField2.calculatedValue) { %>
-                                                <div
-                                                    style="display:flex; justify-content:space-between; margin-bottom:4px;">
-                                                    <span><strong>
-                                                            <%= invoice.customField2.label
-                                                                || 'Additional Charge / Discount' %>
-                                                                <%= invoice.customField2.valueType==='percentage' ?
-                                                                    `(${invoice.customField2.value}%)` : '' %>
-                                                        </strong></span>
-                                                    <span>
-                                                        <% if (invoice.customField2.operationType=='-' &&
-                                                            parseFloat(invoice.customField2.calculatedValue).toFixed(2)>
-                                                            0) { %>-<% } %>
-                                                                <%= parseFloat(invoice.customField2.calculatedValue).toFixed(2)
-                                                                    %>
-                                                    </span>
-                                                </div>
-                                                <% } %> -->
+                                    <% if (invoice.charges && invoice.charges.length > 0) { %>
+                                        <% invoice.charges.forEach((charge) => { %>
+                                            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                                                <span><strong>
+                                                        <%= charge.name %>
+                                                        <%= charge.calculationType==='PERCENTAGE' ? `(${charge.value}%)` : '' %>
+                                                    </strong></span>
+                                                <span>
+                                                    <% if (charge.operation=='-' ) { %>-<% } %>
+                                                    <%= parseFloat(charge.taxableAmount).toFixed(2) %>
+                                                </span>
+                                            </div>
+                                        <% }); %>
+                                    <% } %>
 
                     </div>
 
