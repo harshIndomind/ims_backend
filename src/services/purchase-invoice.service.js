@@ -622,27 +622,33 @@ exports.listPurchaseInvoices = async (req, query = {}) => {
 		// Actual cash paid to the vendor (net of retention/TDS), not the gross
 		// requisitioned value — unlike PO/WO.totalPaid (a procurement/budget
 		// figure), this list is vendor-billing-facing so "Paid Amount" means
-		// what actually left the org. Only counts once the PR is APPROVED.
-		plain.paid_amount = pr && pr.status === 'APPROVED' ? pr.net_payable : 0;
+		// what actually left the org. net_payable here is already the sum of
+		// every APPROVED requisition against this invoice (see
+		// getPaymentSummaryByInvoiceId) — REGULAR plus any RETENTION_RELEASE —
+		// so it isn't re-gated on a single PR's status here.
+		plain.paid_amount = pr ? pr.net_payable : 0;
 		plain.retention_held = pr ? pr.retention_held : 0;
-		plain.linked_requisition = pr ? { id: pr.requisition_id, requisition_no: pr.requisition_no } : null;
+		plain.linked_requisitions = pr ? pr.linked_requisitions : [];
 		return plain;
 	});
 
 	return { count, rows: rowsWithPaymentStatus };
 };
 
-// One Purchase Invoice <-> at most one non-rejected PaymentRequisition
-// (locked decision, see getPoWoSummary above) — so this is a single-row
-// lookup per invoice, not a running paid-vs-remaining balance. Retention is
-// scoped to just this PR's own deductions (not the PO/WO's shared cap, see
-// getRetentionSummaryForPo/Wo) since that's the only retention this specific
-// invoice's own billed value ever contributed.
+// A Purchase Invoice can carry more than one non-rejected PaymentRequisition:
+// the original REGULAR one, plus later RETENTION_RELEASE requisitions that
+// release money withheld from it (see createRetentionRelease in
+// payment-requisition.service.js — the "at most one REGULAR PR per invoice"
+// rule only applies to REGULAR, RETENTION_RELEASE is exempt). So this
+// aggregates across every PR per invoice instead of picking a single winning
+// row — paid_amount sums every APPROVED requisition's net_payable, and
+// retention_held nets the REGULAR PR's originally-withheld retention against
+// whatever's since been released via an APPROVED RETENTION_RELEASE PR.
 async function getPaymentSummaryByInvoiceId(invoiceIds, org_id) {
 	if (!invoiceIds.length) return {};
 	const prs = await PaymentRequisition.findAll({
 		where: { purchase_invoice_id: { [Op.in]: invoiceIds }, org_id, status: { [Op.ne]: 'REJECTED' } },
-		attributes: ['id', 'purchase_invoice_id', 'requisition_no', 'status', 'gross_amount', 'net_payable'],
+		attributes: ['id', 'purchase_invoice_id', 'requisition_no', 'requisition_type', 'status', 'gross_amount', 'net_payable'],
 		order: [['id', 'DESC']],
 	});
 	if (prs.length === 0) return {};
@@ -657,16 +663,45 @@ async function getPaymentSummaryByInvoiceId(invoiceIds, org_id) {
 		retentionByPrId[d.payment_requisition_id] = (retentionByPrId[d.payment_requisition_id] || 0) + (parseFloat(d.amount) || 0);
 	}
 
-	const result = {};
+	const byInvoice = {};
 	for (const pr of prs) {
-		if (result[pr.purchase_invoice_id]) continue;
-		result[pr.purchase_invoice_id] = {
-			requisition_id: pr.id,
-			requisition_no: pr.requisition_no,
-			status: pr.status,
-			gross_amount: parseFloat(pr.gross_amount) || 0,
-			net_payable: parseFloat(pr.net_payable) || 0,
-			retention_held: retentionByPrId[pr.id] || 0,
+		(byInvoice[pr.purchase_invoice_id] ||= []).push(pr);
+	}
+
+	const result = {};
+	for (const [invoiceId, invoicePrs] of Object.entries(byInvoice)) {
+		// Already sorted id DESC from the query above.
+		const latest = invoicePrs[0];
+		const latestRegular = invoicePrs.find((pr) => pr.requisition_type !== 'RETENTION_RELEASE');
+		const paidAmount = invoicePrs
+			.filter((pr) => pr.status === 'APPROVED')
+			.reduce((sum, pr) => sum + (parseFloat(pr.net_payable) || 0), 0);
+		const retentionHeldOriginally = invoicePrs
+			.filter((pr) => pr.requisition_type !== 'RETENTION_RELEASE')
+			.reduce((sum, pr) => sum + (retentionByPrId[pr.id] || 0), 0);
+		const retentionReleased = invoicePrs
+			.filter((pr) => pr.requisition_type === 'RETENTION_RELEASE' && pr.status === 'APPROVED')
+			.reduce((sum, pr) => sum + (parseFloat(pr.net_payable) || 0), 0);
+
+		result[invoiceId] = {
+			requisition_id: latest.id,
+			requisition_no: latest.requisition_no,
+			// Drives the PAID/PENDING badge — reflects the invoice's own
+			// (REGULAR) payment, not a later retention release still in flight.
+			status: (latestRegular ?? latest).status,
+			gross_amount: parseFloat((latestRegular ?? latest).gross_amount) || 0,
+			net_payable: paidAmount,
+			retention_held: Math.max(0, retentionHeldOriginally - retentionReleased),
+			// All non-rejected PRs against this invoice, oldest first — the
+			// list-page tooltip shows every one (REGULAR + any RETENTION_RELEASE),
+			// not just the single latest row.
+			linked_requisitions: [...invoicePrs].reverse().map((pr) => ({
+				id: pr.id,
+				requisition_no: pr.requisition_no,
+				requisition_type: pr.requisition_type,
+				status: pr.status,
+				net_payable: parseFloat(pr.net_payable) || 0,
+			})),
 		};
 	}
 	return result;

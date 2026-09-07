@@ -387,13 +387,19 @@ exports.createPaymentRequisition = async (req, payload) => {
 					StatusCodes.CONFLICT,
 				);
 			}
-			// One Purchase Invoice <-> at most one non-rejected Payment Requisition —
-			// no partial multi-PR drawdown against a single invoice.
-			const existingPrCount = await PaymentRequisition.count({
-				where: { purchase_invoice_id, status: { [Op.ne]: 'REJECTED' } },
-			});
-			if (existingPrCount > 0) {
-				throw new AppError('A Payment Requisition already exists for this Purchase Invoice', StatusCodes.CONFLICT);
+			// One Purchase Invoice <-> at most one non-rejected REGULAR Payment
+			// Requisition — no partial multi-PR drawdown against a single invoice.
+			// RETENTION_RELEASE is exempt: it's a legitimate later requisition
+			// against the same invoice (releasing money withheld from the earlier
+			// regular payment), gated by its own balance check below instead —
+			// same as the PO/WO path, which has no existence check at all here.
+			if (requisitionType !== 'RETENTION_RELEASE') {
+				const existingPrCount = await PaymentRequisition.count({
+					where: { purchase_invoice_id, status: { [Op.ne]: 'REJECTED' } },
+				});
+				if (existingPrCount > 0) {
+					throw new AppError('A Payment Requisition already exists for this Purchase Invoice', StatusCodes.CONFLICT);
+				}
 			}
 			if (gross > parseFloat(invoice.grandTotal || 0) + 0.001) {
 				throw new AppError(
@@ -1462,12 +1468,26 @@ exports.createRetentionRelease = async (req, payload) => {
 	// Validate that we are not releasing more than what is held. Retention is
 	// checked across both payment paths (getRetentionSummaryForPo/Wo) since it
 	// accumulates against one shared per-order cap regardless of whether it
-	// was withheld via a direct requisition or an Invoice-anchored one.
+	// was withheld via a direct requisition or an Invoice-anchored one. An
+	// Invoice-anchored release (requisitionAgainst === 'Invoice') resolves
+	// through the invoice to its underlying PO/WO first — same resolution
+	// createPaymentRequisition itself uses below — rather than treating the
+	// invoice's own id as a WO id.
 	const { org_id } = req.user;
-	const retentionSummary =
-		requisitionAgainst === 'PO'
-			? await analyticsRepo.getRetentionSummaryForPo({ poId: poWoId, org_id })
-			: await analyticsRepo.getRetentionSummaryForWo({ woId: poWoId, org_id });
+	const po_id = requisitionAgainst === 'PO' && poWoId ? Number(poWoId) : null;
+	const wo_id = requisitionAgainst === 'WO' && poWoId ? Number(poWoId) : null;
+	const purchase_invoice_id = requisitionAgainst === 'Invoice' && poWoId ? Number(poWoId) : null;
+	const { orderId: retentionOrderId, isPo: retentionIsPo } = await resolveRetentionOrderId({
+		po_id,
+		wo_id,
+		purchase_invoice_id,
+	});
+	if (!retentionOrderId) {
+		throw new AppError('Unable to resolve the order this retention was held against', StatusCodes.UNPROCESSABLE_ENTITY);
+	}
+	const retentionSummary = retentionIsPo
+		? await analyticsRepo.getRetentionSummaryForPo({ poId: retentionOrderId, org_id })
+		: await analyticsRepo.getRetentionSummaryForWo({ woId: retentionOrderId, org_id });
 
 	const requested = parseFloat(releaseAmount);
 	if (requested > retentionSummary.retention_balance) {
