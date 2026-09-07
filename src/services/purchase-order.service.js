@@ -697,11 +697,21 @@ exports.getAllPurchaseOrders = async (req) => {
 		ids: orderIds,
 		org_id,
 	});
+	// The `paymentRequisitions` include above only matches po_id-direct rows —
+	// once this PO has a Purchase Invoice, its requisitions are invoice-anchored
+	// (purchase_invoice_id set, po_id null) and would otherwise show an empty
+	// tooltip under a nonzero totalPaid. Bulk-fetched and merged in here.
+	const requisitionsByOrderId = await paymentRequisitionAnalyticsRepo.getApprovedRequisitionsBulk({
+		idField: 'po_id',
+		ids: orderIds,
+		org_id,
+	});
 	response = response.map((po) => ({
 		...po,
 		retention_held: retentionByOrderId[po.id]?.retention_held || 0,
 		retention_released: retentionByOrderId[po.id]?.retention_released || 0,
 		retention_balance: retentionByOrderId[po.id]?.retention_balance || 0,
+		paymentRequisitions: requisitionsByOrderId[po.id] || po.paymentRequisitions || [],
 	}));
 
 	return { rows: response, count: purchaseOrders.count };

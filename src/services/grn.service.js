@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const { fetch } = require('undici');
-const { Op } = require('sequelize');
+const { Op, QueryTypes } = require('sequelize');
 const { StatusCodes } = require('http-status-codes');
 const { sequelize } = require('../models/index');
 const {
@@ -66,6 +66,46 @@ exports.generateGrnNumber = async (req) => {
 		if (!isNaN(latestNumber)) next = latestNumber + 1;
 	}
 	return next.toString().padStart(4, '0');
+};
+
+/**
+ * Total qty actually received against a single PO item — Σ received_qty across
+ * its active (non-cancelled) GRNs/MRNs. Same idiom used inline throughout
+ * createGRN/getReceivableLinesForPurchaseOrder above, exported here so Purchase
+ * Invoice's own hard-block check (invoiced_qty vs received_qty) can reuse it
+ * rather than re-deriving the "active GRN" join a third time.
+ */
+exports.getReceivedQtyForPoItem = async (purchaseOrderItemId, { transaction } = {}) => {
+	const total = await GoodsReceiptNoteItem.sum('received_qty', {
+		where: { purchase_order_item_id: purchaseOrderItemId },
+		include: [{ model: GoodsReceiptNote, as: 'goodsReceiptNote', attributes: [], where: { status: 'active' } }],
+		transaction,
+	});
+	return parseFloat(total) || 0;
+};
+
+/**
+ * Total monetary value actually received against a PO — Σ(received_qty × price)
+ * across all its items, counting only active (non-cancelled) GRNs/MRNs.
+ *
+ * This is the ceiling Payment Requisition must cap itself at instead of the
+ * PO's full grandTotal, so a partially-received (or short-closed) PO can't be
+ * requisitioned for value that never arrived.
+ */
+exports.getPoReceivedValue = async (poId, { transaction } = {}) => {
+	const rows = await sequelize.query(
+		`
+		SELECT poi.price AS price, COALESCE(SUM(gi.received_qty), 0) AS received_qty
+		FROM PurchaseOrderItems poi
+		LEFT JOIN GoodsReceiptNoteItems gi ON gi.purchase_order_item_id = poi.id
+		LEFT JOIN GoodsReceiptNotes g ON g.id = gi.goods_receipt_note_id AND g.status = 'active'
+		WHERE poi.purchase_order_id = :poId
+		GROUP BY poi.id, poi.price
+		`,
+		{ replacements: { poId }, type: QueryTypes.SELECT, transaction },
+	);
+
+	return rows.reduce((sum, row) => sum + (parseFloat(row.received_qty) || 0) * (parseFloat(row.price) || 0), 0);
 };
 
 exports.createGRN = async (req) => {
@@ -430,7 +470,18 @@ exports.getAllGRNs = async (req) => {
 	return GoodsReceiptNote.findAndCountAll({
 		where,
 		include: [
-			{ model: GoodsReceiptNoteItem, as: 'items' },
+			{
+				model: GoodsReceiptNoteItem,
+				as: 'items',
+				include: [
+					{
+						model: QcInspectionItem,
+						as: 'qcInspectionItem',
+						attributes: ['id'],
+						include: [{ model: QcInspection, as: 'inspection', attributes: ['id', 'qc_no'] }],
+					},
+				],
+			},
 			{ model: PurchaseOrder, as: 'purchaseOrder', attributes: ['id', 'doc_number', 'poPrefix', 'poNo', 'poPostfix', 'vendorInfo'] },
 		],
 		order: [['createdAt', 'DESC']],

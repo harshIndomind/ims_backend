@@ -26,5 +26,10 @@ router.get(
 	checkPermission('short-close', 'view'),
 	orderDispatchLookupController.getShortCloseReasons,
 );
+router.get(
+	'/other-charge-types',
+	checkPermission('purchase-invoice', 'view'),
+	orderDispatchLookupController.getOtherChargeTypes,
+);
 
 module.exports = router;

@@ -20,6 +20,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'wo_id',
 				as: 'workOrder',
 			});
+			PaymentRequisition.belongsTo(models.PurchaseInvoice, {
+				foreignKey: 'purchase_invoice_id',
+				as: 'purchaseInvoice',
+			});
 			PaymentRequisition.belongsTo(models.CostCenter, {
 				foreignKey: 'cost_center_id',
 				as: 'cost_center',
@@ -99,6 +103,18 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.INTEGER,
 				allowNull: true,
 				references: { model: 'WorkOrders', key: 'id' },
+				onUpdate: 'CASCADE',
+				onDelete: 'SET NULL',
+			},
+			// Set only when requisition_against = 'Invoice'. The payable-cap
+			// arithmetic still resolves through the invoice's own
+			// purchase_order_id (see payment-requisition.service.js) — this column
+			// exists for traceability/display (invoice #, date, variance info),
+			// not as a second parallel ledger.
+			purchase_invoice_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+				references: { model: 'purchase_invoices', key: 'id' },
 				onUpdate: 'CASCADE',
 				onDelete: 'SET NULL',
 			},

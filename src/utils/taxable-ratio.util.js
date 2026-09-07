@@ -16,9 +16,12 @@
  * has no grandTotal — a safe fallback that reproduces the old (gross-based)
  * behavior rather than guessing.
  */
-async function getTaxableRatio({ PurchaseOrder, WorkOrder, po_id, wo_id, transaction }) {
-	const Model = po_id ? PurchaseOrder : wo_id ? WorkOrder : null;
-	const id = po_id || wo_id;
+async function getTaxableRatio({ PurchaseOrder, WorkOrder, PurchaseInvoice, po_id, wo_id, purchase_invoice_id, transaction }) {
+	// An Invoice-anchored requisition uses the invoice's OWN taxable/grand
+	// totals, not the PO's — the invoice is the actual vendor bill, a more
+	// accurate basis than the PO's estimate once one exists.
+	const Model = po_id ? PurchaseOrder : wo_id ? WorkOrder : purchase_invoice_id ? PurchaseInvoice : null;
+	const id = po_id || wo_id || purchase_invoice_id;
 	if (!Model || !id) return 1;
 
 	const order = await Model.findOne({ where: { id }, attributes: ['total_taxable', 'grandTotal'], transaction });

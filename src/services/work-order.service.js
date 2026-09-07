@@ -607,11 +607,21 @@ exports.getAllWorkOrders = async (req) => {
 		ids: orderIds,
 		org_id,
 	});
+	// The `paymentRequisitions` include above only matches wo_id-direct rows —
+	// once this WO has a Purchase Invoice, its requisitions are invoice-anchored
+	// (purchase_invoice_id set, wo_id null) and would otherwise show an empty
+	// tooltip under a nonzero totalPaid. Bulk-fetched and merged in here.
+	const requisitionsByOrderId = await paymentRequisitionAnalyticsRepo.getApprovedRequisitionsBulk({
+		idField: 'wo_id',
+		ids: orderIds,
+		org_id,
+	});
 	response = response.map((wo) => ({
 		...wo,
 		retention_held: retentionByOrderId[wo.id]?.retention_held || 0,
 		retention_released: retentionByOrderId[wo.id]?.retention_released || 0,
 		retention_balance: retentionByOrderId[wo.id]?.retention_balance || 0,
+		paymentRequisitions: requisitionsByOrderId[wo.id] || wo.paymentRequisitions || [],
 	}));
 
 	return { rows: response, count: workOrders.count };

@@ -115,10 +115,125 @@ exports.getRetentionSummary = async ({ idField, id, org_id, transaction }) => {
 };
 
 /**
+ * Same held/released/balance computation as getRetentionSummary, but scoped
+ * to a PO across BOTH payment paths — requisitions raised directly against
+ * the PO (po_id = :poId) and requisitions raised against a Purchase Invoice
+ * for that PO (purchase_invoice_id -> purchase_invoices.purchase_order_id =
+ * :poId). Retention accumulates against one shared per-PO contract cap
+ * (PurchaseOrder.retention_amount) regardless of which path raised each
+ * requisition — a PO can have some early PO-direct requisitions before its
+ * first invoice, then invoice-anchored ones after (PO-direct closes once an
+ * invoice exists, see payment-requisition.service.js), and the cap must see
+ * both. This reduces to the same result as getRetentionSummary({idField:
+ * 'po_id', ...}) when no invoices exist yet, so it's safe to use for every PO
+ * retention check, not only invoice-anchored ones.
+ */
+exports.getRetentionSummaryForPo = async ({ poId, org_id, transaction }) => {
+	const held = await sequelize.query(
+		`
+		SELECT COALESCE(SUM(d.amount), 0) AS retention_held
+		FROM PaymentRequisitionDeductions d
+		INNER JOIN PaymentRequisitions pr ON pr.id = d.payment_requisition_id
+		WHERE (
+			pr.po_id = :poId
+			OR pr.purchase_invoice_id IN (SELECT id FROM purchase_invoices WHERE purchase_order_id = :poId)
+		)
+		  AND pr.org_id            = :org_id
+		  AND pr.status           != 'REJECTED'
+		  AND pr.requisition_type  = 'REGULAR'
+		  AND d.deduction_type     = 'RETENTION'
+		`,
+		{ replacements: { poId, org_id }, type: QueryTypes.SELECT, plain: true, transaction },
+	);
+
+	const released = await sequelize.query(
+		`
+		SELECT COALESCE(SUM(gross_amount), 0) AS retention_released
+		FROM PaymentRequisitions
+		WHERE (
+			po_id = :poId
+			OR purchase_invoice_id IN (SELECT id FROM purchase_invoices WHERE purchase_order_id = :poId)
+		)
+		  AND org_id           = :org_id
+		  AND status           = 'APPROVED'
+		  AND requisition_type = 'RETENTION_RELEASE'
+		`,
+		{ replacements: { poId, org_id }, type: QueryTypes.SELECT, plain: true, transaction },
+	);
+
+	const retentionHeld = parseFloat(held?.retention_held || 0);
+	const retentionReleased = parseFloat(released?.retention_released || 0);
+
+	return {
+		retention_held: retentionHeld,
+		retention_released: retentionReleased,
+		retention_balance: Math.max(0, retentionHeld - retentionReleased),
+	};
+};
+
+/**
+ * Same as getRetentionSummaryForPo, but for a WO — Purchase Invoice can now
+ * be raised against a WO too (no MRN for WO, ceiling is QC accepted_qty or
+ * ordered qty instead — see purchase-invoice.service.js), and WO-direct
+ * closes once a WO-anchored invoice exists the same way PO-direct does, so
+ * WO retention needs the identical cross-path treatment.
+ */
+exports.getRetentionSummaryForWo = async ({ woId, org_id, transaction }) => {
+	const held = await sequelize.query(
+		`
+		SELECT COALESCE(SUM(d.amount), 0) AS retention_held
+		FROM PaymentRequisitionDeductions d
+		INNER JOIN PaymentRequisitions pr ON pr.id = d.payment_requisition_id
+		WHERE (
+			pr.wo_id = :woId
+			OR pr.purchase_invoice_id IN (SELECT id FROM purchase_invoices WHERE work_order_id = :woId)
+		)
+		  AND pr.org_id            = :org_id
+		  AND pr.status           != 'REJECTED'
+		  AND pr.requisition_type  = 'REGULAR'
+		  AND d.deduction_type     = 'RETENTION'
+		`,
+		{ replacements: { woId, org_id }, type: QueryTypes.SELECT, plain: true, transaction },
+	);
+
+	const released = await sequelize.query(
+		`
+		SELECT COALESCE(SUM(gross_amount), 0) AS retention_released
+		FROM PaymentRequisitions
+		WHERE (
+			wo_id = :woId
+			OR purchase_invoice_id IN (SELECT id FROM purchase_invoices WHERE work_order_id = :woId)
+		)
+		  AND org_id           = :org_id
+		  AND status           = 'APPROVED'
+		  AND requisition_type = 'RETENTION_RELEASE'
+		`,
+		{ replacements: { woId, org_id }, type: QueryTypes.SELECT, plain: true, transaction },
+	);
+
+	const retentionHeld = parseFloat(held?.retention_held || 0);
+	const retentionReleased = parseFloat(released?.retention_released || 0);
+
+	return {
+		retention_held: retentionHeld,
+		retention_released: retentionReleased,
+		retention_balance: Math.max(0, retentionHeld - retentionReleased),
+	};
+};
+
+/**
  * Same held/released/balance computation as getRetentionSummary, but for many
  * PO/WO ids at once (one GROUP BY query each instead of N single-id queries) —
  * built for list pages that need a per-row retention indicator without an
  * N+1 query per row.
+ *
+ * Like getRetentionSummaryForPo/getRetentionSummaryForWo, also picks up
+ * requisitions raised against a Purchase Invoice for the PO/WO (purchase_invoice_id
+ * -> purchase_invoices.purchase_order_id/work_order_id), not just PO/WO-direct
+ * ones (pr.po_id/pr.wo_id) — a PO/WO closes to PO/WO-direct requisitions once it
+ * has an invoice (see payment-requisition.service.js), so skipping the
+ * invoice-anchored path here would silently show 0 retention on any order whose
+ * only requisition went through its invoice.
  *
  * Returns a plain object keyed by id: { [id]: { retention_held, retention_released, retention_balance } }.
  * Ids with no retention activity at all are simply absent from the result —
@@ -127,30 +242,40 @@ exports.getRetentionSummary = async ({ idField, id, org_id, transaction }) => {
 exports.getRetentionSummaryBulk = async ({ idField, ids, org_id }) => {
 	if (!ids || ids.length === 0) return {};
 
+	const invoiceColumn = idField === 'wo_id' ? 'work_order_id' : 'purchase_order_id';
+
 	const heldRows = await sequelize.query(
 		`
-		SELECT pr.${idField} AS order_id, COALESCE(SUM(d.amount), 0) AS retention_held
-		FROM PaymentRequisitionDeductions d
-		INNER JOIN PaymentRequisitions pr ON pr.id = d.payment_requisition_id
-		WHERE pr.${idField}        IN (:ids)
-		  AND pr.org_id            = :org_id
-		  AND pr.status           != 'REJECTED'
-		  AND pr.requisition_type  = 'REGULAR'
-		  AND d.deduction_type     = 'RETENTION'
-		GROUP BY pr.${idField}
+		SELECT order_id, COALESCE(SUM(amount), 0) AS retention_held
+		FROM (
+			SELECT COALESCE(pr.${idField}, pi.${invoiceColumn}) AS order_id, d.amount
+			FROM PaymentRequisitionDeductions d
+			INNER JOIN PaymentRequisitions pr ON pr.id = d.payment_requisition_id
+			LEFT JOIN purchase_invoices pi ON pi.id = pr.purchase_invoice_id
+			WHERE (pr.${idField} IN (:ids) OR pi.${invoiceColumn} IN (:ids))
+			  AND pr.org_id            = :org_id
+			  AND pr.status           != 'REJECTED'
+			  AND pr.requisition_type  = 'REGULAR'
+			  AND d.deduction_type     = 'RETENTION'
+		) matched
+		GROUP BY order_id
 		`,
 		{ replacements: { ids, org_id }, type: QueryTypes.SELECT },
 	);
 
 	const releasedRows = await sequelize.query(
 		`
-		SELECT ${idField} AS order_id, COALESCE(SUM(gross_amount), 0) AS retention_released
-		FROM PaymentRequisitions
-		WHERE ${idField}       IN (:ids)
-		  AND org_id           = :org_id
-		  AND status           = 'APPROVED'
-		  AND requisition_type = 'RETENTION_RELEASE'
-		GROUP BY ${idField}
+		SELECT order_id, COALESCE(SUM(gross_amount), 0) AS retention_released
+		FROM (
+			SELECT COALESCE(pr.${idField}, pi.${invoiceColumn}) AS order_id, pr.gross_amount
+			FROM PaymentRequisitions pr
+			LEFT JOIN purchase_invoices pi ON pi.id = pr.purchase_invoice_id
+			WHERE (pr.${idField} IN (:ids) OR pi.${invoiceColumn} IN (:ids))
+			  AND pr.org_id           = :org_id
+			  AND pr.status           = 'APPROVED'
+			  AND pr.requisition_type = 'RETENTION_RELEASE'
+		) matched
+		GROUP BY order_id
 		`,
 		{ replacements: { ids, org_id }, type: QueryTypes.SELECT },
 	);
@@ -170,6 +295,52 @@ exports.getRetentionSummaryBulk = async ({ idField, ids, org_id }) => {
 		result[id].retention_balance = Math.max(0, retention_held - retention_released);
 	}
 
+	return result;
+};
+
+/**
+ * Returns APPROVED requisitions for many PO/WO ids at once, for list pages'
+ * "which requisition(s) make up this Total Paid" tooltip. Like
+ * getRetentionSummaryBulk, matches both PO/WO-direct requisitions
+ * (pr.po_id/pr.wo_id) and invoice-anchored ones raised against a Purchase
+ * Invoice for that PO/WO — a PO/WO closes to direct requisitions once it has
+ * an invoice, so the direct-only match alone would show an empty tooltip
+ * under a nonzero Total Paid for any order whose only requisition went
+ * through its invoice.
+ *
+ * Returns a plain object keyed by id: { [id]: [{ id, requisition_no, requisition_amount, status }] }.
+ * Ids with no approved requisitions are simply absent — callers should default to [].
+ */
+exports.getApprovedRequisitionsBulk = async ({ idField, ids, org_id }) => {
+	if (!ids || ids.length === 0) return {};
+
+	const invoiceColumn = idField === 'wo_id' ? 'work_order_id' : 'purchase_order_id';
+
+	const rows = await sequelize.query(
+		`
+		SELECT
+			COALESCE(pr.${idField}, pi.${invoiceColumn}) AS order_id,
+			pr.id, pr.requisition_no, pr.requisition_amount, pr.status
+		FROM PaymentRequisitions pr
+		LEFT JOIN purchase_invoices pi ON pi.id = pr.purchase_invoice_id
+		WHERE (pr.${idField} IN (:ids) OR pi.${invoiceColumn} IN (:ids))
+		  AND pr.org_id = :org_id
+		  AND pr.status = 'APPROVED'
+		ORDER BY pr.id ASC
+		`,
+		{ replacements: { ids, org_id }, type: QueryTypes.SELECT },
+	);
+
+	const result = {};
+	for (const row of rows) {
+		if (!result[row.order_id]) result[row.order_id] = [];
+		result[row.order_id].push({
+			id: row.id,
+			requisition_no: row.requisition_no,
+			requisition_amount: row.requisition_amount,
+			status: row.status,
+		});
+	}
 	return result;
 };
 

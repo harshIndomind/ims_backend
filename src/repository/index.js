@@ -48,6 +48,8 @@ module.exports = {
     shortCloseRequestItemsRepository: require('./shortCloseRequestItems.repository'),
     masterShortCloseReasonRepository: require('./masterShortCloseReason.repository'),
     additionalNoteTemplateRepo: require('./additionalNoteTemplate.repository'),
+    purchaseInvoiceItemsRepository: require('./purchaseInvoiceItems.repository'),
+    masterOtherChargeTypeRepository: require('./masterOtherChargeType.repository'),
     indentItemQtyLogRepository: require('./indentItemQtyLog.repository'),
     documentChargesRepository: require('./documentCharges.repository'),
 }

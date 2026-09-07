@@ -4,6 +4,7 @@ const {
 	PaymentRequisitionDeduction,
 	PurchaseOrder,
 	WorkOrder,
+	PurchaseInvoice,
 	User,
 	organization,
 	Role,
@@ -28,6 +29,7 @@ const { BASE_URL } = require('../config/serverConfig');
 const fetchPermissions = require('../helpers/fetchPermissions');
 const money = require('../utils/money');
 const { getTaxableRatio } = require('../utils/taxable-ratio.util');
+const { getPoReceivedValue } = require('./grn.service');
 
 const TDS_DEDUCTION_TYPES = ['TDS', 'GST_TDS', 'WCT'];
 
@@ -105,15 +107,27 @@ function sumDeductions(deductions = []) {
  * Recalculates and persists totalPaid / remainingAmount / paymentStatus on a PO or WO.
  * Uses net_payable (actual cash out) for REGULAR requisitions.
  * RETENTION_RELEASE requisitions add back the released amount as positive cash.
+ *
+ * For a PurchaseOrder, remainingAmount is capped at what's actually been
+ * received (Σ MRN received_qty × price), not the PO's full grandTotal — so a
+ * partially-received or short-closed PO reads as PAID once it's paid for what
+ * arrived, not once it's paid for what was originally ordered. WO has no
+ * MRN-equivalent receipt ledger yet, so it keeps the uncapped grandTotal
+ * ceiling unchanged.
  */
 async function syncPoWoPaymentFields(Model, id, org_id, amountDelta, transaction) {
 	const record = await Model.findOne({ where: { id, org_id }, transaction, lock: transaction.LOCK.UPDATE });
 	if (!record) return;
 
 	const grandTotal = parseFloat(record.grandTotal) || 0;
+	let ceiling = grandTotal;
+	if (Model === PurchaseOrder) {
+		const receivedValue = await getPoReceivedValue(id, { transaction });
+		ceiling = Math.min(grandTotal, receivedValue);
+	}
 	const currentTotalPaid = parseFloat(record.totalPaid) || 0;
 	const newTotalPaid = Math.max(0, currentTotalPaid + amountDelta);
-	const newRemainingAmount = Math.max(0, grandTotal - newTotalPaid);
+	const newRemainingAmount = Math.max(0, ceiling - newTotalPaid);
 
 	let newPaymentStatus;
 	if (newRemainingAmount <= 0) {
@@ -170,22 +184,78 @@ function poWoSyncAmount(requisition) {
 }
 
 /**
+ * Resolves what syncPoWoPaymentFields should update for a requisition — an
+ * Invoice-anchored requisition still syncs its underlying PO's or WO's
+ * totalPaid/remainingAmount (via the invoice's own document_type +
+ * purchase_order_id/work_order_id), not a parallel per-invoice ledger;
+ * purchase_invoice_id exists on the requisition purely for traceability/
+ * display.
+ */
+async function resolveSyncTarget({ po_id, wo_id, purchase_invoice_id }, transaction) {
+	if (po_id) return { parentId: po_id, ParentModel: PurchaseOrder };
+	if (wo_id) return { parentId: wo_id, ParentModel: WorkOrder };
+	if (purchase_invoice_id) {
+		const invoice = await PurchaseInvoice.findByPk(purchase_invoice_id, {
+			attributes: ['document_type', 'purchase_order_id', 'work_order_id'],
+			transaction,
+		});
+		if (invoice) {
+			return invoice.document_type === 'work_order'
+				? { parentId: invoice.work_order_id, ParentModel: WorkOrder }
+				: { parentId: invoice.purchase_order_id, ParentModel: PurchaseOrder };
+		}
+	}
+	return { parentId: null, ParentModel: null };
+}
+
+/**
+ * Resolves the PO/WO id retention checks should key off, for anything
+ * exposing po_id/wo_id/purchase_invoice_id (a requisition row, or the
+ * derived ids inside createPaymentRequisition). An Invoice-anchored
+ * requisition still draws against its underlying PO's or WO's shared
+ * retention ledger via the invoice's own document_type +
+ * purchase_order_id/work_order_id — retention is never a parallel
+ * per-invoice concept. Returns { orderId, isPo } — isPo selects which
+ * cross-path retention summary validateRetentionCap should use.
+ */
+async function resolveRetentionOrderId({ po_id, wo_id, purchase_invoice_id }, transaction) {
+	if (po_id) return { orderId: po_id, isPo: true };
+	if (wo_id) return { orderId: wo_id, isPo: false };
+	if (!purchase_invoice_id) return { orderId: null, isPo: false };
+	const invoice = await PurchaseInvoice.findByPk(purchase_invoice_id, {
+		attributes: ['document_type', 'purchase_order_id', 'work_order_id'],
+		transaction,
+	});
+	if (!invoice) return { orderId: null, isPo: false };
+	return invoice.document_type === 'work_order'
+		? { orderId: invoice.work_order_id, isPo: false }
+		: { orderId: invoice.purchase_order_id, isPo: true };
+}
+
+/**
  * Validates retention-related caps against a locked PO/WO row and returns
  * nothing (throws AppError on violation). Shared by createPaymentRequisition
- * (both REGULAR-with-retention and RETENTION_RELEASE) and addDeduction, so
- * every entry point that can add a RETENTION deduction or release retention
- * enforces the same cap under the same row lock — closes the gap where
- * addDeduction used to bypass the cap entirely.
+ * (both REGULAR-with-retention and RETENTION_RELEASE), addDeduction, and
+ * updatePaymentRequisition, so every entry point that can add a RETENTION
+ * deduction or release retention enforces the same cap under the same row
+ * lock — closes the gap where addDeduction used to bypass the cap entirely.
+ *
+ * `isPo` selects the summary query: both a PO's and a WO's held/released
+ * figures are computed across BOTH the direct and Invoice-anchored payment
+ * paths (getRetentionSummaryForPo / getRetentionSummaryForWo) since Purchase
+ * Invoice can now be anchored on either — see purchase-invoice.service.js.
  *
  * Must be called with a transaction that has already taken
  * `lock: transaction.LOCK.UPDATE` on the PO/WO row (via the caller loading
  * `order`), so concurrent requisitions against the same PO/WO serialize here.
  */
-async function validateRetentionCap({ requisitionType, order, idField, orderId, org_id, newRetentionAmt, transaction }) {
+async function validateRetentionCap({ requisitionType, order, isPo, orderId, org_id, newRetentionAmt, transaction }) {
 	const cap = parseFloat(order?.retention_amount) || 0;
 	if (cap <= 0 && requisitionType !== 'RETENTION_RELEASE') return;
 
-	const summary = await analyticsRepo.getRetentionSummary({ idField, id: orderId, org_id, transaction });
+	const summary = isPo
+		? await analyticsRepo.getRetentionSummaryForPo({ poId: orderId, org_id, transaction })
+		: await analyticsRepo.getRetentionSummaryForWo({ woId: orderId, org_id, transaction });
 	const alreadyHeld = parseFloat(summary.retention_held) || 0;
 	const alreadyReleased = parseFloat(summary.retention_released) || 0;
 	const balance = Math.max(0, alreadyHeld - alreadyReleased);
@@ -303,14 +373,69 @@ exports.createPaymentRequisition = async (req, payload) => {
 		const fedBy = { id: user.id, name: user.name, email: user.email };
 		const po_id = requisitionAgainst === 'PO' && poWoId ? Number(poWoId) : null;
 		const wo_id = requisitionAgainst === 'WO' && poWoId ? Number(poWoId) : null;
+		const purchase_invoice_id = requisitionAgainst === 'Invoice' && poWoId ? Number(poWoId) : null;
+
+		let invoice = null;
+		if (purchase_invoice_id) {
+			invoice = await PurchaseInvoice.findOne({ where: { id: purchase_invoice_id, org_id: user.org_id } });
+			if (!invoice) {
+				throw new AppError('Purchase Invoice not found', StatusCodes.NOT_FOUND);
+			}
+			if (invoice.status !== 'approved') {
+				throw new AppError(
+					`Cannot requisition against a Purchase Invoice that is "${invoice.status}", not approved`,
+					StatusCodes.CONFLICT,
+				);
+			}
+			// One Purchase Invoice <-> at most one non-rejected Payment Requisition —
+			// no partial multi-PR drawdown against a single invoice.
+			const existingPrCount = await PaymentRequisition.count({
+				where: { purchase_invoice_id, status: { [Op.ne]: 'REJECTED' } },
+			});
+			if (existingPrCount > 0) {
+				throw new AppError('A Payment Requisition already exists for this Purchase Invoice', StatusCodes.CONFLICT);
+			}
+			if (gross > parseFloat(invoice.grandTotal || 0) + 0.001) {
+				throw new AppError(
+					`Requisition amount exceeds this invoice's value of ₹${parseFloat(invoice.grandTotal || 0).toFixed(2)}`,
+					StatusCodes.UNPROCESSABLE_ENTITY,
+				);
+			}
+		}
+
+		// PO/WO-direct closes once any active (non-rejected/cancelled) Purchase
+		// Invoice exists for it — from then on, PR must go through the invoice
+		// instead of the PO/WO directly.
+		if (po_id) {
+			const activeInvoiceCount = await PurchaseInvoice.count({
+				where: { document_type: 'purchase_order', purchase_order_id: po_id, status: { [Op.notIn]: ['rejected', 'cancelled'] } },
+			});
+			if (activeInvoiceCount > 0) {
+				throw new AppError(
+					'This PO has a Purchase Invoice raised against it — raise the requisition against the Invoice instead of the PO directly.',
+					StatusCodes.CONFLICT,
+				);
+			}
+		}
+		if (wo_id) {
+			const activeInvoiceCount = await PurchaseInvoice.count({
+				where: { document_type: 'work_order', work_order_id: wo_id, status: { [Op.notIn]: ['rejected', 'cancelled'] } },
+			});
+			if (activeInvoiceCount > 0) {
+				throw new AppError(
+					'This WO has a Purchase Invoice raised against it — raise the requisition against the Invoice instead of the WO directly.',
+					StatusCodes.CONFLICT,
+				);
+			}
+		}
 
 		// Deduction amounts are normalized (and TDS/GST_TDS recomputed against the
 		// taxable base) before totalDed/netPayable are derived from them, so the
 		// requisition's own stored totals always agree with what actually gets
 		// inserted into PaymentRequisitionDeductions.
 		let taxableRatio = 1;
-		if ((po_id || wo_id) && deductions.some((d) => TAXABLE_BASE_DEDUCTION_TYPES.includes(d.deduction_type))) {
-			taxableRatio = await getTaxableRatio({ PurchaseOrder, WorkOrder, po_id, wo_id, transaction });
+		if ((po_id || wo_id || purchase_invoice_id) && deductions.some((d) => TAXABLE_BASE_DEDUCTION_TYPES.includes(d.deduction_type))) {
+			taxableRatio = await getTaxableRatio({ PurchaseOrder, WorkOrder, PurchaseInvoice, po_id, wo_id, purchase_invoice_id, transaction });
 		}
 		const normalizedDeductions = normalizeDeductions(deductions, { gross, taxableRatio });
 		const totalDed = sumDeductions(normalizedDeductions);
@@ -322,13 +447,18 @@ exports.createPaymentRequisition = async (req, payload) => {
 
 		// Validate retention cap / release balance under a row lock — prevents cumulative
 		// over-deduction or over-release across concurrent requisitions on the same PO/WO.
+		// An Invoice-anchored requisition resolves to its underlying PO's or WO's
+		// shared retention ledger (see resolveRetentionOrderId) rather than a
+		// parallel one.
 		const retentionDeds = normalizedDeductions.filter((d) => d.deduction_type === 'RETENTION');
 		const newRetentionAmt = money.sum(retentionDeds.map((d) => d.amount));
-		if ((requisitionType === 'RETENTION_RELEASE' || newRetentionAmt > 0) && (po_id || wo_id)) {
-			const orderId = po_id || wo_id;
-			const OrderModel = po_id ? PurchaseOrder : WorkOrder;
-			const idField = po_id ? 'po_id' : 'wo_id';
-			const order = await OrderModel.findByPk(orderId, {
+		const { orderId: retentionOrderId, isPo: retentionIsPo } = await resolveRetentionOrderId(
+			{ po_id, wo_id, purchase_invoice_id },
+			transaction,
+		);
+		if ((requisitionType === 'RETENTION_RELEASE' || newRetentionAmt > 0) && retentionOrderId) {
+			const OrderModel = retentionIsPo ? PurchaseOrder : WorkOrder;
+			const order = await OrderModel.findByPk(retentionOrderId, {
 				attributes: ['retention_amount'],
 				transaction,
 				lock: transaction.LOCK.UPDATE,
@@ -337,12 +467,42 @@ exports.createPaymentRequisition = async (req, payload) => {
 				await validateRetentionCap({
 					requisitionType,
 					order,
-					idField,
-					orderId,
+					isPo: retentionIsPo,
+					orderId: retentionOrderId,
 					org_id: user.org_id,
 					newRetentionAmt: requisitionType === 'RETENTION_RELEASE' ? gross : newRetentionAmt,
 					transaction,
 				});
+			}
+		}
+
+		// Cap PO-direct requisitions at what's actually been received — a PO
+		// can't be requisitioned for value that was short-closed or never
+		// arrived. WO has no MRN-equivalent receipt ledger yet, so this only
+		// applies to PO; WO-direct requisitions keep today's behavior.
+		if (po_id) {
+			const poForCap = await PurchaseOrder.findByPk(po_id, {
+				attributes: ['grandTotal'],
+				transaction,
+				lock: transaction.LOCK.UPDATE,
+			});
+			if (poForCap) {
+				const grandTotal = parseFloat(poForCap.grandTotal) || 0;
+				const receivedValue = await getPoReceivedValue(po_id, { transaction });
+				const ceiling = Math.min(grandTotal, receivedValue);
+				const financial = await analyticsRepo.getPoWoFinancialSummary({
+					idField: 'po_id',
+					id: po_id,
+					org_id: user.org_id,
+				});
+				const totalGrossSoFar = parseFloat(financial?.total_gross || 0);
+				const remaining = Math.max(0, ceiling - totalGrossSoFar);
+				if (gross > remaining) {
+					throw new AppError(
+						`Requisition amount exceeds what's payable for this PO — only ₹${remaining.toFixed(2)} remains against received value (received ₹${receivedValue.toFixed(2)} of ordered ₹${grandTotal.toFixed(2)}).`,
+						StatusCodes.UNPROCESSABLE_ENTITY,
+					);
+				}
 			}
 		}
 
@@ -355,11 +515,12 @@ exports.createPaymentRequisition = async (req, payload) => {
 				requisition_against: requisitionAgainst,
 				requisition_type: requisitionType,
 				supplier_id: supplier_id ? Number(supplier_id) : null,
-				cost_center_id,
+				cost_center_id: cost_center_id ? Number(cost_center_id) : null,
 				supplier_snapshot: supplier_snapshot ?? null,
 				bank_details_snapshot: bankDetailsSnapshot ?? null,
 				po_id,
 				wo_id,
+				purchase_invoice_id,
 				wo_no,
 				po_wo_date: poWoDate || null,
 				wo_po_amount: woPOAmount ? Number(woPOAmount) : 0,
@@ -384,7 +545,7 @@ exports.createPaymentRequisition = async (req, payload) => {
 				payment_date: paymentDate || null,
 				remark: remark || null,
 				term_condition: termCondition || null,
-				payment_term_id,
+				payment_term_id: payment_term_id ? Number(payment_term_id) : null,
 				payment_type: paymentType || null,
 				transaction_id: transactionId || null,
 				status: status || 'PENDING',
@@ -408,10 +569,9 @@ exports.createPaymentRequisition = async (req, payload) => {
 		// path took it there.
 		const finalStatus = status || 'PENDING';
 		if (finalStatus === 'APPROVED') {
-			const parentId = po_id || wo_id;
+			const { parentId, ParentModel } = await resolveSyncTarget({ po_id, wo_id, purchase_invoice_id }, transaction);
 			const paidAmount = poWoSyncAmount({ requisition_type: requisitionType, gross_amount: gross });
 			if (parentId && paidAmount !== null) {
-				const ParentModel = po_id ? PurchaseOrder : WorkOrder;
 				await syncPoWoPaymentFields(ParentModel, parentId, user.org_id, paidAmount, transaction);
 			}
 			const freshRequisition = await paymentRequisitionRepo.findById(requisition.id, { transaction });
@@ -550,6 +710,10 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 		const wo_id = (requisitionAgainst || existing.requisition_against) === 'WO' && (poWoId ?? existing.wo_id)
 			? Number(poWoId ?? existing.wo_id)
 			: null;
+		const purchase_invoice_id =
+			(requisitionAgainst || existing.requisition_against) === 'Invoice' && (poWoId ?? existing.purchase_invoice_id)
+				? Number(poWoId ?? existing.purchase_invoice_id)
+				: null;
 
 		// Same normalize-before-totaling flow as createPaymentRequisition — see its
 		// comment for why (keeps the requisition's own stored totals in agreement
@@ -557,8 +721,8 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 		let dedList = null;
 		if (rawDedList !== null) {
 			let taxableRatio = 1;
-			if ((po_id || wo_id) && rawDedList.some((d) => TAXABLE_BASE_DEDUCTION_TYPES.includes(d.deduction_type))) {
-				taxableRatio = await getTaxableRatio({ PurchaseOrder, WorkOrder, po_id, wo_id, transaction });
+			if ((po_id || wo_id || purchase_invoice_id) && rawDedList.some((d) => TAXABLE_BASE_DEDUCTION_TYPES.includes(d.deduction_type))) {
+				taxableRatio = await getTaxableRatio({ PurchaseOrder, WorkOrder, PurchaseInvoice, po_id, wo_id, purchase_invoice_id, transaction });
 			}
 			dedList = normalizeDeductions(rawDedList, { gross, taxableRatio });
 		}
@@ -593,27 +757,77 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 		const oldStatus = existing.status;
 		const newStatus = approverOnlyFields.status;
 
+		// Re-validate the receipt-value cap if this PO-direct requisition's gross
+		// amount is changing and it isn't rejected — same "subtract this
+		// requisition's own prior contribution before comparing" pattern as the
+		// retention check below, so editing gross_amount can't silently bypass
+		// the cap createPaymentRequisition already enforces at creation time.
+		if (po_id && newStatus !== 'REJECTED' && gross !== parseFloat(existing.gross_amount || 0)) {
+			const poForCap = await PurchaseOrder.findByPk(po_id, {
+				attributes: ['grandTotal'],
+				transaction,
+				lock: transaction.LOCK.UPDATE,
+			});
+			if (poForCap) {
+				const grandTotal = parseFloat(poForCap.grandTotal) || 0;
+				const receivedValue = await getPoReceivedValue(po_id, { transaction });
+				const ceiling = Math.min(grandTotal, receivedValue);
+				const financial = await analyticsRepo.getPoWoFinancialSummary({ idField: 'po_id', id: po_id, org_id });
+				const priorOwnGross =
+					existing.requisition_type === 'REGULAR' && existing.status !== 'REJECTED'
+						? parseFloat(existing.gross_amount || 0)
+						: 0;
+				const totalGrossExcludingSelf = Math.max(0, parseFloat(financial?.total_gross || 0) - priorOwnGross);
+				const remaining = Math.max(0, ceiling - totalGrossExcludingSelf);
+				if (gross > remaining) {
+					throw new AppError(
+						`Requisition amount exceeds what's payable for this PO — only ₹${remaining.toFixed(2)} remains against received value (received ₹${receivedValue.toFixed(2)} of ordered ₹${grandTotal.toFixed(2)}).`,
+						StatusCodes.UNPROCESSABLE_ENTITY,
+					);
+				}
+			}
+		}
+
+		// Same idea for an Invoice-anchored requisition — gross can never exceed
+		// that specific invoice's own grandTotal, re-checked on any edit that
+		// changes it (the 1:1 invoice<->PR and PO-direct-closes-once-invoiced
+		// gates are enforced at creation only; switching which PO/Invoice a PR
+		// targets after creation isn't a supported edit flow).
+		if (purchase_invoice_id && newStatus !== 'REJECTED' && gross !== parseFloat(existing.gross_amount || 0)) {
+			const invoiceForCap = await PurchaseInvoice.findByPk(purchase_invoice_id, { attributes: ['grandTotal'], transaction });
+			if (invoiceForCap && gross > parseFloat(invoiceForCap.grandTotal || 0) + 0.001) {
+				throw new AppError(
+					`Requisition amount exceeds this invoice's value of ₹${parseFloat(invoiceForCap.grandTotal || 0).toFixed(2)}`,
+					StatusCodes.UNPROCESSABLE_ENTITY,
+				);
+			}
+		}
+
 		// Re-validate the retention cap / release balance if this edit changed the
 		// deduction lines and the requisition still isn't rejected. The "already
 		// held" total from the DB still includes this requisition's own prior
 		// RETENTION amount (its rows aren't replaced until further down), so that
 		// prior amount is subtracted out before comparing against the new one —
 		// otherwise editing a retention line's amount would double-count it.
-		if (dedList !== null && (po_id || wo_id) && newStatus !== 'REJECTED') {
+		const { orderId: retentionOrderId, isPo: retentionIsPo } = await resolveRetentionOrderId(
+			{ po_id, wo_id, purchase_invoice_id },
+			transaction,
+		);
+		if (dedList !== null && retentionOrderId && newStatus !== 'REJECTED') {
 			const retentionDeds = dedList.filter((d) => d.deduction_type === 'RETENTION');
 			const newRetentionAmt = money.sum(retentionDeds.map((d) => d.amount));
 			if (finalRequisitionType === 'RETENTION_RELEASE' || newRetentionAmt > 0) {
-				const orderId = po_id || wo_id;
-				const OrderModel = po_id ? PurchaseOrder : WorkOrder;
-				const idField = po_id ? 'po_id' : 'wo_id';
-				const order = await OrderModel.findByPk(orderId, {
+				const OrderModel = retentionIsPo ? PurchaseOrder : WorkOrder;
+				const order = await OrderModel.findByPk(retentionOrderId, {
 					attributes: ['retention_amount'],
 					transaction,
 					lock: transaction.LOCK.UPDATE,
 				});
 				if (order) {
 					const cap = parseFloat(order.retention_amount) || 0;
-					const summary = await analyticsRepo.getRetentionSummary({ idField, id: orderId, org_id, transaction });
+					const summary = retentionIsPo
+						? await analyticsRepo.getRetentionSummaryForPo({ poId: retentionOrderId, org_id, transaction })
+						: await analyticsRepo.getRetentionSummaryForWo({ woId: retentionOrderId, org_id, transaction });
 					const priorOwnRetention =
 						existing.requisition_type === 'REGULAR'
 							? money.sum((existing.deductions || []).filter((d) => d.deduction_type === 'RETENTION').map((d) => d.amount))
@@ -662,6 +876,7 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 				bank_details_snapshot: bankDetailsSnapshot ?? null,
 				po_id,
 				wo_id,
+				purchase_invoice_id,
 				wo_no,
 				po_wo_date: poWoDate || null,
 				wo_po_amount: woPOAmount ? Number(woPOAmount) : 0,
@@ -682,7 +897,7 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 				updated_by_id: req.user.id,
 				payment_date: paymentDate || null,
 				term_condition: termCondition || null,
-				payment_term_id,
+				payment_term_id: payment_term_id ? Number(payment_term_id) : existing.payment_term_id || null,
 				...approverOnlyFields,
 			},
 			{ transaction },
@@ -702,8 +917,14 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 		// Sync totalPaid on parent PO/WO when approval status changes. RETENTION_RELEASE
 		// requisitions are skipped on both sides (poWoSyncAmount returns null for them) —
 		// see poWoSyncAmount's doc comment for why.
-		const parentId = po_id || wo_id || existing.po_id || existing.wo_id;
-		const ParentModel = (requisitionAgainst || existing.requisition_against) === 'PO' ? PurchaseOrder : WorkOrder;
+		const { parentId, ParentModel } = await resolveSyncTarget(
+			{
+				po_id: po_id || existing.po_id,
+				wo_id: wo_id || existing.wo_id,
+				purchase_invoice_id: purchase_invoice_id || existing.purchase_invoice_id,
+			},
+			transaction,
+		);
 		const oldPaidAmount = poWoSyncAmount(existing);
 		const newPaidAmount = poWoSyncAmount({ requisition_type: finalRequisitionType, gross_amount: gross });
 
@@ -758,14 +979,16 @@ exports.addDeduction = async (req, requisitionId, deductionPayload) => {
 			throw new AppError('Payment requisition not found', StatusCodes.NOT_FOUND);
 		}
 
-		const orderId = requisition.po_id || requisition.wo_id;
+		const { orderId, isPo: retentionIsPo } = await resolveRetentionOrderId(
+			{ po_id: requisition.po_id, wo_id: requisition.wo_id, purchase_invoice_id: requisition.purchase_invoice_id },
+			transaction,
+		);
 		const gross = parseFloat(requisition.gross_amount || requisition.requisition_amount || 0);
 
 		// Adding a RETENTION line here must pass the same cap check as the create
 		// flow — this endpoint used to bypass it entirely.
 		if (deductionPayload.deduction_type === 'RETENTION' && orderId) {
-			const OrderModel = requisition.po_id ? PurchaseOrder : WorkOrder;
-			const idField = requisition.po_id ? 'po_id' : 'wo_id';
+			const OrderModel = retentionIsPo ? PurchaseOrder : WorkOrder;
 			const order = await OrderModel.findByPk(orderId, {
 				attributes: ['retention_amount'],
 				transaction,
@@ -775,7 +998,7 @@ exports.addDeduction = async (req, requisitionId, deductionPayload) => {
 				await validateRetentionCap({
 					requisitionType: requisition.requisition_type,
 					order,
-					idField,
+					isPo: retentionIsPo,
 					orderId,
 					org_id,
 					newRetentionAmt: parseFloat(deductionPayload.amount) || 0,
@@ -789,8 +1012,10 @@ exports.addDeduction = async (req, requisitionId, deductionPayload) => {
 			taxableRatio = await getTaxableRatio({
 				PurchaseOrder,
 				WorkOrder,
+				PurchaseInvoice,
 				po_id: requisition.po_id,
 				wo_id: requisition.wo_id,
+				purchase_invoice_id: requisition.purchase_invoice_id,
 				transaction,
 			});
 		}
@@ -1028,8 +1253,10 @@ exports.deletePaymentRequisition = async (req, id) => {
 		await paymentRequisitionRepo.deleteById(id, { transaction });
 
 		if (existing.status === 'APPROVED') {
-			const parentId = existing.po_id || existing.wo_id;
-			const ParentModel = existing.requisition_against === 'PO' ? PurchaseOrder : WorkOrder;
+			const { parentId, ParentModel } = await resolveSyncTarget(
+				{ po_id: existing.po_id, wo_id: existing.wo_id, purchase_invoice_id: existing.purchase_invoice_id },
+				transaction,
+			);
 			const amount = poWoSyncAmount(existing);
 			if (parentId && amount !== null && amount > 0) {
 				await syncPoWoPaymentFields(ParentModel, parentId, org_id, -amount, transaction);
@@ -1059,6 +1286,55 @@ exports.deletePaymentRequisition = async (req, id) => {
 exports.getPoWoSummary = async (req, type, id) => {
 	const { org_id } = req.user;
 
+	if (type === 'Invoice') {
+		const invoice = await PurchaseInvoice.findOne({
+			where: { id, org_id },
+			attributes: ['total_taxable', 'grandTotal', 'document_type', 'purchase_order_id', 'work_order_id'],
+		});
+		if (!invoice) throw new AppError('Purchase Invoice not found', StatusCodes.NOT_FOUND);
+
+		const basicAmount = parseFloat(invoice.total_taxable) || 0;
+		const totalAmount = parseFloat(invoice.grandTotal) || 0;
+
+		const [financial, retentionSummary, deductionBreakdown, existingPrCount] = await Promise.all([
+			analyticsRepo.getPoWoFinancialSummary({ idField: 'purchase_invoice_id', id, org_id }),
+			invoice.document_type === 'work_order'
+				? analyticsRepo.getRetentionSummaryForWo({ woId: invoice.work_order_id, org_id })
+				: analyticsRepo.getRetentionSummaryForPo({ poId: invoice.purchase_order_id, org_id }),
+			analyticsRepo.getDeductionBreakdownByPoWo({ idField: 'purchase_invoice_id', id, org_id }),
+			PaymentRequisition.count({ where: { purchase_invoice_id: id, status: { [Op.ne]: 'REJECTED' } } }),
+		]);
+
+		const totalGross = parseFloat(financial?.total_gross || 0);
+		const totalNetPaid = parseFloat(financial?.total_net_paid || 0);
+		const totalDeductions = parseFloat(financial?.total_deductions || 0);
+
+		// One Purchase Invoice <-> at most one non-rejected PR (locked decision):
+		// remaining is simply the full invoice value until a PR is raised, then
+		// zero — no partial-drawdown running balance to compute, since the
+		// invoice's own grandTotal was already receipt-capped at creation.
+		const remainingAmount = existingPrCount > 0 ? 0 : totalAmount;
+
+		return {
+			poWoBasicAmount: basicAmount,
+			poWoExpInvAmount: totalAmount,
+			receivedValue: totalAmount,
+			payableCap: totalAmount,
+			totalGross,
+			totalDeductions,
+			totalNetPaid,
+			remainingAmount,
+			totalReqCount: parseInt(financial?.non_rejected_count || 0),
+			pendingCount: parseInt(financial?.pending_count || 0),
+			retention: {
+				held: retentionSummary.retention_held,
+				released: retentionSummary.retention_released,
+				balance: retentionSummary.retention_balance,
+			},
+			deductionBreakdown,
+		};
+	}
+
 	const idField = type === 'PO' ? 'po_id' : 'wo_id';
 	const Model = type === 'PO' ? PurchaseOrder : WorkOrder;
 
@@ -1068,21 +1344,63 @@ exports.getPoWoSummary = async (req, type, id) => {
 	const basicAmount = parseFloat(record.total_taxable) || 0;
 	const totalAmount = parseFloat(record.grandTotal) || 0;
 
+	// PO/WO-direct closes once any active Purchase Invoice exists for it —
+	// the requisition must go through the invoice from then on.
+	{
+		const activeInvoiceCount = await PurchaseInvoice.count({
+			where:
+				type === 'PO'
+					? { document_type: 'purchase_order', purchase_order_id: id, status: { [Op.notIn]: ['rejected', 'cancelled'] } }
+					: { document_type: 'work_order', work_order_id: id, status: { [Op.notIn]: ['rejected', 'cancelled'] } },
+		});
+		if (activeInvoiceCount > 0) {
+			return {
+				poWoBasicAmount: basicAmount,
+				poWoExpInvAmount: totalAmount,
+				receivedValue: null,
+				payableCap: 0,
+				totalGross: 0,
+				totalDeductions: 0,
+				totalNetPaid: 0,
+				remainingAmount: 0,
+				requiresInvoice: true,
+				totalReqCount: 0,
+				pendingCount: 0,
+				retention: { held: 0, released: 0, balance: 0 },
+				deductionBreakdown: [],
+			};
+		}
+	}
+
 	const [financial, retentionSummary, deductionBreakdown] = await Promise.all([
 		analyticsRepo.getPoWoFinancialSummary({ idField, id, org_id }),
-		analyticsRepo.getRetentionSummary({ idField, id, org_id }),
+		type === 'PO'
+			? analyticsRepo.getRetentionSummaryForPo({ poId: id, org_id })
+			: analyticsRepo.getRetentionSummaryForWo({ woId: id, org_id }),
 		analyticsRepo.getDeductionBreakdownByPoWo({ idField, id, org_id }),
 	]);
 
 	const totalGross = parseFloat(financial?.total_gross || 0);
 	const totalNetPaid = parseFloat(financial?.total_net_paid || 0);
-	const totalRetentionReleased = parseFloat(financial?.total_retention_released || 0);
 	const totalDeductions = parseFloat(financial?.total_deductions || 0);
-	const remainingAmount = Math.max(0, totalAmount - totalGross);
+
+	// PO-direct requisitions are capped at what's actually been received, not
+	// the PO's full grandTotal — a short-closed or partially-received PO can't
+	// be requisitioned for value that never arrived. WO has no MRN-equivalent
+	// receipt ledger yet, so it keeps the uncapped grandTotal ceiling.
+	let receivedValue = null;
+	let payableCap = totalAmount;
+	if (type === 'PO') {
+		receivedValue = await getPoReceivedValue(id);
+		payableCap = Math.min(totalAmount, receivedValue);
+	}
+	const remainingAmount = Math.max(0, payableCap - totalGross);
 
 	return {
 		poWoBasicAmount: basicAmount,
 		poWoExpInvAmount: totalAmount,
+		receivedValue,
+		payableCap,
 		totalGross,
 		totalDeductions,
 		totalNetPaid,
@@ -1141,10 +1459,15 @@ exports.createRetentionRelease = async (req, payload) => {
 		throw new AppError('releaseAmount must be a positive number', StatusCodes.UNPROCESSABLE_ENTITY);
 	}
 
-	// Validate that we are not releasing more than what is held
+	// Validate that we are not releasing more than what is held. Retention is
+	// checked across both payment paths (getRetentionSummaryForPo/Wo) since it
+	// accumulates against one shared per-order cap regardless of whether it
+	// was withheld via a direct requisition or an Invoice-anchored one.
 	const { org_id } = req.user;
-	const idField = requisitionAgainst === 'PO' ? 'po_id' : 'wo_id';
-	const retentionSummary = await analyticsRepo.getRetentionSummary({ idField, id: poWoId, org_id });
+	const retentionSummary =
+		requisitionAgainst === 'PO'
+			? await analyticsRepo.getRetentionSummaryForPo({ poId: poWoId, org_id })
+			: await analyticsRepo.getRetentionSummaryForWo({ woId: poWoId, org_id });
 
 	const requested = parseFloat(releaseAmount);
 	if (requested > retentionSummary.retention_balance) {
