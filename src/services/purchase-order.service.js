@@ -8,6 +8,7 @@ const {
 	documentChargesRepository,
 } = require('../repository/index');
 const { calculateDocumentTotals, legacyCustomFieldsToCharges } = require('../utils/charge-tax-engine.util');
+const { validateDocumentAgainstIndentBudget, taxableAmountOf } = require('./budget-validation.service');
 const { round2 } = require('../utils/money');
 const { toEngineItems, chargeBreakdownToRows, dbRowsToCharges } = require('../utils/document-charges.helper');
 const paymentRequisitionAnalyticsRepo = require('../repository/payment-requisition-analytics.repository');
@@ -154,6 +155,22 @@ exports.createPurchaseOrder = async (req, payload) => {
 			charges: charges || [],
 			sameState,
 			roundOff: Boolean(isRoundOff),
+		});
+
+		// Advisory at this point (a draft PO commits nothing against the indent until
+		// submitPurchaseOrder — see below), but running it here too mirrors validateItemsLimits'
+		// own create-time check just above and gives the user the same fail-fast feedback for
+		// value-wise budgets that item-wise budgets already get for qty.
+		await validateDocumentAgainstIndentBudget({
+			indent_id,
+			lines: productItems.map((item, i) => ({
+				product_id: item.product_id,
+				uom_id: item.selected_uom_id,
+				taxableAmount: totals.items[i].taxableAmount,
+			})),
+			matchUom: true,
+			documentLabel: 'this Purchase Order',
+			transaction,
 		});
 
 		const poObject = {
@@ -325,6 +342,21 @@ exports.updatePurchaseOrder = async (req) => {
 			charges: charges || [],
 			sameState,
 			roundOff: Boolean(isRoundOff),
+		});
+
+		// excludePurchaseOrderId=id: this PO's own pre-edit lines must not count as
+		// "already committed" on top of the new lines being validated here.
+		await validateDocumentAgainstIndentBudget({
+			indent_id,
+			lines: productItems.map((item, i) => ({
+				product_id: item.product_id,
+				uom_id: item.selected_uom_id,
+				taxableAmount: totals.items[i].taxableAmount,
+			})),
+			matchUom: true,
+			excludePurchaseOrderId: Number(id),
+			documentLabel: 'this Purchase Order',
+			transaction,
 		});
 
 		const poObject = {
@@ -1659,6 +1691,25 @@ exports.submitPurchaseOrder = async (req, id) => {
 
 	const transaction = await sequelize.transaction();
 	try {
+		// Authoritative check: submit is the actual commitment point for a value-wise budget
+		// (a draft PO has deducted nothing — see applyIndentQtyDelta below, which only ever
+		// runs from here / updatePurchaseOrder's wasSubmitted branch / delete's restore path).
+		// Re-validating here, under the IndentItem row lock, is what closes the race where two
+		// draft POs against the same over-committed indent line both passed the advisory
+		// create/update-time check (which only sums OTHER already-submitted POs) and then both
+		// get submitted concurrently.
+		await validateDocumentAgainstIndentBudget({
+			indent_id: po.indent_id,
+			lines: po.items.map((item) => ({
+				product_id: item.product_id,
+				uom_id: item.selected_uom_id,
+				taxableAmount: taxableAmountOf(item),
+			})),
+			matchUom: true,
+			documentLabel: 'this Purchase Order',
+			transaction,
+		});
+
 		const instance = await workflowEngine.startInstance({
 			req,
 			documentType: DOCUMENT_TYPE,
