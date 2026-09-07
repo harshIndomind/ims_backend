@@ -88,10 +88,16 @@ exports.createIndent = async (req, payload) => {
 			const indentDate = indentPayload.indent_date
 				? new Date(indentPayload.indent_date)
 				: new Date();
+			// Passing `transaction` here (not just running inside the outer try/catch) is what
+			// actually matters for concurrency: it puts the Budget row lock + the "previously
+			// consumed" read on the SAME DB transaction/connection as the writes below, so a
+			// second concurrent createIndent against the same budget blocks on the row lock
+			// instead of reading stale data via its own separate autocommit connection.
 			const errorMessage = await validateBudgetPhaseOnCreate(
 				selectedIndents,
 				indentDate,
 				indentPayload.budgetType,
+				transaction,
 			);
 			if (errorMessage) {
 				throw new AppError(errorMessage, StatusCodes.BAD_REQUEST);
@@ -698,6 +704,20 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 	// --- Phase 3: persist in SCM — compensate VCP if this fails ---
 	const transaction = await sequelize.transaction();
 	try {
+		// Re-validate under a row lock, inside the transaction that's about to persist this
+		// approval. The Phase-1 check above (line ~663) is only advisory — it runs before the
+		// VCP allocation call and takes no lock, so two concurrent approvals against indents
+		// sharing a budget could both pass it and then both commit here. Locking the budget row
+		// now, immediately before writing, is what actually prevents that race; if this trips,
+		// the catch below compensates the VCP allocation exactly as it would for any other
+		// failure in this block.
+		if (indent.budgetType === 'value-wise') {
+			const errorMessage = await validateIndentBudgetAmount(indent, allocationMap, transaction);
+			if (errorMessage) {
+				throw new AppError(errorMessage, StatusCodes.BAD_REQUEST);
+			}
+		}
+
 		for (const i of indent.IndentItems) {
 			const allocation = allocationMap.get(i.product_id);
 			const dryRun = dryRunMap.get(i.product_id);
@@ -1356,6 +1376,29 @@ exports.updateIndent = async (req, id, payload) => {
 
 	const transaction = await sequelize.transaction();
 	try {
+		// [budget-validation] Editing an indent's items can raise its total consumption
+		// against a budget just as easily as creating a new indent can — createIndent's
+		// fail-fast check was never mirrored here, so an over-budget indent could always be
+		// smuggled in by first saving a small one and then editing it up. Re-run the same
+		// phase check here, excluding this indent's own pre-edit rows (they're about to be
+		// destroyed and replaced below, not added on top of).
+		if (Array.isArray(selectedIndents) && selectedIndents.length > 0) {
+			const indentDate = indentPayload.indent_date
+				? new Date(indentPayload.indent_date)
+				: indent.indent_date;
+			const budgetType = indentPayload.budgetType ?? indent.budgetType;
+			const errorMessage = await validateBudgetPhaseOnCreate(
+				selectedIndents,
+				indentDate,
+				budgetType,
+				transaction,
+				id,
+			);
+			if (errorMessage) {
+				throw new AppError(errorMessage, StatusCodes.BAD_REQUEST);
+			}
+		}
+
 		await IndentRepository.updateById(
 			id,
 			{
@@ -1798,7 +1841,7 @@ async function verifyIndentQuantityWithProductServices(
  * Uses indent_date (not new Date()) for phase detection so the phase matches what the
  * frontend determined, not the server's clock at creation time.
  */
-async function validateBudgetPhaseOnCreate(selectedIndents, indentDate, budgetType) {
+async function validateBudgetPhaseOnCreate(selectedIndents, indentDate, budgetType, transaction, excludeIndentId = null) {
 	const budgetGroups = new Map();
 	for (const item of selectedIndents) {
 		const budgetId = item.budget_id;
@@ -1807,7 +1850,14 @@ async function validateBudgetPhaseOnCreate(selectedIndents, indentDate, budgetTy
 	}
 
 	for (const [budgetId, items] of budgetGroups) {
-		const budget = await Budget.findByPk(budgetId);
+		// Row-locked within the caller's transaction (see createIndent/updateIndent) so two
+		// concurrent requests against the same budget serialize instead of both reading the
+		// same "previously consumed" total and both passing validation.
+		const budget = await Budget.findOne({
+			where: { id: budgetId },
+			transaction,
+			lock: transaction ? transaction.LOCK.UPDATE : undefined,
+		});
 		if (!budget) continue;
 
 		const phaseResult = getPhaseQuantityDateWise(budget, indentDate);
@@ -1823,8 +1873,15 @@ async function validateBudgetPhaseOnCreate(selectedIndents, indentDate, budgetTy
 			: { [Op.lte]: endDate };
 
 		const previousItems = await IndentItem.findAll({
-			where: { budget_id: budgetId },
+			where: {
+				budget_id: budgetId,
+				// updateIndent replaces this indent's own items wholesale (destroy+recreate) —
+				// exclude them here so we don't double-count the indent's own pre-edit rows on
+				// top of the freshly-supplied `selectedIndents` totals below.
+				...(excludeIndentId ? { indent_id: { [Op.ne]: excludeIndentId } } : {}),
+			},
 			include: [{ model: Indent, as: 'indent', where: { indent_date: indentDateFilter }, attributes: [], required: true }],
+			transaction,
 		});
 		const previouslyConsumedAmount = previousItems.reduce(
 			(sum, i) => sum + Number(i.amount || 0), 0,
@@ -1869,7 +1926,7 @@ async function validateBudgetPhaseOnCreate(selectedIndents, indentDate, budgetTy
  * indents (indent_id != indent.id) on the same budget_id to get the previously consumed
  * amount, then validate the combined total against the phase limit.
  */
-async function validateIndentBudgetAmount(indent, allocationMap) {
+async function validateIndentBudgetAmount(indent, allocationMap, transaction) {
 	const budgetGroups = new Map();
 	for (const item of indent.IndentItems) {
 		const budgetId = item.budget_id;
@@ -1879,7 +1936,15 @@ async function validateIndentBudgetAmount(indent, allocationMap) {
 		budgetGroups.get(budgetId).items.push(item);
 	}
 
-	for (const [budgetId, { budget, items }] of budgetGroups) {
+	for (const [budgetId, { budget: preloadedBudget, items }] of budgetGroups) {
+		if (!preloadedBudget) continue;
+
+		// Re-fetch with a row lock inside the caller's transaction rather than trusting the
+		// `budget` eager-loaded onto indent.IndentItems earlier (before this transaction/lock
+		// existed) — see the comment at this function's call site in approveIndent.
+		const budget = transaction
+			? await Budget.findOne({ where: { id: budgetId }, transaction, lock: transaction.LOCK.UPDATE })
+			: preloadedBudget;
 		if (!budget) continue;
 
 		// Amount from the indent currently being approved
@@ -1910,6 +1975,7 @@ async function validateIndentBudgetAmount(indent, allocationMap) {
 				indent_id: { [Op.ne]: indent.id },
 			},
 			include: [{ model: Indent, as: 'indent', where: { indent_date: indentDateFilter }, attributes: [], required: true }],
+			transaction,
 		});
 		const previouslyConsumedAmount = previousItems.reduce(
 			(sum, i) => sum + Number(i.amount || 0),

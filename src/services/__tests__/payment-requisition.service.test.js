@@ -21,11 +21,20 @@ const mockPurchaseOrderFindByPk = jest.fn();
 const mockPurchaseOrderFindOne = jest.fn();
 const mockPurchaseOrderUpdate = jest.fn().mockResolvedValue([1]);
 const mockPaymentRequisitionFindOne = jest.fn();
+const mockPaymentRequisitionCount = jest.fn().mockResolvedValue(0);
 const mockTdsLiabilityCount = jest.fn().mockResolvedValue(0);
+const mockPurchaseInvoiceCount = jest.fn().mockResolvedValue(0);
+const mockPurchaseInvoiceFindOne = jest.fn();
+const mockPurchaseInvoiceFindByPk = jest.fn();
+
+const mockSequelizeQuery = jest.fn();
 
 jest.mock('../../models/index', () => ({
-	sequelize: { transaction: jest.fn() },
-	PaymentRequisition: { findOne: (...args) => mockPaymentRequisitionFindOne(...args) },
+	sequelize: { transaction: jest.fn(), query: (...args) => mockSequelizeQuery(...args) },
+	PaymentRequisition: {
+		findOne: (...args) => mockPaymentRequisitionFindOne(...args),
+		count: (...args) => mockPaymentRequisitionCount(...args),
+	},
 	PaymentRequisitionDeduction: {},
 	PurchaseOrder: {
 		findByPk: (...args) => mockPurchaseOrderFindByPk(...args),
@@ -34,6 +43,14 @@ jest.mock('../../models/index', () => ({
 		name: 'PurchaseOrder',
 	},
 	WorkOrder: { findByPk: jest.fn(), findOne: jest.fn(), update: jest.fn(), name: 'WorkOrder' },
+	// PurchaseInvoice's own count defaults to 0 (no invoice exists) so every
+	// pre-existing PO-direct test keeps working unless it explicitly opts in
+	// via the "Invoice path" describe block below.
+	PurchaseInvoice: {
+		count: (...args) => mockPurchaseInvoiceCount(...args),
+		findOne: (...args) => mockPurchaseInvoiceFindOne(...args),
+		findByPk: (...args) => mockPurchaseInvoiceFindByPk(...args),
+	},
 	User: {},
 	organization: {},
 	Role: {},
@@ -65,9 +82,14 @@ jest.mock('../../repository/payment-requisition-deduction.repository', () => ({
 }));
 
 const mockGetRetentionSummary = jest.fn().mockResolvedValue({ retention_held: 0, retention_released: 0, retention_balance: 0 });
+const mockGetRetentionSummaryForPo = jest.fn().mockResolvedValue({ retention_held: 0, retention_released: 0, retention_balance: 0 });
+const mockGetRetentionSummaryForWo = jest.fn().mockResolvedValue({ retention_held: 0, retention_released: 0, retention_balance: 0 });
+const mockGetPoWoFinancialSummary = jest.fn().mockResolvedValue({ total_gross: 0 });
 jest.mock('../../repository/payment-requisition-analytics.repository', () => ({
 	getRetentionSummary: (...args) => mockGetRetentionSummary(...args),
-	getPoWoFinancialSummary: jest.fn(),
+	getRetentionSummaryForPo: (...args) => mockGetRetentionSummaryForPo(...args),
+	getRetentionSummaryForWo: (...args) => mockGetRetentionSummaryForWo(...args),
+	getPoWoFinancialSummary: (...args) => mockGetPoWoFinancialSummary(...args),
 	getDeductionBreakdownByPoWo: jest.fn(),
 	getFullLedgerByPoWo: jest.fn(),
 }));
@@ -76,7 +98,7 @@ jest.mock('../../repository/tds-liability.repository', () => ({
 	findByDeductionId: jest.fn(),
 }));
 
-const { sequelize } = require('../../models/index');
+const { sequelize, WorkOrder } = require('../../models/index');
 const prService = require('../payment-requisition.service');
 
 function baseReq(overrides = {}) {
@@ -88,12 +110,26 @@ beforeEach(() => {
 	sequelize.transaction.mockResolvedValue(mockTransaction);
 	mockPrCreate.mockResolvedValue({ id: 501, org_id: 7 });
 	mockPrFindById.mockResolvedValue({ id: 501, org_id: 7, po_id: 200, gross_amount: 100000, net_payable: 90000, status: 'PENDING', deductions: [] });
+	// Default: PO received-value and grandTotal far exceed any test's gross
+	// amount, so the new receipt-value cap (see "receipt-value cap" describe
+	// blocks below) is a no-op for every pre-existing test unless a test
+	// explicitly overrides these.
+	mockSequelizeQuery.mockResolvedValue([{ price: 999999999, received_qty: 1 }]);
+	mockGetPoWoFinancialSummary.mockResolvedValue({ total_gross: 0 });
+	mockPurchaseOrderFindByPk.mockResolvedValue({ retention_amount: 999999999, grandTotal: 999999999 });
+	// Default: no Purchase Invoice exists yet for any PO, so PO-direct stays
+	// open and the new "PO-direct closes once invoiced" gate is a no-op for
+	// every pre-existing test unless a test explicitly opts in.
+	mockPurchaseInvoiceCount.mockResolvedValue(0);
+	mockPaymentRequisitionCount.mockResolvedValue(0);
+	mockGetRetentionSummaryForPo.mockResolvedValue({ retention_held: 0, retention_released: 0, retention_balance: 0 });
+	mockGetRetentionSummaryForWo.mockResolvedValue({ retention_held: 0, retention_released: 0, retention_balance: 0 });
 });
 
 describe('createPaymentRequisition — retention cap', () => {
 	test('rejects a RETENTION deduction that would exceed the PO retention cap', async () => {
-		mockPurchaseOrderFindByPk.mockResolvedValue({ retention_amount: 5000 });
-		mockGetRetentionSummary.mockResolvedValue({ retention_held: 4000, retention_released: 0, retention_balance: 4000 });
+		mockPurchaseOrderFindByPk.mockResolvedValue({ retention_amount: 5000, grandTotal: 999999999 });
+		mockGetRetentionSummaryForPo.mockResolvedValue({ retention_held: 4000, retention_released: 0, retention_balance: 4000 });
 
 		await expect(
 			prService.createPaymentRequisition(baseReq(), {
@@ -113,8 +149,8 @@ describe('createPaymentRequisition — retention cap', () => {
 	});
 
 	test('allows a RETENTION deduction within the cap', async () => {
-		mockPurchaseOrderFindByPk.mockResolvedValue({ retention_amount: 5000 });
-		mockGetRetentionSummary.mockResolvedValue({ retention_held: 1000, retention_released: 0, retention_balance: 1000 });
+		mockPurchaseOrderFindByPk.mockResolvedValue({ retention_amount: 5000, grandTotal: 999999999 });
+		mockGetRetentionSummaryForPo.mockResolvedValue({ retention_held: 1000, retention_released: 0, retention_balance: 1000 });
 
 		await prService.createPaymentRequisition(baseReq(), {
 			requisitionAgainst: 'PO',
@@ -185,8 +221,8 @@ describe('createPaymentRequisition — TDS is computed on the taxable value, not
 
 	test('RETENTION stays gross-based even with a percentage set — it is not a tax computation', async () => {
 		mockPurchaseOrderFindOne.mockResolvedValue({ total_taxable: 36000, grandTotal: 40320 });
-		mockPurchaseOrderFindByPk.mockResolvedValue({ retention_amount: 50000 });
-		mockGetRetentionSummary.mockResolvedValue({ retention_held: 0, retention_released: 0, retention_balance: 0 });
+		mockPurchaseOrderFindByPk.mockResolvedValue({ retention_amount: 50000, grandTotal: 999999999 });
+		mockGetRetentionSummaryForPo.mockResolvedValue({ retention_held: 0, retention_released: 0, retention_balance: 0 });
 
 		await prService.createPaymentRequisition(baseReq(), {
 			requisitionAgainst: 'PO',
@@ -363,12 +399,238 @@ describe('addDeduction — retention cap is enforced here too', () => {
 			requisition_type: 'REGULAR',
 		});
 		mockPurchaseOrderFindByPk.mockResolvedValue({ retention_amount: 5000 });
-		mockGetRetentionSummary.mockResolvedValue({ retention_held: 4500, retention_released: 0, retention_balance: 4500 });
+		mockGetRetentionSummaryForPo.mockResolvedValue({ retention_held: 4500, retention_released: 0, retention_balance: 4500 });
 
 		await expect(
 			prService.addDeduction(baseReq(), 501, { deduction_type: 'RETENTION', amount: 1000 }),
 		).rejects.toThrow(/Retention cap exceeded/);
 
 		expect(mockTransaction.rollback).toHaveBeenCalled();
+	});
+});
+
+// A PO worth 100000, of which only 60000 worth has actually been received
+// (via MRN) — the exact scenario a short-close or partial delivery produces.
+// PR must cap itself at what arrived, not at the PO's full ordered value.
+describe('createPaymentRequisition — receipt-value cap', () => {
+	test('rejects a PO-direct requisition once gross exceeds received value', async () => {
+		mockPurchaseOrderFindByPk.mockResolvedValue({ grandTotal: 100000 });
+		mockSequelizeQuery.mockResolvedValue([{ price: 100, received_qty: 600 }]); // 60000 received
+
+		await expect(
+			prService.createPaymentRequisition(baseReq(), {
+				requisitionAgainst: 'PO',
+				poWoId: 200,
+				grossAmount: 70000,
+			}),
+		).rejects.toThrow(/only ₹60000\.00 remains against received value/);
+
+		expect(mockTransaction.rollback).toHaveBeenCalled();
+	});
+
+	test('allows a PO-direct requisition exactly at the received-value cap', async () => {
+		mockPurchaseOrderFindByPk.mockResolvedValue({ grandTotal: 100000 });
+		mockSequelizeQuery.mockResolvedValue([{ price: 100, received_qty: 600 }]); // 60000 received
+
+		await expect(
+			prService.createPaymentRequisition(baseReq(), {
+				requisitionAgainst: 'PO',
+				poWoId: 200,
+				grossAmount: 60000,
+			}),
+		).resolves.toBeDefined();
+
+		expect(mockTransaction.rollback).not.toHaveBeenCalled();
+	});
+
+	test('does not apply the receipt-value cap to a WO-direct requisition', async () => {
+		await expect(
+			prService.createPaymentRequisition(baseReq(), {
+				requisitionAgainst: 'WO',
+				poWoId: 300,
+				grossAmount: 999999999,
+			}),
+		).resolves.toBeDefined();
+
+		// No MRN/received-value lookup should ever run for the WO path — it has
+		// no MRN-equivalent receipt ledger to cap against.
+		expect(mockSequelizeQuery).not.toHaveBeenCalled();
+		expect(mockTransaction.rollback).not.toHaveBeenCalled();
+	});
+});
+
+describe('getPoWoSummary — receipt-value cap', () => {
+	test('caps remainingAmount at received value for a PO, not the full grandTotal', async () => {
+		mockPurchaseOrderFindOne.mockResolvedValue({ total_taxable: 90000, grandTotal: 100000 });
+		mockSequelizeQuery.mockResolvedValue([{ price: 100, received_qty: 600 }]); // 60000 received
+		mockGetPoWoFinancialSummary.mockResolvedValue({ total_gross: 0 });
+
+		const summary = await prService.getPoWoSummary(baseReq(), 'PO', 200);
+
+		expect(summary.receivedValue).toBe(60000);
+		expect(summary.payableCap).toBe(60000);
+		expect(summary.remainingAmount).toBe(60000);
+		expect(summary.poWoExpInvAmount).toBe(100000); // display figure stays the PO's real value
+	});
+
+	test('does not cap remainingAmount for a WO — no MRN-equivalent receipt ledger exists', async () => {
+		WorkOrder.findOne.mockResolvedValue({ total_taxable: 90000, grandTotal: 100000 });
+		mockGetPoWoFinancialSummary.mockResolvedValue({ total_gross: 0 });
+
+		const summary = await prService.getPoWoSummary(baseReq(), 'WO', 300);
+
+		expect(summary.receivedValue).toBeNull();
+		expect(summary.remainingAmount).toBe(100000);
+		expect(mockSequelizeQuery).not.toHaveBeenCalled();
+	});
+});
+
+describe('regression: syncPoWoPaymentFields caps remainingAmount at received value, not grandTotal', () => {
+	test('approving a PR for the full received value brings a partially-received PO to PAID/0-remaining, not stuck showing the unreceived balance as still owed', async () => {
+		mockPaymentRequisitionFindOne.mockResolvedValue({ id: 501, org_id: 7 });
+		mockPrFindById.mockResolvedValue({
+			id: 501,
+			org_id: 7,
+			po_id: 200,
+			wo_id: null,
+			gross_amount: 60000,
+			total_deductions: 0,
+			net_payable: 60000,
+			status: 'PENDING',
+			requisition_type: 'REGULAR',
+			requisition_against: 'PO',
+			authorized_by_id: null,
+			deductions: [],
+		});
+		// PO ordered for 100000, but only 60000 worth ever arrived (short-close /
+		// partial delivery) — this is the exact value syncPoWoPaymentFields must
+		// treat as the ceiling once totalPaid reaches it.
+		mockPurchaseOrderFindOne.mockResolvedValue({ grandTotal: 100000, totalPaid: 0 });
+		mockSequelizeQuery.mockResolvedValue([{ price: 100, received_qty: 600 }]); // 60000 received
+
+		await prService.updatePaymentRequisition(baseReq(), 501, { status: 'APPROVED', grossAmount: 60000 });
+
+		expect(mockPurchaseOrderUpdate).toHaveBeenCalledWith(
+			expect.objectContaining({ totalPaid: 60000, remainingAmount: 0, paymentStatus: 'PAID' }),
+			expect.anything(),
+		);
+	});
+});
+
+describe('createPaymentRequisition — PO-direct closes once a Purchase Invoice exists', () => {
+	it('rejects a PO-direct requisition once an active invoice exists for the PO', async () => {
+		mockPurchaseInvoiceCount.mockResolvedValue(1); // an active invoice already exists
+
+		await expect(
+			prService.createPaymentRequisition(baseReq(), {
+				requisitionAgainst: 'PO',
+				poWoId: 200,
+				grossAmount: 10000,
+			}),
+		).rejects.toThrow(/raise the requisition against the Invoice instead/);
+
+		expect(mockTransaction.rollback).toHaveBeenCalled();
+	});
+});
+
+describe('createPaymentRequisition — Invoice path', () => {
+	function approvedInvoice(overrides = {}) {
+		return { id: 900, org_id: 7, status: 'approved', grandTotal: 60000, purchase_order_id: 50, ...overrides };
+	}
+
+	it('rejects when the invoice is not approved yet', async () => {
+		mockPurchaseInvoiceFindOne.mockResolvedValue(approvedInvoice({ status: 'in_progress' }));
+
+		await expect(
+			prService.createPaymentRequisition(baseReq(), {
+				requisitionAgainst: 'Invoice',
+				poWoId: 900,
+				grossAmount: 60000,
+			}),
+		).rejects.toThrow(/not approved/);
+	});
+
+	it('rejects a second requisition against an invoice that already has a non-rejected PR (1:1)', async () => {
+		mockPurchaseInvoiceFindOne.mockResolvedValue(approvedInvoice());
+		mockPaymentRequisitionCount.mockResolvedValue(1);
+
+		await expect(
+			prService.createPaymentRequisition(baseReq(), {
+				requisitionAgainst: 'Invoice',
+				poWoId: 900,
+				grossAmount: 60000,
+			}),
+		).rejects.toThrow(/already exists for this Purchase Invoice/);
+	});
+
+	it('rejects gross exceeding the invoice\'s own grandTotal', async () => {
+		mockPurchaseInvoiceFindOne.mockResolvedValue(approvedInvoice({ grandTotal: 60000 }));
+		mockPaymentRequisitionCount.mockResolvedValue(0);
+
+		await expect(
+			prService.createPaymentRequisition(baseReq(), {
+				requisitionAgainst: 'Invoice',
+				poWoId: 900,
+				grossAmount: 70000,
+			}),
+		).rejects.toThrow(/exceeds this invoice's value/);
+	});
+
+	it('creates successfully and syncs the underlying PO (not a parallel ledger) when approved', async () => {
+		mockPurchaseInvoiceFindOne.mockResolvedValue(approvedInvoice());
+		mockPaymentRequisitionCount.mockResolvedValue(0);
+		mockPurchaseInvoiceFindByPk.mockResolvedValue({ purchase_order_id: 50 });
+		mockPurchaseOrderFindOne.mockResolvedValue({ grandTotal: 100000, totalPaid: 0 });
+		mockPrFindById.mockResolvedValue({ id: 501, org_id: 7, purchase_invoice_id: 900, gross_amount: 60000, net_payable: 60000, status: 'APPROVED', deductions: [] });
+
+		await prService.createPaymentRequisition(baseReq(), {
+			requisitionAgainst: 'Invoice',
+			poWoId: 900,
+			grossAmount: 60000,
+			status: 'APPROVED',
+		});
+
+		expect(mockPrCreate).toHaveBeenCalledWith(
+			expect.objectContaining({ purchase_invoice_id: 900, po_id: null, wo_id: null }),
+			expect.anything(),
+		);
+		// Sync resolves through the invoice's own purchase_order_id, landing on
+		// the PO's totalPaid — not a separate per-invoice counter.
+		expect(mockPurchaseOrderUpdate).toHaveBeenCalledWith(
+			expect.objectContaining({ totalPaid: 60000 }),
+			expect.anything(),
+		);
+		expect(mockTransaction.commit).toHaveBeenCalled();
+	});
+});
+
+describe('getPoWoSummary — Invoice type and the PO-direct-closes gate', () => {
+	it('type=PO returns requiresInvoice once an active invoice exists, remainingAmount 0', async () => {
+		mockPurchaseOrderFindOne.mockResolvedValue({ total_taxable: 90000, grandTotal: 100000 });
+		mockPurchaseInvoiceCount.mockResolvedValue(1);
+
+		const summary = await prService.getPoWoSummary(baseReq(), 'PO', 50);
+
+		expect(summary.requiresInvoice).toBe(true);
+		expect(summary.remainingAmount).toBe(0);
+	});
+
+	it('type=INVOICE returns the full grandTotal as remaining before any PR exists', async () => {
+		mockPurchaseInvoiceFindOne.mockResolvedValue({ total_taxable: 54000, grandTotal: 60000, purchase_order_id: 50 });
+		mockPaymentRequisitionCount.mockResolvedValue(0);
+
+		const summary = await prService.getPoWoSummary(baseReq(), 'Invoice', 900);
+
+		expect(summary.remainingAmount).toBe(60000);
+		expect(summary.poWoExpInvAmount).toBe(60000);
+	});
+
+	it('type=INVOICE returns 0 remaining once a non-rejected PR exists (1:1)', async () => {
+		mockPurchaseInvoiceFindOne.mockResolvedValue({ total_taxable: 54000, grandTotal: 60000, purchase_order_id: 50 });
+		mockPaymentRequisitionCount.mockResolvedValue(1);
+
+		const summary = await prService.getPoWoSummary(baseReq(), 'Invoice', 900);
+
+		expect(summary.remainingAmount).toBe(0);
 	});
 });

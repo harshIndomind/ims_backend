@@ -21,7 +21,11 @@ jest.mock('../document-numbering.service', () => ({
 	generateDocumentNumber: jest.fn().mockResolvedValue({ docNumber: 'PO-1', sequenceNo: 1, fiscalYear: '2025-26' }),
 }));
 
-const mockTransaction = { commit: jest.fn(), rollback: jest.fn() };
+// LOCK.UPDATE mirrors real Sequelize transaction instances — budget-validation.service.js's
+// row-locked IndentItem reads need it present even though these tests don't exercise locking
+// semantics themselves (IndentItem.findOne resolves undefined by default here, so the new
+// budget check no-ops before ever using the lock).
+const mockTransaction = { commit: jest.fn(), rollback: jest.fn(), LOCK: { UPDATE: 'UPDATE' } };
 
 // PurchaseOrderItem.findAll is used by updatePurchaseOrder to enumerate current items.
 const mockPoItemFindAll = jest.fn();
@@ -38,6 +42,11 @@ jest.mock('../../models/index', () => ({
 	PurchaseOrderItem: { findAll: mockPoItemFindAll },
 	IndentItem: { findOne: mockIndentItemFindOne },
 	Indent: { findOne: mockIndentFindOne },
+	// Referenced by budget-validation.service.js's WorkOrder-side commitment lookup — never
+	// actually queried in these PO-only tests since IndentItem.findOne resolves undefined by
+	// default, but must exist so the require() destructure doesn't blow up.
+	WorkOrder: {},
+	WorkOrderItem: { findAll: jest.fn().mockResolvedValue([]) },
 	Role: {},
 	PaymentRequisition: { destroy: jest.fn() },
 	MasterTermsCondition: {},
@@ -214,6 +223,96 @@ describe('createPurchaseOrder — qty_for_purchase_order', () => {
 
 		await expect(poService.createPurchaseOrder(req, req.body)).rejects.toThrow(/duplicate UOM/);
 		expect(poItemRepo.create).not.toHaveBeenCalled();
+	});
+
+	// ── Value-wise budget-AMOUNT tests (Indent → PO/WO, budget-validation.service.js) ──
+	// Distinct from the qty-cap tests above: a value-wise indent skips the qty_for_purchase_order
+	// cap entirely (see validateItemsLimits), so these are the only tests that exercise the
+	// replacement amount-based cap.
+
+	it("rejects a value-wise PO whose taxable amount exceeds the indent line's remaining budget", async () => {
+		mockIndentFindOne.mockResolvedValue({ budgetType: 'value-wise' });
+		mockIndentItemFindOne.mockResolvedValue({
+			id: 999,
+			indent_id: 5,
+			product_id: 1,
+			uom_id: null,
+			item_name: 'Widget',
+			budget_id: 7,
+			amount: 500,
+			indent: { id: 5, budgetType: 'value-wise' },
+		});
+		// baseProductItem: qty=6, price=100, no tax → taxable 600, over the 500 indent-line budget.
+		// reqBase.user has no `roles` — fine for the other tests in this block, which never
+		// reach the role gate before their own assertion point, but these three do run all the
+		// way through to a real create, so they need a user that clears it (see the dedicated
+		// `roles: ['org_admin']` req in the "charge-tax engine is authoritative" block below).
+		const req = {
+			...reqBase,
+			user: { org_id: 1, roles: ['org_admin'] },
+			body: { ...reqBase.body, productItems: [baseProductItem({ qty: 6, price: 100 })] },
+		};
+
+		await expect(poService.createPurchaseOrder(req, req.body)).rejects.toThrow(/Budget limit exceeded/);
+		expect(poItemRepo.create).not.toHaveBeenCalled();
+	});
+
+	it("allows a value-wise PO whose taxable amount fits the indent line's budget", async () => {
+		mockIndentFindOne.mockResolvedValue({ budgetType: 'value-wise' });
+		mockIndentItemFindOne.mockResolvedValue({
+			id: 999,
+			indent_id: 5,
+			product_id: 1,
+			uom_id: null,
+			item_name: 'Widget',
+			budget_id: 7,
+			amount: 1000,
+			indent: { id: 5, budgetType: 'value-wise' },
+		});
+		poRepo.create.mockResolvedValue({ id: 105 });
+		poItemRepo.create.mockResolvedValue({ id: 205 });
+		// reqBase.user has no `roles` — fine for the other tests in this block, which never
+		// reach the role gate before their own assertion point, but these three do run all the
+		// way through to a real create, so they need a user that clears it (see the dedicated
+		// `roles: ['org_admin']` req in the "charge-tax engine is authoritative" block below).
+		const req = {
+			...reqBase,
+			user: { org_id: 1, roles: ['org_admin'] },
+			body: { ...reqBase.body, productItems: [baseProductItem({ qty: 6, price: 100 })] },
+		};
+
+		await poService.createPurchaseOrder(req, req.body);
+
+		expect(poItemRepo.create).toHaveBeenCalledTimes(1);
+		expect(mockTransaction.commit).toHaveBeenCalled();
+	});
+
+	it('lets a value-wise PO through unchecked when its IndentItem carries no budget_id', async () => {
+		mockIndentFindOne.mockResolvedValue({ budgetType: 'value-wise' });
+		mockIndentItemFindOne.mockResolvedValue({
+			id: 999,
+			indent_id: 5,
+			product_id: 1,
+			uom_id: null,
+			budget_id: null,
+			amount: 0,
+			indent: { id: 5, budgetType: 'value-wise' },
+		});
+		poRepo.create.mockResolvedValue({ id: 106 });
+		poItemRepo.create.mockResolvedValue({ id: 206 });
+		// reqBase.user has no `roles` — fine for the other tests in this block, which never
+		// reach the role gate before their own assertion point, but these three do run all the
+		// way through to a real create, so they need a user that clears it (see the dedicated
+		// `roles: ['org_admin']` req in the "charge-tax engine is authoritative" block below).
+		const req = {
+			...reqBase,
+			user: { org_id: 1, roles: ['org_admin'] },
+			body: { ...reqBase.body, productItems: [baseProductItem({ qty: 6, price: 100 })] },
+		};
+
+		await poService.createPurchaseOrder(req, req.body);
+
+		expect(poItemRepo.create).toHaveBeenCalledTimes(1);
 	});
 
 	// ── Multi-UOM tests ───────────────────────────────────────────────────────

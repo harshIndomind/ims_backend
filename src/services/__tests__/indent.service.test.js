@@ -4,31 +4,39 @@
 // log, and Sequelize model graph are all real infrastructure this module depends on, but
 // none of it is what's under test here — only the qty_in_stock / balance_indent_qty writes
 // that happen alongside the existing qty_for_purchase_order / qty_issued persistence.
-const mockTransaction = { commit: jest.fn(), rollback: jest.fn() };
+// LOCK.UPDATE mirrors a real Sequelize transaction — the budget-phase check
+// (validateBudgetPhaseOnCreate/validateIndentBudgetAmount) row-locks the Budget it reads.
+const mockTransaction = { commit: jest.fn(), rollback: jest.fn(), LOCK: { UPDATE: 'UPDATE' } };
+const mockBudgetFindOne = jest.fn();
+const mockIndentItemFindAll = jest.fn();
 jest.mock('../../models/index', () => ({
 	sequelize: { transaction: jest.fn() },
 	Indent: {},
-	Budget: {},
+	Budget: { findOne: mockBudgetFindOne },
 	IndentSerialItem: {},
-	IndentItem: {},
+	IndentItem: { findAll: mockIndentItemFindAll, destroy: jest.fn() },
 	MasterUnit: {},
 }));
 
 jest.mock('../../repository/index', () => ({
-	IndentRepository: { findById: jest.fn() },
-	IndentItemRepository: {},
-	IndentSerialRepository: { update: jest.fn() },
+	IndentRepository: { findById: jest.fn(), create: jest.fn(), updateById: jest.fn() },
+	IndentItemRepository: { create: jest.fn() },
+	IndentSerialRepository: { update: jest.fn(), create: jest.fn() },
 }));
 
 jest.mock('undici', () => ({ fetch: jest.fn() }));
 
 jest.mock('../workflowEngine.service', () => ({
-	getInstanceWithStages: jest.fn().mockResolvedValue({ instance: { currentStage: { stage_name: 'verify' } } }),
+	getInstanceWithStages: jest.fn().mockResolvedValue({ instance: { status: 'in_progress', currentStage: { stage_name: 'verify' } } }),
 	advanceStage: jest.fn().mockResolvedValue({ status: 'in_progress' }),
+	isEditable: jest.fn().mockResolvedValue(true),
+	restartInstance: jest.fn().mockResolvedValue({ status: 'in_progress' }),
+	startInstance: jest.fn().mockResolvedValue({ status: 'in_progress' }),
 }));
 
 jest.mock('../auditLog.service', () => ({
 	record: jest.fn().mockResolvedValue(undefined),
+	recordChange: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock('../workflowDocument.factory', () => ({
@@ -71,6 +79,75 @@ beforeEach(() => {
 	sequelize.transaction.mockResolvedValue(mockTransaction);
 	workflowEngine.getInstanceWithStages.mockResolvedValue({ instance: { currentStage: { stage_name: 'verify' } } });
 	workflowEngine.advanceStage.mockResolvedValue({ status: 'in_progress' });
+});
+
+describe('updateIndent — value-wise budget re-validation', () => {
+	const { IndentRepository: indentRepo2, IndentItemRepository: indentItemRepo } = require('../../repository/index');
+	const { IndentItem } = require('../../models/index');
+
+	function setupIndent(overrides = {}) {
+		const state = {
+			id: 1,
+			indent_date: new Date('2026-01-10'),
+			budgetType: 'value-wise',
+			...overrides,
+		};
+		return {
+			...state,
+			get: () => ({ ...state }),
+			IndentItems: [],
+			IndentDocuments: [],
+		};
+	}
+
+	beforeEach(() => {
+		// Budget with no phase dates configured at all falls through getPhaseQuantityDateWise's
+		// phase loop with nothing matching — so phase 300 (a single implicit "always open" phase)
+		// is simulated by giving first_phase_date/first_phase_qty only, the simplest shape that
+		// exercises the check without needing all three phases.
+		mockBudgetFindOne.mockResolvedValue({
+			id: 99,
+			budget_id: 'BUD-1',
+			amount: 1000,
+			first_phase_date: new Date('2099-01-01'),
+			first_phase_qty: 1000,
+		});
+		mockIndentItemFindAll.mockResolvedValue([]); // no other indents consuming this budget yet
+		indentRepo2.findById.mockResolvedValue(setupIndent());
+		IndentItem.destroy.mockResolvedValue(1);
+	});
+
+	it('rejects an edit that alone exceeds the budget phase amount', async () => {
+		const req = { user: { id: 1 } };
+		await expect(
+			indentService.updateIndent(req, 1, {
+				budgetType: 'value-wise',
+				selectedIndents: [{ budget_id: 99, product_id: 1, qty: 1, total: 1500 }],
+			}),
+		).rejects.toThrow(/exceeds phase limit/);
+
+		// Nothing should have been written once validation fails.
+		expect(indentItemRepo.create).not.toHaveBeenCalled();
+	});
+
+	it('allows an edit that fits, and excludes this indent’s own pre-edit rows from "already consumed"', async () => {
+		// A different indent (id 2) already consumed 400 against the same budget — must count.
+		mockIndentItemFindAll.mockResolvedValue([{ amount: 400, qty: 1 }]);
+
+		const req = { user: { id: 1 } };
+		await indentService.updateIndent(req, 1, {
+			budgetType: 'value-wise',
+			selectedIndents: [{ budget_id: 99, product_id: 1, qty: 1, total: 600 }],
+		});
+
+		// 400 (other indent) + 600 (this edit) = 1000, exactly the phase limit — must pass.
+		expect(indentItemRepo.create).toHaveBeenCalledTimes(1);
+		expect(mockTransaction.commit).toHaveBeenCalled();
+
+		// The exclude-self filter must have been applied to the "previously consumed" query.
+		const findAllArgs = mockIndentItemFindAll.mock.calls[0][0];
+		expect(findAllArgs.where.indent_id[Object.getOwnPropertySymbols(findAllArgs.where.indent_id)[0]]).toBe(1);
+	});
 });
 
 describe('verifyIndent — qty_in_stock snapshot', () => {

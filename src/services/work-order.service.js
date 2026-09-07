@@ -7,6 +7,7 @@ const {
 	documentChargesRepository,
 } = require('../repository/index');
 const { calculateDocumentTotals, legacyCustomFieldsToCharges } = require('../utils/charge-tax-engine.util');
+const { validateDocumentAgainstIndentBudget } = require('./budget-validation.service');
 const { round2 } = require('../utils/money');
 const { toEngineItems, chargeBreakdownToRows, dbRowsToCharges } = require('../utils/document-charges.helper');
 const paymentRequisitionAnalyticsRepo = require('../repository/payment-requisition-analytics.repository');
@@ -183,6 +184,20 @@ exports.createWorkOrder = async (req) => {
 			roundOff: Boolean(isRoundOff),
 		});
 
+		// Authoritative check: unlike PO, a WO commits against its indent immediately here at
+		// create (applyIndentQtyDeltaForWorkOrder below has no draft gate), so this is the one
+		// point that must be validated under the IndentItem row lock, not merely advisory.
+		await validateDocumentAgainstIndentBudget({
+			indent_id,
+			lines: productItems.map((item, i) => ({
+				product_id: item.product_id,
+				taxableAmount: totals.items[i].taxableAmount,
+			})),
+			matchUom: false,
+			documentLabel: 'this Work Order',
+			transaction,
+		});
+
 		const woObject = {
 			org_id,
 			indent_id,
@@ -352,6 +367,22 @@ exports.updateWorkOrder = async (req) => {
 			charges: charges || [],
 			sameState,
 			roundOff: Boolean(isRoundOff),
+		});
+
+		// Authoritative check, same reasoning as createWorkOrder — WO update always applies
+		// its qty delta unconditionally below, so this must be the real (locked) gate too, not
+		// merely advisory. excludeWorkOrderId=id: this WO's own pre-edit lines must not count
+		// as "already committed" on top of the new lines being validated here.
+		await validateDocumentAgainstIndentBudget({
+			indent_id,
+			lines: productItems.map((item, i) => ({
+				product_id: item.product_id,
+				taxableAmount: totals.items[i].taxableAmount,
+			})),
+			matchUom: false,
+			excludeWorkOrderId: Number(id),
+			documentLabel: 'this Work Order',
+			transaction,
 		});
 
 		const woObject = {
@@ -607,11 +638,21 @@ exports.getAllWorkOrders = async (req) => {
 		ids: orderIds,
 		org_id,
 	});
+	// The `paymentRequisitions` include above only matches wo_id-direct rows —
+	// once this WO has a Purchase Invoice, its requisitions are invoice-anchored
+	// (purchase_invoice_id set, wo_id null) and would otherwise show an empty
+	// tooltip under a nonzero totalPaid. Bulk-fetched and merged in here.
+	const requisitionsByOrderId = await paymentRequisitionAnalyticsRepo.getApprovedRequisitionsBulk({
+		idField: 'wo_id',
+		ids: orderIds,
+		org_id,
+	});
 	response = response.map((wo) => ({
 		...wo,
 		retention_held: retentionByOrderId[wo.id]?.retention_held || 0,
 		retention_released: retentionByOrderId[wo.id]?.retention_released || 0,
 		retention_balance: retentionByOrderId[wo.id]?.retention_balance || 0,
+		paymentRequisitions: requisitionsByOrderId[wo.id] || wo.paymentRequisitions || [],
 	}));
 
 	return { rows: response, count: workOrders.count };
