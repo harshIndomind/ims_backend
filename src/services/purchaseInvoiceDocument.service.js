@@ -9,6 +9,11 @@ const {
 	generateSignedUrl,
 } = require('../utils/s3Bucket');
 
+// Same open-state gate purchase-invoice.service.js uses for approve/reject/cancel —
+// once an invoice leaves draft/in_progress its attachments are part of the
+// approved (or otherwise closed) record and shouldn't change underneath it.
+const OPEN_STATUSES = ['draft', 'in_progress'];
+
 function buildS3Key(invoiceId, filename) {
 	const ext = path.extname(filename);
 	const base = path.basename(filename, ext).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -20,6 +25,9 @@ exports.uploadDocuments = async (req, invoiceId, files) => {
 	const invoice = await PurchaseInvoice.findByPk(invoiceId);
 	if (!invoice) {
 		throw new AppError(`Purchase Invoice with ID ${invoiceId} not found`, StatusCodes.NOT_FOUND);
+	}
+	if (!OPEN_STATUSES.includes(invoice.status)) {
+		throw new AppError(`Cannot upload documents to an invoice with status "${invoice.status}"`, StatusCodes.CONFLICT);
 	}
 
 	const user = req.user;
@@ -72,6 +80,14 @@ exports.getDocuments = async (invoiceId) => {
 };
 
 exports.deleteDocument = async (invoiceId, docId) => {
+	const invoice = await PurchaseInvoice.findByPk(invoiceId);
+	if (!invoice) {
+		throw new AppError(`Purchase Invoice with ID ${invoiceId} not found`, StatusCodes.NOT_FOUND);
+	}
+	if (!OPEN_STATUSES.includes(invoice.status)) {
+		throw new AppError(`Cannot delete documents from an invoice with status "${invoice.status}"`, StatusCodes.CONFLICT);
+	}
+
 	const doc = await PurchaseInvoiceDocument.findOne({
 		where: { id: docId, purchase_invoice_id: invoiceId },
 	});
