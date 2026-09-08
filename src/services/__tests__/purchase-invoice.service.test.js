@@ -49,6 +49,7 @@ jest.mock('../../repository/index', () => ({
 	qcInspectionItemsRepository: { sumAcceptedQtyForPoWoItem: (...args) => mockSumAcceptedQtyForPoWoItem(...args) },
 }));
 
+const { Op } = require('sequelize');
 const { sequelize, PurchaseInvoice } = require('../../models/index');
 const piService = require('../purchase-invoice.service');
 
@@ -308,6 +309,75 @@ describe('createPurchaseInvoice — price/tax variance soft flag', () => {
 		expect(mockPurchaseInvoiceItemBulkCreate).toHaveBeenCalledWith(
 			[expect.objectContaining({ matching_status: 'matched', tax_variance_flag: false })],
 			expect.anything(),
+		);
+	});
+});
+
+describe('createPurchaseInvoice — vendor invoice date must not regress against the same order', () => {
+	it('rejects a vendor_invoice_date earlier than the latest live invoice already recorded for this PO', async () => {
+		mockPurchaseOrderFindOne.mockResolvedValue(poWithItems());
+		mockGetReceivedQtyForPoItem.mockResolvedValue(100);
+		mockSumInvoicedQtyForPoWoItem.mockResolvedValue(0);
+		mockPurchaseInvoiceFindOne.mockResolvedValueOnce({ id: 899, vendor_invoice_date: '2026-09-03' });
+
+		await expect(
+			piService.createPurchaseInvoice(baseReq(), {
+				document_type: 'purchase_order',
+				document_id: 50,
+				vendor_invoice_no: 'INV-6',
+				vendor_invoice_date: '2026-08-31',
+				items: [{ po_wo_item_id: 300, invoiced_qty: 10, price: 100, total: 1000 }],
+			}),
+		).rejects.toThrow(/cannot be earlier than/i);
+
+		expect(mockTransaction.commit).not.toHaveBeenCalled();
+	});
+
+	it('allows a vendor_invoice_date on or after the latest live invoice', async () => {
+		mockPurchaseOrderFindOne.mockResolvedValue(poWithItems());
+		mockGetReceivedQtyForPoItem.mockResolvedValue(100);
+		mockSumInvoicedQtyForPoWoItem.mockResolvedValue(0);
+		mockPurchaseInvoiceFindOne.mockResolvedValueOnce({ id: 899, vendor_invoice_date: '2026-08-31' });
+
+		await expect(
+			piService.createPurchaseInvoice(baseReq(), {
+				document_type: 'purchase_order',
+				document_id: 50,
+				vendor_invoice_no: 'INV-7',
+				vendor_invoice_date: '2026-08-31',
+				items: [{ po_wo_item_id: 300, invoiced_qty: 10, price: 100, total: 1000 }],
+			}),
+		).resolves.toBeDefined();
+
+		expect(mockTransaction.commit).toHaveBeenCalled();
+	});
+
+	it('ignores rejected/cancelled invoices when looking for the latest date (query scopes to LIVE_STATUSES)', async () => {
+		mockPurchaseOrderFindOne.mockResolvedValue(poWithItems());
+		mockGetReceivedQtyForPoItem.mockResolvedValue(100);
+		mockSumInvoicedQtyForPoWoItem.mockResolvedValue(0);
+		// A rejected invoice dated after ours would never be returned by the real
+		// query (it filters status IN LIVE_STATUSES) — asserting the where clause
+		// here locks in that a rejected/cancelled invoice's date can't block a
+		// legitimately earlier one.
+		mockPurchaseInvoiceFindOne.mockResolvedValueOnce(null);
+
+		await piService.createPurchaseInvoice(baseReq(), {
+			document_type: 'purchase_order',
+			document_id: 50,
+			vendor_invoice_no: 'INV-8',
+			vendor_invoice_date: '2026-08-31',
+			items: [{ po_wo_item_id: 300, invoiced_qty: 10, price: 100, total: 1000 }],
+		});
+
+		expect(mockPurchaseInvoiceFindOne).toHaveBeenCalledWith(
+			expect.objectContaining({
+				where: expect.objectContaining({
+					document_type: 'purchase_order',
+					purchase_order_id: 50,
+					status: { [Op.in]: ['draft', 'in_progress', 'approved'] },
+				}),
+			}),
 		);
 	});
 });

@@ -73,7 +73,10 @@ const PRICE_VARIANCE_TOLERANCE_PCT = 2;
 // draft and in_progress invoices hold their claimed qty just as much as an
 // approved one does, so two invoices being drafted concurrently against the
 // same line still see each other. Only rejected/cancelled invoices never
-// happened as far as the order's fulfillment math is concerned.
+// happened as far as the order's fulfillment math is concerned. Matches
+// purchaseInvoiceItems.repository.js's own LIVE_STATUSES.
+const LIVE_STATUSES = ['draft', 'in_progress', 'approved'];
+
 const OPEN_STATUSES = ['draft', 'in_progress'];
 
 // document_type values match qc-inspection.service.js's DOC_CONFIG exactly
@@ -314,6 +317,29 @@ exports.createPurchaseInvoice = async (req, body) => {
 		include: [{ model: config.itemModel, as: 'items' }],
 	});
 	if (!doc) throw new AppError(`${config.label} not found`, StatusCodes.NOT_FOUND);
+
+	// Vendor invoice dates against the same order must move forward — a
+	// backdated bill arriving after a later one was already recorded would
+	// have to be booked in an accounting period that's already closed off by
+	// the later invoice, which the rest of the system (matching, payment
+	// requisition) doesn't know how to unwind. Only live invoices count:
+	// a rejected/cancelled one's date never happened as far as the order's
+	// billing timeline is concerned.
+	const latestInvoice = await PurchaseInvoice.findOne({
+		where: {
+			document_type,
+			[document_type === 'work_order' ? 'work_order_id' : 'purchase_order_id']: doc.id,
+			status: { [Op.in]: LIVE_STATUSES },
+		},
+		order: [['vendor_invoice_date', 'DESC']],
+		attributes: ['id', 'vendor_invoice_date'],
+	});
+	if (latestInvoice && new Date(vendor_invoice_date) < new Date(latestInvoice.vendor_invoice_date)) {
+		throw new AppError(
+			`Vendor invoice date cannot be earlier than ${new Date(latestInvoice.vendor_invoice_date).toLocaleDateString('en-IN')}, the date of the latest invoice already recorded against this ${config.label}`,
+			StatusCodes.BAD_REQUEST,
+		);
+	}
 
 	const docItemsById = new Map(doc.items.map((i) => [i.id, i]));
 	const preparedItems = [];
@@ -618,7 +644,22 @@ exports.listPurchaseInvoices = async (req, query = {}) => {
 	const rowsWithPaymentStatus = rows.map((r) => {
 		const plain = r.toJSON();
 		const pr = paymentSummaryById[r.id];
-		plain.payment_status = pr ? (pr.status === 'APPROVED' ? 'PAID' : 'PENDING') : 'UNPAID';
+		// A single invoice can now be paid off across several REGULAR PRs (e.g.
+		// 80% now, 20% later), so "PAID" means the approved total actually covers
+		// the invoice's own grandTotal, not just "the latest PR is APPROVED" —
+		// otherwise an 80%-paid invoice with the rest still outstanding read as
+		// fully PAID. PARTIALLY_PAID covers the in-between: something's been
+		// approved, but not enough to close it out yet.
+		const grandTotal = parseFloat(plain.grandTotal || 0);
+		if (!pr) {
+			plain.payment_status = 'UNPAID';
+		} else if (pr.total_approved_gross >= grandTotal - 0.01) {
+			plain.payment_status = 'PAID';
+		} else if (pr.total_approved_gross > 0) {
+			plain.payment_status = 'PARTIALLY_PAID';
+		} else {
+			plain.payment_status = 'PENDING';
+		}
 		// Actual cash paid to the vendor (net of retention/TDS), not the gross
 		// requisitioned value — unlike PO/WO.totalPaid (a procurement/budget
 		// figure), this list is vendor-billing-facing so "Paid Amount" means
@@ -636,11 +677,10 @@ exports.listPurchaseInvoices = async (req, query = {}) => {
 };
 
 // A Purchase Invoice can carry more than one non-rejected PaymentRequisition:
-// the original REGULAR one, plus later RETENTION_RELEASE requisitions that
-// release money withheld from it (see createRetentionRelease in
-// payment-requisition.service.js — the "at most one REGULAR PR per invoice"
-// rule only applies to REGULAR, RETENTION_RELEASE is exempt). So this
-// aggregates across every PR per invoice instead of picking a single winning
+// several REGULAR ones for partial drawdown (see payment-requisition.service.js's
+// cumulative gross_amount cap at invoice.grandTotal), plus later
+// RETENTION_RELEASE requisitions that release money withheld from them. So
+// this aggregates across every PR per invoice instead of picking a single winning
 // row — paid_amount sums every APPROVED requisition's net_payable, and
 // retention_held nets the REGULAR PR's originally-withheld retention against
 // whatever's since been released via an APPROVED RETENTION_RELEASE PR.
@@ -672,24 +712,32 @@ async function getPaymentSummaryByInvoiceId(invoiceIds, org_id) {
 	for (const [invoiceId, invoicePrs] of Object.entries(byInvoice)) {
 		// Already sorted id DESC from the query above.
 		const latest = invoicePrs[0];
-		const latestRegular = invoicePrs.find((pr) => pr.requisition_type !== 'RETENTION_RELEASE');
+		const regularPrs = invoicePrs.filter((pr) => pr.requisition_type !== 'RETENTION_RELEASE');
 		const paidAmount = invoicePrs
 			.filter((pr) => pr.status === 'APPROVED')
 			.reduce((sum, pr) => sum + (parseFloat(pr.net_payable) || 0), 0);
-		const retentionHeldOriginally = invoicePrs
-			.filter((pr) => pr.requisition_type !== 'RETENTION_RELEASE')
-			.reduce((sum, pr) => sum + (retentionByPrId[pr.id] || 0), 0);
+		const retentionHeldOriginally = regularPrs.reduce((sum, pr) => sum + (retentionByPrId[pr.id] || 0), 0);
 		const retentionReleased = invoicePrs
 			.filter((pr) => pr.requisition_type === 'RETENTION_RELEASE' && pr.status === 'APPROVED')
 			.reduce((sum, pr) => sum + (parseFloat(pr.net_payable) || 0), 0);
+		// An invoice can now carry several non-rejected REGULAR PRs (partial
+		// drawdown, e.g. 80% now / 20% later) instead of just one — these sum
+		// across all of them so the list page can tell PAID (fully requisitioned
+		// and approved) apart from PARTIALLY_PAID (some approved, some still
+		// outstanding) instead of reading off a single "latest" row.
+		const totalRegularGross = regularPrs.reduce((sum, pr) => sum + (parseFloat(pr.gross_amount) || 0), 0);
+		const totalApprovedRegularGross = regularPrs
+			.filter((pr) => pr.status === 'APPROVED')
+			.reduce((sum, pr) => sum + (parseFloat(pr.gross_amount) || 0), 0);
 
 		result[invoiceId] = {
 			requisition_id: latest.id,
 			requisition_no: latest.requisition_no,
-			// Drives the PAID/PENDING badge — reflects the invoice's own
-			// (REGULAR) payment, not a later retention release still in flight.
-			status: (latestRegular ?? latest).status,
-			gross_amount: parseFloat((latestRegular ?? latest).gross_amount) || 0,
+			// Kept for callers that just want "the one to link to" — always the
+			// most recently raised PR against this invoice, whichever type.
+			status: latest.status,
+			gross_amount: totalRegularGross,
+			total_approved_gross: totalApprovedRegularGross,
 			net_payable: paidAmount,
 			retention_held: Math.max(0, retentionHeldOriginally - retentionReleased),
 			// All non-rejected PRs against this invoice, oldest first — the

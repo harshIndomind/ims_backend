@@ -27,23 +27,31 @@ exports.validationCreatePurchaseInvoice = [
 	body('items.*.remarks').optional({ checkFalsy: true }).isString().trim(),
 
 	// Other charges (freight, loading/unloading, etc.) — optional, additive,
-	// not matched against anything on the PO/WO.
+	// not matched against anything on the PO/WO. Payload shape is the generic
+	// Charge the shared <ChargesTable> component sends for PO/WO too
+	// (name/calculationType/value/operation/applyOn/taxTreatment/taxRate) —
+	// see purchase-invoice.service.js's preparedCharges loop, which is the
+	// authoritative validation for these fields.
 	body('other_charges').optional().isArray().withMessage('other_charges must be an array'),
-	body('other_charges.*.charge_type_id').optional({ checkFalsy: true }).isInt().withMessage('Invalid charge type').toInt(),
-	body('other_charges.*.description').optional({ checkFalsy: true }).isString().trim(),
-	body('other_charges.*.amount').isFloat({ min: 0 }).withMessage('Each other charge requires a valid amount'),
-	body('other_charges.*.charge_basis')
+	body('other_charges.*.name').notEmpty().withMessage('Each other charge requires a name').isString().trim(),
+	body('other_charges.*.value').isFloat({ min: 0 }).withMessage('Each other charge requires a valid amount'),
+	body('other_charges.*.calculationType')
 		.optional({ checkFalsy: true })
-		.isIn(['pre_tax', 'post_tax'])
-		.withMessage('charge_basis must be pre_tax or post_tax'),
-	body('other_charges.*.value_type')
-		.optional({ checkFalsy: true })
-		.isIn(['rupee', 'percentage'])
-		.withMessage('value_type must be rupee or percentage'),
-	body('other_charges.*.operation_type')
+		.isIn(['FIXED', 'PERCENTAGE'])
+		.withMessage('calculationType must be FIXED or PERCENTAGE'),
+	body('other_charges.*.operation')
 		.optional({ checkFalsy: true })
 		.isIn(['+', '-'])
-		.withMessage('operation_type must be + or -'),
+		.withMessage('operation must be + or -'),
+	body('other_charges.*.applyOn')
+		.optional({ checkFalsy: true })
+		.isIn(['NET_TAXABLE_AMOUNT', 'AFTER_TAX'])
+		.withMessage('applyOn must be NET_TAXABLE_AMOUNT or AFTER_TAX'),
+	body('other_charges.*.taxTreatment')
+		.optional({ checkFalsy: true })
+		.isIn(['NON_TAXABLE', 'SPECIFIC_RATE', 'INHERIT_ITEM_TAX'])
+		.withMessage('taxTreatment must be NON_TAXABLE, SPECIFIC_RATE or INHERIT_ITEM_TAX'),
+	body('other_charges.*.taxRate').optional({ checkFalsy: true }).isFloat({ min: 0 }).withMessage('taxRate must be a valid number'),
 	body('other_charges.*.remarks').optional({ checkFalsy: true }).isString().trim(),
 ];
 

@@ -387,25 +387,25 @@ exports.createPaymentRequisition = async (req, payload) => {
 					StatusCodes.CONFLICT,
 				);
 			}
-			// One Purchase Invoice <-> at most one non-rejected REGULAR Payment
-			// Requisition — no partial multi-PR drawdown against a single invoice.
-			// RETENTION_RELEASE is exempt: it's a legitimate later requisition
-			// against the same invoice (releasing money withheld from the earlier
-			// regular payment), gated by its own balance check below instead —
-			// same as the PO/WO path, which has no existence check at all here.
+			// A Purchase Invoice can carry more than one non-rejected REGULAR Payment
+			// Requisition now (partial drawdown, e.g. 80% now / 20% later) — capped
+			// cumulatively at the invoice's grandTotal rather than the old 1:1 rule.
+			// RETENTION_RELEASE is excluded from this sum: its gross_amount is the
+			// retention being released, already counted in the original REGULAR
+			// PR's gross the first time it was withheld (see poWoSyncAmount), not a
+			// fresh draw against the invoice's value.
 			if (requisitionType !== 'RETENTION_RELEASE') {
-				const existingPrCount = await PaymentRequisition.count({
-					where: { purchase_invoice_id, status: { [Op.ne]: 'REJECTED' } },
-				});
-				if (existingPrCount > 0) {
-					throw new AppError('A Payment Requisition already exists for this Purchase Invoice', StatusCodes.CONFLICT);
+				const alreadyRequisitioned =
+					(await PaymentRequisition.sum('gross_amount', {
+						where: { purchase_invoice_id, requisition_type: { [Op.ne]: 'RETENTION_RELEASE' }, status: { [Op.ne]: 'REJECTED' } },
+					})) || 0;
+				const remaining = parseFloat(invoice.grandTotal || 0) - alreadyRequisitioned;
+				if (gross > remaining + 0.001) {
+					throw new AppError(
+						`Requisition amount exceeds this invoice's remaining balance of ₹${remaining.toFixed(2)} (₹${alreadyRequisitioned.toFixed(2)} already requisitioned of ₹${parseFloat(invoice.grandTotal || 0).toFixed(2)})`,
+						StatusCodes.UNPROCESSABLE_ENTITY,
+					);
 				}
-			}
-			if (gross > parseFloat(invoice.grandTotal || 0) + 0.001) {
-				throw new AppError(
-					`Requisition amount exceeds this invoice's value of ₹${parseFloat(invoice.grandTotal || 0).toFixed(2)}`,
-					StatusCodes.UNPROCESSABLE_ENTITY,
-				);
 			}
 		}
 
@@ -794,18 +794,34 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 			}
 		}
 
-		// Same idea for an Invoice-anchored requisition — gross can never exceed
-		// that specific invoice's own grandTotal, re-checked on any edit that
-		// changes it (the 1:1 invoice<->PR and PO-direct-closes-once-invoiced
-		// gates are enforced at creation only; switching which PO/Invoice a PR
-		// targets after creation isn't a supported edit flow).
+		// Same idea for an Invoice-anchored requisition — gross can never push the
+		// invoice's cumulative REGULAR requisitioning past its own grandTotal,
+		// re-checked on any edit that changes it (the PO-direct-closes-once-invoiced
+		// gate is enforced at creation only; switching which PO/Invoice a PR
+		// targets after creation isn't a supported edit flow). Other live REGULAR
+		// PRs against the same invoice are counted too, per the multi-PR partial
+		// drawdown rule createPaymentRequisition enforces — this row's own prior
+		// gross is excluded so editing its amount doesn't double-count itself.
 		if (purchase_invoice_id && newStatus !== 'REJECTED' && gross !== parseFloat(existing.gross_amount || 0)) {
 			const invoiceForCap = await PurchaseInvoice.findByPk(purchase_invoice_id, { attributes: ['grandTotal'], transaction });
-			if (invoiceForCap && gross > parseFloat(invoiceForCap.grandTotal || 0) + 0.001) {
-				throw new AppError(
-					`Requisition amount exceeds this invoice's value of ₹${parseFloat(invoiceForCap.grandTotal || 0).toFixed(2)}`,
-					StatusCodes.UNPROCESSABLE_ENTITY,
-				);
+			if (invoiceForCap) {
+				const alreadyRequisitioned =
+					(await PaymentRequisition.sum('gross_amount', {
+						where: {
+							purchase_invoice_id,
+							requisition_type: { [Op.ne]: 'RETENTION_RELEASE' },
+							status: { [Op.ne]: 'REJECTED' },
+							id: { [Op.ne]: id },
+						},
+						transaction,
+					})) || 0;
+				const remaining = parseFloat(invoiceForCap.grandTotal || 0) - alreadyRequisitioned;
+				if (gross > remaining + 0.001) {
+					throw new AppError(
+						`Requisition amount exceeds this invoice's remaining balance of ₹${remaining.toFixed(2)} (₹${alreadyRequisitioned.toFixed(2)} already requisitioned of ₹${parseFloat(invoiceForCap.grandTotal || 0).toFixed(2)})`,
+						StatusCodes.UNPROCESSABLE_ENTITY,
+					);
+				}
 			}
 		}
 
@@ -1302,24 +1318,24 @@ exports.getPoWoSummary = async (req, type, id) => {
 		const basicAmount = parseFloat(invoice.total_taxable) || 0;
 		const totalAmount = parseFloat(invoice.grandTotal) || 0;
 
-		const [financial, retentionSummary, deductionBreakdown, existingPrCount] = await Promise.all([
+		const [financial, retentionSummary, deductionBreakdown] = await Promise.all([
 			analyticsRepo.getPoWoFinancialSummary({ idField: 'purchase_invoice_id', id, org_id }),
 			invoice.document_type === 'work_order'
 				? analyticsRepo.getRetentionSummaryForWo({ woId: invoice.work_order_id, org_id })
 				: analyticsRepo.getRetentionSummaryForPo({ poId: invoice.purchase_order_id, org_id }),
 			analyticsRepo.getDeductionBreakdownByPoWo({ idField: 'purchase_invoice_id', id, org_id }),
-			PaymentRequisition.count({ where: { purchase_invoice_id: id, status: { [Op.ne]: 'REJECTED' } } }),
 		]);
 
 		const totalGross = parseFloat(financial?.total_gross || 0);
 		const totalNetPaid = parseFloat(financial?.total_net_paid || 0);
 		const totalDeductions = parseFloat(financial?.total_deductions || 0);
 
-		// One Purchase Invoice <-> at most one non-rejected PR (locked decision):
-		// remaining is simply the full invoice value until a PR is raised, then
-		// zero — no partial-drawdown running balance to compute, since the
-		// invoice's own grandTotal was already receipt-capped at creation.
-		const remainingAmount = existingPrCount > 0 ? 0 : totalAmount;
+		// A Purchase Invoice can now carry more than one non-rejected REGULAR PR
+		// (partial drawdown, e.g. 80% now / 20% later) — remaining is a running
+		// balance against the invoice's own grandTotal, same math as the PO/WO
+		// branch below. total_gross already excludes RETENTION_RELEASE rows (see
+		// getPoWoFinancialSummary), so releasing retention doesn't shrink this.
+		const remainingAmount = Math.max(0, totalAmount - totalGross);
 
 		return {
 			poWoBasicAmount: basicAmount,

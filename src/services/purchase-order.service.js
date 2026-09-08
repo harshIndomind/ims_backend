@@ -28,6 +28,10 @@ const {
 	MasterUnit,
 	Department,
 	MasterPlaceOfUse,
+	GoodsReceiptNoteItem,
+	QcInspectionItem,
+	PurchaseInvoiceItem,
+	ShortCloseRequestItem,
 } = require('../models/index');
 const {
 	generateInvoiceHTMLPDF,
@@ -409,6 +413,19 @@ exports.updatePurchaseOrder = async (req) => {
 			throw new AppError('Pruchase order not found.');
 		}
 
+		// Same gate indent.service.js's updateIndent uses — once the workflow has moved
+		// past the lock stage (or resolved to approved/cancelled), the PO's items and
+		// header stop being editable at all, matching the UX indent already has. This
+		// closes off the normal path to the item-removal guard below entirely (an
+		// approved PO can no longer reach it at all) — that guard stays as
+		// defense-in-depth for whatever edge case still lets an edit through with
+		// existing GRN/QC/Invoice history attached (e.g. a workflow definition with a
+		// late lock_stage_sequence).
+		const editable = await workflowEngine.isEditable({ documentType: DOCUMENT_TYPE, documentId: purchaseOrder.id });
+		if (!editable) {
+			throw new AppError('This Purchase Order can no longer be edited at its current workflow stage', StatusCodes.FORBIDDEN);
+		}
+
 		// A draft PO has never deducted anything from the indent yet — that only happens at
 		// submit (see submitPurchaseOrder), using whatever qty sits on the PO items at that
 		// point. So editing a still-draft PO needs no indent-qty adjustment at all. Only a PO
@@ -437,6 +454,38 @@ exports.updatePurchaseOrder = async (req) => {
 		const payloadIds = new Set(
 			productItems.filter((i) => i.id).map((i) => Number(i.id)),
 		);
+
+		// Block removing a line that already has downstream history — destroying
+		// it would either cascade-delete rows that reference it (GRN items have
+		// an ON DELETE CASCADE FK to PurchaseOrderItem) or leave a dangling
+		// po_wo_item_id behind on rows that don't (QC/Purchase Invoice/Short
+		// Close items store it as a plain polymorphic int, no FK) — either way
+		// silently destroying real receipt/inspection/billing history. This
+		// isn't a "your data is stale" race like the indent-budget check above;
+		// it's the codebase's only line of defense against exactly what happened
+		// once already: an edit meant to change an unrelated header field (e.g.
+		// delivery type) wiped a line's GRN receipt and orphaned its QC/Invoice
+		// records because the client resubmitted the item without its id.
+		const idsToRemove = existingItems.filter((e) => !payloadIds.has(e.id)).map((e) => e.id);
+		if (idsToRemove.length > 0) {
+			const [grnCount, qcCount, invoiceCount, shortCloseCount] = await Promise.all([
+				GoodsReceiptNoteItem.count({ where: { purchase_order_item_id: { [Op.in]: idsToRemove } }, transaction }),
+				QcInspectionItem.count({ where: { po_wo_item_id: { [Op.in]: idsToRemove } }, transaction }),
+				PurchaseInvoiceItem.count({ where: { po_wo_item_id: { [Op.in]: idsToRemove } }, transaction }),
+				ShortCloseRequestItem.count({ where: { po_wo_item_id: { [Op.in]: idsToRemove } }, transaction }),
+			]);
+			if (grnCount > 0 || qcCount > 0 || invoiceCount > 0 || shortCloseCount > 0) {
+				const removedNames = existingItems
+					.filter((e) => idsToRemove.includes(e.id))
+					.map((e) => e.productSnapshot?.name || `item ${e.id}`)
+					.join(', ');
+				throw new AppError(
+					`Cannot remove "${removedNames}" from this Purchase Order — it already has MRN receipt, QC, Invoice, or Short Close history against it. ` +
+						`Editing the productItems array must keep this line's existing id (only its editable fields, not the row itself, should change).`,
+					StatusCodes.CONFLICT,
+				);
+			}
+		}
 
 		// Remove items that are no longer in the payload.
 		for (const existing of existingItems) {
