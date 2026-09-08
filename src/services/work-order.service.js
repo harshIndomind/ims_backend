@@ -361,6 +361,15 @@ exports.updateWorkOrder = async (req) => {
 			throw new AppError('Work order not found.');
 		}
 
+		// Same gate purchase-order.service.js's updatePurchaseOrder and
+		// indent.service.js's updateIndent use — once the workflow has moved past
+		// the lock stage (or resolved to approved/cancelled), the WO stops being
+		// editable at all.
+		const editable = await workflowEngine.isEditable({ documentType: DOCUMENT_TYPE, documentId: workOrder.id });
+		if (!editable) {
+			throw new AppError('This Work Order can no longer be edited at its current workflow stage', StatusCodes.FORBIDDEN);
+		}
+
 		const sameState = Boolean(state_same);
 		const totals = calculateDocumentTotals({
 			items: toEngineItems(productItems),
