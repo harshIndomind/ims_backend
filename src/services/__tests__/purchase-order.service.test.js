@@ -20,6 +20,11 @@ jest.mock('../document-header-codes.service', () => ({
 jest.mock('../document-numbering.service', () => ({
 	generateDocumentNumber: jest.fn().mockResolvedValue({ docNumber: 'PO-1', sequenceNo: 1, fiscalYear: '2025-26' }),
 }));
+// updatePurchaseOrder gates on workflowEngine.isEditable (same lock indent.service.js
+// uses) — default true (no workflow instance / still editable) so every pre-existing
+// update test keeps passing unless a test explicitly opts into the locked case.
+const mockIsEditable = jest.fn().mockResolvedValue(true);
+jest.mock('../workflowEngine.service', () => ({ isEditable: (...args) => mockIsEditable(...args) }));
 
 // LOCK.UPDATE mirrors real Sequelize transaction instances — budget-validation.service.js's
 // row-locked IndentItem reads need it present even though these tests don't exercise locking
@@ -33,6 +38,13 @@ const mockPoItemFindAll = jest.fn();
 const mockIndentFindOne = jest.fn();
 // IndentItem.findOne is used by applyIndentQtyDelta to get the UOM-specific row.
 const mockIndentItemFindOne = jest.fn();
+// Downstream-history counts updatePurchaseOrder checks before destroying a removed
+// item — default to 0 (no history) so every pre-existing removal test keeps passing
+// unless a test explicitly opts in via one of these.
+const mockGrnItemCount = jest.fn().mockResolvedValue(0);
+const mockQcItemCount = jest.fn().mockResolvedValue(0);
+const mockPiItemCount = jest.fn().mockResolvedValue(0);
+const mockShortCloseItemCount = jest.fn().mockResolvedValue(0);
 
 jest.mock('../../models/index', () => ({
 	sequelize: { transaction: jest.fn() },
@@ -51,6 +63,10 @@ jest.mock('../../models/index', () => ({
 	PaymentRequisition: { destroy: jest.fn() },
 	MasterTermsCondition: {},
 	MasterUnit: {},
+	GoodsReceiptNoteItem: { count: (...args) => mockGrnItemCount(...args) },
+	QcInspectionItem: { count: (...args) => mockQcItemCount(...args) },
+	PurchaseInvoiceItem: { count: (...args) => mockPiItemCount(...args) },
+	ShortCloseRequestItem: { count: (...args) => mockShortCloseItemCount(...args) },
 }));
 
 jest.mock('../../repository/index', () => ({
@@ -361,6 +377,27 @@ describe('createPurchaseOrder — qty_for_purchase_order', () => {
 
 // ─── updatePurchaseOrder ──────────────────────────────────────────────────────
 
+describe('updatePurchaseOrder — workflow lock', () => {
+	it('rejects the whole edit once the PO is past its editable workflow stage', async () => {
+		mockPoItemFindAll.mockResolvedValue([]);
+		poRepo.findById.mockResolvedValue({ id: 100 });
+		mockIsEditable.mockResolvedValueOnce(false);
+
+		const req = {
+			params: { id: 100 },
+			body: {
+				indent_id: 5,
+				purchaseOrderDetail: {},
+				vendorInfo: {},
+				productItems: [baseProductItem({ id: 200, qty: 4, qty_for_purchase_order: 10 })],
+			},
+		};
+
+		await expect(poService.updatePurchaseOrder(req)).rejects.toThrow(/can no longer be edited/);
+		expect(mockPoItemFindAll).not.toHaveBeenCalled();
+	});
+});
+
 describe('updatePurchaseOrder — qty_for_purchase_order', () => {
 	// Validation compares the new qty against the payload's qty_for_purchase_order (the value
 	// currently in the DB, which does not yet include this same PO item's own qty being
@@ -472,6 +509,36 @@ describe('updatePurchaseOrder — qty_for_purchase_order', () => {
 			expect.anything(),
 		);
 		expect(removed.destroy).toHaveBeenCalled();
+	});
+
+	// Regression test: editing a PO for an unrelated reason (e.g. a header field)
+	// while the payload's item omits its id must not silently destroy a line that
+	// already has GRN/QC/Invoice/Short-Close history — that line's row is what
+	// those records point back to (GoodsReceiptNoteItem even cascade-deletes on
+	// it), so destroying it either wipes real receipt data or orphans dangling
+	// po_wo_item_id references. See project memory on the PO-8 incident.
+	it.each([
+		['GRN receipt', mockGrnItemCount],
+		['QC inspection', mockQcItemCount],
+		['Purchase Invoice', mockPiItemCount],
+		['Short Close request', mockShortCloseItemCount],
+	])('rejects removing an item that already has %s history against it', async (_label, mockCount) => {
+		const kept = makeExistingPoItem({ id: 200, qty: 3, product_id: 1 });
+		const removed = makeExistingPoItem({ id: 201, qty: 5, product_id: 2, productSnapshot: { name: 'Widget B' } });
+		mockPoItemFindAll.mockResolvedValue([kept, removed]);
+		poRepo.findById.mockResolvedValue({ id: 100 });
+		mockCount.mockResolvedValue(1);
+
+		const req = {
+			...baseReq,
+			body: {
+				...baseReq.body,
+				productItems: [baseProductItem({ id: 200, product_id: 1, qty: 3, qty_for_purchase_order: 7 })],
+			},
+		};
+
+		await expect(poService.updatePurchaseOrder(req)).rejects.toThrow(/Cannot remove "Widget B"/);
+		expect(removed.destroy).not.toHaveBeenCalled();
 	});
 
 	it('allows updating a PO that now has two lines for the same product with different UOMs', async () => {

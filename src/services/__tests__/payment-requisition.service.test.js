@@ -22,6 +22,7 @@ const mockPurchaseOrderFindOne = jest.fn();
 const mockPurchaseOrderUpdate = jest.fn().mockResolvedValue([1]);
 const mockPaymentRequisitionFindOne = jest.fn();
 const mockPaymentRequisitionCount = jest.fn().mockResolvedValue(0);
+const mockPaymentRequisitionSum = jest.fn().mockResolvedValue(0);
 const mockTdsLiabilityCount = jest.fn().mockResolvedValue(0);
 const mockPurchaseInvoiceCount = jest.fn().mockResolvedValue(0);
 const mockPurchaseInvoiceFindOne = jest.fn();
@@ -34,6 +35,7 @@ jest.mock('../../models/index', () => ({
 	PaymentRequisition: {
 		findOne: (...args) => mockPaymentRequisitionFindOne(...args),
 		count: (...args) => mockPaymentRequisitionCount(...args),
+		sum: (...args) => mockPaymentRequisitionSum(...args),
 	},
 	PaymentRequisitionDeduction: {},
 	PurchaseOrder: {
@@ -122,6 +124,7 @@ beforeEach(() => {
 	// every pre-existing test unless a test explicitly opts in.
 	mockPurchaseInvoiceCount.mockResolvedValue(0);
 	mockPaymentRequisitionCount.mockResolvedValue(0);
+	mockPaymentRequisitionSum.mockResolvedValue(0);
 	mockGetRetentionSummaryForPo.mockResolvedValue({ retention_held: 0, retention_released: 0, retention_balance: 0 });
 	mockGetRetentionSummaryForWo.mockResolvedValue({ retention_held: 0, retention_released: 0, retention_balance: 0 });
 });
@@ -550,22 +553,22 @@ describe('createPaymentRequisition — Invoice path', () => {
 		).rejects.toThrow(/not approved/);
 	});
 
-	it('rejects a second requisition against an invoice that already has a non-rejected PR (1:1)', async () => {
+	it('rejects a requisition that would push cumulative gross past the invoice grandTotal', async () => {
 		mockPurchaseInvoiceFindOne.mockResolvedValue(approvedInvoice());
-		mockPaymentRequisitionCount.mockResolvedValue(1);
+		mockPaymentRequisitionSum.mockResolvedValue(48000); // 80% already requisitioned
 
 		await expect(
 			prService.createPaymentRequisition(baseReq(), {
 				requisitionAgainst: 'Invoice',
 				poWoId: 900,
-				grossAmount: 60000,
+				grossAmount: 20000, // only 12000 remains
 			}),
-		).rejects.toThrow(/already exists for this Purchase Invoice/);
+		).rejects.toThrow(/exceeds this invoice's remaining balance/);
 	});
 
-	it('rejects gross exceeding the invoice\'s own grandTotal', async () => {
+	it('rejects gross exceeding the invoice\'s own grandTotal on the first PR', async () => {
 		mockPurchaseInvoiceFindOne.mockResolvedValue(approvedInvoice({ grandTotal: 60000 }));
-		mockPaymentRequisitionCount.mockResolvedValue(0);
+		mockPaymentRequisitionSum.mockResolvedValue(0);
 
 		await expect(
 			prService.createPaymentRequisition(baseReq(), {
@@ -573,12 +576,34 @@ describe('createPaymentRequisition — Invoice path', () => {
 				poWoId: 900,
 				grossAmount: 70000,
 			}),
-		).rejects.toThrow(/exceeds this invoice's value/);
+		).rejects.toThrow(/exceeds this invoice's remaining balance/);
+	});
+
+	// Regression test for the exact bug reported: an invoice gets an 80% PR
+	// approved, and a second PR for the remaining 20% must still be allowed —
+	// the old 1:1 rule blocked this outright even though the invoice was only
+	// partially paid.
+	it('allows a second REGULAR PR for the remaining balance after an earlier partial one', async () => {
+		mockPurchaseInvoiceFindOne.mockResolvedValue(approvedInvoice({ grandTotal: 60000 }));
+		mockPaymentRequisitionSum.mockResolvedValue(48000); // 80% already requisitioned
+		mockPurchaseInvoiceFindByPk.mockResolvedValue({ purchase_order_id: 50 });
+		mockPurchaseOrderFindOne.mockResolvedValue({ grandTotal: 100000, totalPaid: 48000 });
+		mockPrFindById.mockResolvedValue({ id: 502, org_id: 7, purchase_invoice_id: 900, gross_amount: 12000, net_payable: 12000, status: 'PENDING', deductions: [] });
+
+		await expect(
+			prService.createPaymentRequisition(baseReq(), {
+				requisitionAgainst: 'Invoice',
+				poWoId: 900,
+				grossAmount: 12000, // exactly the remaining 20%
+			}),
+		).resolves.toBeDefined();
+
+		expect(mockTransaction.commit).toHaveBeenCalled();
 	});
 
 	it('creates successfully and syncs the underlying PO (not a parallel ledger) when approved', async () => {
 		mockPurchaseInvoiceFindOne.mockResolvedValue(approvedInvoice());
-		mockPaymentRequisitionCount.mockResolvedValue(0);
+		mockPaymentRequisitionSum.mockResolvedValue(0);
 		mockPurchaseInvoiceFindByPk.mockResolvedValue({ purchase_order_id: 50 });
 		mockPurchaseOrderFindOne.mockResolvedValue({ grandTotal: 100000, totalPaid: 0 });
 		mockPrFindById.mockResolvedValue({ id: 501, org_id: 7, purchase_invoice_id: 900, gross_amount: 60000, net_payable: 60000, status: 'APPROVED', deductions: [] });
@@ -617,7 +642,7 @@ describe('getPoWoSummary — Invoice type and the PO-direct-closes gate', () => 
 
 	it('type=INVOICE returns the full grandTotal as remaining before any PR exists', async () => {
 		mockPurchaseInvoiceFindOne.mockResolvedValue({ total_taxable: 54000, grandTotal: 60000, purchase_order_id: 50 });
-		mockPaymentRequisitionCount.mockResolvedValue(0);
+		mockGetPoWoFinancialSummary.mockResolvedValue({ total_gross: 0 });
 
 		const summary = await prService.getPoWoSummary(baseReq(), 'Invoice', 900);
 
@@ -625,9 +650,21 @@ describe('getPoWoSummary — Invoice type and the PO-direct-closes gate', () => 
 		expect(summary.poWoExpInvAmount).toBe(60000);
 	});
 
-	it('type=INVOICE returns 0 remaining once a non-rejected PR exists (1:1)', async () => {
+	// Regression test: an invoice can now carry more than one non-rejected
+	// REGULAR PR (partial drawdown) — remaining is a running balance against
+	// grandTotal, not a flat 0 once any PR exists.
+	it('type=INVOICE returns the balance still outstanding after a partial PR, not 0', async () => {
 		mockPurchaseInvoiceFindOne.mockResolvedValue({ total_taxable: 54000, grandTotal: 60000, purchase_order_id: 50 });
-		mockPaymentRequisitionCount.mockResolvedValue(1);
+		mockGetPoWoFinancialSummary.mockResolvedValue({ total_gross: 48000 }); // 80% already requisitioned
+
+		const summary = await prService.getPoWoSummary(baseReq(), 'Invoice', 900);
+
+		expect(summary.remainingAmount).toBe(12000);
+	});
+
+	it('type=INVOICE returns 0 remaining once fully requisitioned', async () => {
+		mockPurchaseInvoiceFindOne.mockResolvedValue({ total_taxable: 54000, grandTotal: 60000, purchase_order_id: 50 });
+		mockGetPoWoFinancialSummary.mockResolvedValue({ total_gross: 60000 });
 
 		const summary = await prService.getPoWoSummary(baseReq(), 'Invoice', 900);
 

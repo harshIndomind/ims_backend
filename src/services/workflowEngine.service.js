@@ -753,6 +753,7 @@ async function getTimeline({ documentType, documentId }) {
 		if (stageAction) {
 			if (stageAction.action === 'rejected') status = 'rejected';
 			else if (stageAction.action === 'skipped') status = 'skipped';
+			else if (stageAction.action === 'cancelled') status = 'cancelled';
 			else status = 'completed';
 		} else if (instance.status === 'cancelled') {
 			status = 'cancelled';
