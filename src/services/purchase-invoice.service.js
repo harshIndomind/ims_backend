@@ -73,7 +73,10 @@ const PRICE_VARIANCE_TOLERANCE_PCT = 2;
 // draft and in_progress invoices hold their claimed qty just as much as an
 // approved one does, so two invoices being drafted concurrently against the
 // same line still see each other. Only rejected/cancelled invoices never
-// happened as far as the order's fulfillment math is concerned.
+// happened as far as the order's fulfillment math is concerned. Matches
+// purchaseInvoiceItems.repository.js's own LIVE_STATUSES.
+const LIVE_STATUSES = ['draft', 'in_progress', 'approved'];
+
 const OPEN_STATUSES = ['draft', 'in_progress'];
 
 // document_type values match qc-inspection.service.js's DOC_CONFIG exactly
@@ -314,6 +317,29 @@ exports.createPurchaseInvoice = async (req, body) => {
 		include: [{ model: config.itemModel, as: 'items' }],
 	});
 	if (!doc) throw new AppError(`${config.label} not found`, StatusCodes.NOT_FOUND);
+
+	// Vendor invoice dates against the same order must move forward — a
+	// backdated bill arriving after a later one was already recorded would
+	// have to be booked in an accounting period that's already closed off by
+	// the later invoice, which the rest of the system (matching, payment
+	// requisition) doesn't know how to unwind. Only live invoices count:
+	// a rejected/cancelled one's date never happened as far as the order's
+	// billing timeline is concerned.
+	const latestInvoice = await PurchaseInvoice.findOne({
+		where: {
+			document_type,
+			[document_type === 'work_order' ? 'work_order_id' : 'purchase_order_id']: doc.id,
+			status: { [Op.in]: LIVE_STATUSES },
+		},
+		order: [['vendor_invoice_date', 'DESC']],
+		attributes: ['id', 'vendor_invoice_date'],
+	});
+	if (latestInvoice && new Date(vendor_invoice_date) < new Date(latestInvoice.vendor_invoice_date)) {
+		throw new AppError(
+			`Vendor invoice date cannot be earlier than ${new Date(latestInvoice.vendor_invoice_date).toLocaleDateString('en-IN')}, the date of the latest invoice already recorded against this ${config.label}`,
+			StatusCodes.BAD_REQUEST,
+		);
+	}
 
 	const docItemsById = new Map(doc.items.map((i) => [i.id, i]));
 	const preparedItems = [];
