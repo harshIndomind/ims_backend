@@ -135,6 +135,18 @@ async function syncPoWoPaymentFields(Model, id, org_id, amountDelta, transaction
 	}
 	const currentTotalPaid = parseFloat(record.totalPaid) || 0;
 	const newTotalPaid = Math.max(0, currentTotalPaid + amountDelta);
+
+	// Defense-in-depth: creation-time cumulative caps should already prevent
+	// this, but if they were ever bypassed (e.g. a since-fixed gap, or a path
+	// that doesn't enforce a cap), refuse to silently record an over-payment
+	// here rather than flooring remainingAmount at 0 and reporting PAID.
+	if (amountDelta > 0 && newTotalPaid > ceiling + 0.01) {
+		throw new AppError(
+			`Approving this requisition would push ${Model.name} #${id}'s total paid (₹${newTotalPaid.toFixed(2)}) past its payable ceiling of ₹${ceiling.toFixed(2)}.`,
+			StatusCodes.CONFLICT,
+		);
+	}
+
 	const newRemainingAmount = Math.max(0, ceiling - newTotalPaid);
 
 	let newPaymentStatus;
@@ -377,6 +389,9 @@ exports.createPaymentRequisition = async (req, payload) => {
 		} = payload;
 
 		const gross = parseFloat(grossAmount ?? requisitionAmount ?? 0);
+		if (!gross || gross <= 0) {
+			throw new AppError('Requisition amount must be greater than zero', StatusCodes.UNPROCESSABLE_ENTITY);
+		}
 		const fedBy = { id: user.id, name: user.name, email: user.email };
 		const po_id = requisitionAgainst === 'PO' && poWoId ? Number(poWoId) : null;
 		const wo_id = requisitionAgainst === 'WO' && poWoId ? Number(poWoId) : null;
@@ -384,7 +399,11 @@ exports.createPaymentRequisition = async (req, payload) => {
 
 		let invoice = null;
 		if (purchase_invoice_id) {
-			invoice = await PurchaseInvoice.findOne({ where: { id: purchase_invoice_id, org_id: user.org_id } });
+			invoice = await PurchaseInvoice.findOne({
+				where: { id: purchase_invoice_id, org_id: user.org_id },
+				transaction,
+				lock: transaction.LOCK.UPDATE,
+			});
 			if (!invoice) {
 				throw new AppError('Purchase Invoice not found', StatusCodes.NOT_FOUND);
 			}
@@ -513,6 +532,35 @@ exports.createPaymentRequisition = async (req, payload) => {
 				if (gross > remaining) {
 					throw new AppError(
 						`Requisition amount exceeds what's payable for this PO — only ₹${remaining.toFixed(2)} remains against received value (received ₹${receivedValue.toFixed(2)} of ordered ₹${grandTotal.toFixed(2)}).`,
+						StatusCodes.UNPROCESSABLE_ENTITY,
+					);
+				}
+			}
+		}
+
+		// Cap WO-direct requisitions cumulatively at the WO's grandTotal — WO has
+		// no MRN-equivalent receipt ledger (see syncPoWoPaymentFields), so unlike
+		// PO there's no received-value refinement, just the full grandTotal.
+		// Without this, multiple PENDING requisitions against the same WO could
+		// stack past 100% of its value with nothing to stop them.
+		if (wo_id) {
+			const woForCap = await WorkOrder.findByPk(wo_id, {
+				attributes: ['grandTotal'],
+				transaction,
+				lock: transaction.LOCK.UPDATE,
+			});
+			if (woForCap) {
+				const grandTotal = parseFloat(woForCap.grandTotal) || 0;
+				const financial = await analyticsRepo.getPoWoFinancialSummary({
+					idField: 'wo_id',
+					id: wo_id,
+					org_id: user.org_id,
+				});
+				const totalGrossSoFar = parseFloat(financial?.total_gross || 0);
+				const remaining = Math.max(0, grandTotal - totalGrossSoFar);
+				if (gross > remaining) {
+					throw new AppError(
+						`Requisition amount exceeds what's payable for this WO — only ₹${remaining.toFixed(2)} remains against ordered value ₹${grandTotal.toFixed(2)}.`,
 						StatusCodes.UNPROCESSABLE_ENTITY,
 					);
 				}
@@ -705,6 +753,9 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 		} = payload;
 
 		const gross = parseFloat(grossAmount ?? requisitionAmount ?? existing.gross_amount ?? existing.requisition_amount ?? 0);
+		if (!gross || gross <= 0) {
+			throw new AppError('Requisition amount must be greater than zero', StatusCodes.UNPROCESSABLE_ENTITY);
+		}
 		const rawDedList = deductions !== undefined ? deductions : null;
 		const finalRequisitionType = requisitionType || existing.requisition_type;
 
@@ -775,6 +826,33 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 			}
 		}
 
+		// Same idea for a WO-direct requisition — no received-value refinement
+		// since WO has no MRN-equivalent receipt ledger, just the plain
+		// grandTotal ceiling (see the equivalent block in createPaymentRequisition).
+		if (wo_id && existing.status !== 'REJECTED' && gross !== parseFloat(existing.gross_amount || 0)) {
+			const woForCap = await WorkOrder.findByPk(wo_id, {
+				attributes: ['grandTotal'],
+				transaction,
+				lock: transaction.LOCK.UPDATE,
+			});
+			if (woForCap) {
+				const grandTotal = parseFloat(woForCap.grandTotal) || 0;
+				const financial = await analyticsRepo.getPoWoFinancialSummary({ idField: 'wo_id', id: wo_id, org_id });
+				const priorOwnGross =
+					existing.requisition_type === 'REGULAR' && existing.status !== 'REJECTED'
+						? parseFloat(existing.gross_amount || 0)
+						: 0;
+				const totalGrossExcludingSelf = Math.max(0, parseFloat(financial?.total_gross || 0) - priorOwnGross);
+				const remaining = Math.max(0, grandTotal - totalGrossExcludingSelf);
+				if (gross > remaining) {
+					throw new AppError(
+						`Requisition amount exceeds what's payable for this WO — only ₹${remaining.toFixed(2)} remains against ordered value ₹${grandTotal.toFixed(2)}.`,
+						StatusCodes.UNPROCESSABLE_ENTITY,
+					);
+				}
+			}
+		}
+
 		// Same idea for an Invoice-anchored requisition — gross can never push the
 		// invoice's cumulative REGULAR requisitioning past its own grandTotal,
 		// re-checked on any edit that changes it (the PO-direct-closes-once-invoiced
@@ -784,7 +862,11 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 		// drawdown rule createPaymentRequisition enforces — this row's own prior
 		// gross is excluded so editing its amount doesn't double-count itself.
 		if (purchase_invoice_id && existing.status !== 'REJECTED' && gross !== parseFloat(existing.gross_amount || 0)) {
-			const invoiceForCap = await PurchaseInvoice.findByPk(purchase_invoice_id, { attributes: ['grandTotal'], transaction });
+			const invoiceForCap = await PurchaseInvoice.findByPk(purchase_invoice_id, {
+				attributes: ['grandTotal'],
+				transaction,
+				lock: transaction.LOCK.UPDATE,
+			});
 			if (invoiceForCap) {
 				const alreadyRequisitioned =
 					(await PaymentRequisition.sum('gross_amount', {
