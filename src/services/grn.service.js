@@ -85,27 +85,42 @@ exports.getReceivedQtyForPoItem = async (purchaseOrderItemId, { transaction } = 
 };
 
 /**
- * Total monetary value actually received against a PO — Σ(received_qty × price)
- * across all its items, counting only active (non-cancelled) GRNs/MRNs.
+ * Total monetary value actually received against a PO — Σ over items of
+ * (received_qty / ordered_qty) × item.total, counting only active
+ * (non-cancelled) GRNs/MRNs.
  *
  * This is the ceiling Payment Requisition must cap itself at instead of the
  * PO's full grandTotal, so a partially-received (or short-closed) PO can't be
  * requisitioned for value that never arrived.
+ *
+ * Prorates the item's tax-inclusive `total` by received quantity rather than
+ * multiplying received_qty by the item's pre-tax `price` — price and
+ * grandTotal/total are in different bases (grandTotal includes GST/cess,
+ * price doesn't), so received_qty × price under-counts received value on any
+ * taxed PO and can leave the ceiling permanently below grandTotal even at
+ * 100% receipt. received_qty is capped at ordered qty per item so an
+ * over-receipt can't push the ceiling past the item's own total.
  */
 exports.getPoReceivedValue = async (poId, { transaction } = {}) => {
 	const rows = await sequelize.query(
 		`
-		SELECT poi.price AS price, COALESCE(SUM(gi.received_qty), 0) AS received_qty
+		SELECT poi.qty AS qty, poi.total AS total, COALESCE(SUM(gi.received_qty), 0) AS received_qty
 		FROM PurchaseOrderItems poi
 		LEFT JOIN GoodsReceiptNoteItems gi ON gi.purchase_order_item_id = poi.id
 		LEFT JOIN GoodsReceiptNotes g ON g.id = gi.goods_receipt_note_id AND g.status = 'active'
 		WHERE poi.purchase_order_id = :poId
-		GROUP BY poi.id, poi.price
+		GROUP BY poi.id, poi.qty, poi.total
 		`,
 		{ replacements: { poId }, type: QueryTypes.SELECT, transaction },
 	);
 
-	return rows.reduce((sum, row) => sum + (parseFloat(row.received_qty) || 0) * (parseFloat(row.price) || 0), 0);
+	return rows.reduce((sum, row) => {
+		const qty = parseFloat(row.qty) || 0;
+		const total = parseFloat(row.total) || 0;
+		if (qty <= 0) return sum;
+		const receivedQty = Math.min(parseFloat(row.received_qty) || 0, qty);
+		return sum + (receivedQty / qty) * total;
+	}, 0);
 };
 
 exports.createGRN = async (req) => {
