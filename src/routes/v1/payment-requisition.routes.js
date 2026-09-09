@@ -26,6 +26,11 @@ router.get('/:id', checkPermission('payment-requisition', 'view'), c.getPaymentR
 router.put('/:id', checkPermission('payment-requisition', 'edit'), c.updatePaymentRequisition);
 router.delete('/:id', checkPermission('payment-requisition', 'delete'), c.deletePaymentRequisition);
 
+// ── Workflow (Approve / Reject) ──────────────────────────────────────────────
+router.post('/:id/approve', checkPermission('payment-requisition', 'approver'), c.approvePaymentRequisition);
+router.post('/:id/reject', checkPermission('payment-requisition', 'approver'), c.rejectPaymentRequisition);
+router.get('/:id/workflow', checkPermission('payment-requisition', 'view'), c.getPaymentRequisitionWorkflow);
+
 // ── Deduction sub-resources ───────────────────────────────────────────────────
 // POST   /payment-requisitions/:id/deductions
 // PUT    /payment-requisitions/:id/deductions/:deductionId

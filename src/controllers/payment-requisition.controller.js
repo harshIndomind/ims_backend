@@ -29,6 +29,26 @@ exports.updatePaymentRequisition = catchAsync(async (req, res) => {
 	res.status(StatusCodes.OK).json({ message: 'Payment requisition updated successfully', data });
 });
 
+exports.approvePaymentRequisition = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { paymentType, transactionId, remark } = req.body;
+	const data = await paymentRequisitionService.approvePaymentRequisition(req, id, { paymentType, transactionId, remark });
+	res.status(StatusCodes.OK).json({ message: 'Payment requisition approved successfully', data });
+});
+
+exports.rejectPaymentRequisition = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const { remarks } = req.body;
+	const data = await paymentRequisitionService.rejectPaymentRequisition(req, id, remarks);
+	res.status(StatusCodes.OK).json({ message: 'Payment requisition rejected successfully', data });
+});
+
+exports.getPaymentRequisitionWorkflow = catchAsync(async (req, res) => {
+	const { id } = req.params;
+	const data = await paymentRequisitionService.getPaymentRequisitionWorkflow(req, id);
+	res.status(StatusCodes.OK).json({ message: 'Payment requisition workflow fetched successfully', data });
+});
+
 exports.deletePaymentRequisition = catchAsync(async (req, res) => {
 	const { id } = req.params;
 	await paymentRequisitionService.deletePaymentRequisition(req, id);
