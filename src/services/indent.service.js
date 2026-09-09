@@ -154,6 +154,7 @@ exports.createIndent = async (req, payload) => {
 						specification: i.specification,
 						stock_type: i.stock_type,
 						productSnapshot: i || null,
+						item_type: i?.productSnapshot?.item_type ?? i?.item_type ?? null,
 						rate_contract_id: i.rate_contract_id || null,
 					},
 					{ transaction },
@@ -257,6 +258,7 @@ exports.getAllIndents = async (req) => {
 		hasPurchaseQuantityIssue = false,
 		hasPendingReissueQty = false,
 		selectedBudgetId,
+		selectedItemTypeId,
 		sortOrder,
 	} = req.query;
 
@@ -320,7 +322,12 @@ exports.getAllIndents = async (req) => {
 	logger.debug("Get All Indents Where ", {where});
 	
 	const indentItemsWhere = {};
-	if (hasPurchaseQuantityIssue === 'true') {
+	// Service items always carry qty_for_purchase_order = 0 (VCP's verify-stock treats
+	// services as unlimited/always-fully-issued — see work-order.service.js's isServiceItem
+	// comment), so this check is meaningless for them and must be skipped when the caller is
+	// specifically asking for service items — otherwise it ANDs into an impossible condition
+	// and every service-only indent silently disappears from the result.
+	if (hasPurchaseQuantityIssue === 'true' && selectedItemTypeId !== 'service') {
 		indentItemsWhere['qty_for_purchase_order'] = {
 			[Op.gt]: 0,
 		};
@@ -334,6 +341,9 @@ exports.getAllIndents = async (req) => {
 	}
 	if (budgetId > 0) {
 		indentItemsWhere['budget_id'] = budgetId;
+	}
+	if (selectedItemTypeId && selectedItemTypeId !== 'all') {
+		indentItemsWhere['item_type'] = selectedItemTypeId;
 	}
 	logger.debug("indentItemsWhere ", {indentItemsWhere})
 	const filterOptions = {
@@ -1445,6 +1455,7 @@ exports.updateIndent = async (req, id, payload) => {
 						specification: i.specification,
 						stock_type: i.stock_type,
 						productSnapshot: i || null,
+						item_type: i?.productSnapshot?.item_type ?? i?.item_type ?? null,
 						rate_contract_id: i.rate_contract_id || null,
 					},
 					{ transaction },

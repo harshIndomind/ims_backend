@@ -63,6 +63,10 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.JSON,
 				allowNull: true,
 			},
+			item_type: {
+				type: DataTypes.ENUM('product', 'service'),
+				allowNull: true,
+			},
 			uom_id: {
 				type: DataTypes.INTEGER,
 				allowNull: true,
