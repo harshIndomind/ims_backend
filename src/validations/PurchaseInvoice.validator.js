@@ -13,7 +13,13 @@ exports.validationCreatePurchaseInvoice = [
 		.withMessage('document_type must be purchase_order or work_order'),
 	body('document_id').notEmpty().withMessage('document_id is required').isInt().withMessage('document_id must be a valid id').toInt(),
 
-	body('vendor_invoice_no').notEmpty().withMessage('vendor_invoice_no is required').isString().trim(),
+	body('vendor_invoice_no')
+		.notEmpty()
+		.withMessage('vendor_invoice_no is required')
+		.isString()
+		.trim()
+		.matches(/^[A-Za-z0-9]+([/-][A-Za-z0-9]+)*$/)
+		.withMessage('vendor_invoice_no must be alphanumeric — / or - allowed only between characters, no spaces or repeats'),
 	body('vendor_invoice_date').notEmpty().withMessage('vendor_invoice_date is required').isISO8601().withMessage('vendor_invoice_date must be a valid date'),
 	body('invoice_date').optional({ checkFalsy: true }).isISO8601().withMessage('invoice_date must be a valid date'),
 
