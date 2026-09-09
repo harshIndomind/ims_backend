@@ -120,8 +120,25 @@ async function fetchInvoiceOrThrow(id) {
 				as: 'charges',
 				include: [{ model: MasterOtherChargeType, as: 'chargeType' }],
 			},
-			{ model: PurchaseOrder, as: 'purchaseOrder', attributes: ['id', 'doc_number', 'poPrefix', 'poNo', 'poPostfix'] },
-			{ model: WorkOrder, as: 'workOrder', attributes: ['id', 'doc_number', 'woPrefix', 'woNo', 'woPostfix'] },
+			// payment_term_id and the item-level budget_id/budget_no are sideloaded
+			// here so Payment Requisition's Invoice-mode create/edit flow can
+			// auto-fill Term & Condition / Budget / Cost Center the same way it
+			// already does for a direct PO/WO selection (see
+			// payment-requisition-form.tsx) — an Invoice-anchored requisition still
+			// inherits its underlying PO/WO's budget and payment-term context, it
+			// just wasn't reachable before.
+			{
+				model: PurchaseOrder,
+				as: 'purchaseOrder',
+				attributes: ['id', 'doc_number', 'poPrefix', 'poNo', 'poPostfix', 'payment_term_id'],
+				include: [{ model: PurchaseOrderItem, as: 'items', attributes: ['id', 'budget_id', 'budget_no'] }],
+			},
+			{
+				model: WorkOrder,
+				as: 'workOrder',
+				attributes: ['id', 'doc_number', 'woPrefix', 'woNo', 'woPostfix', 'payment_term_id'],
+				include: [{ model: WorkOrderItem, as: 'items', attributes: ['id', 'budget_id', 'budget_no'] }],
+			},
 		],
 	});
 	if (!invoice) {

@@ -18,6 +18,8 @@ const analyticsRepo = require('../repository/payment-requisition-analytics.repos
 const tdsLiabilityRepo = require('../repository/tds-liability.repository');
 const tdsLiabilityService = require('./tds-liability.service');
 const auditLogService = require('./auditLog.service');
+const workflowEngine = require('./workflowEngine.service');
+const { createWorkflowDocumentService } = require('./workflowDocument.factory');
 const AppError = require('../utils/AppError');
 const logger = require('../utils/logger');
 const { StatusCodes } = require('http-status-codes');
@@ -26,10 +28,16 @@ const { generateSignedUrl } = require('../utils/s3Bucket');
 const fs = require('fs');
 const path = require('path');
 const { BASE_URL } = require('../config/serverConfig');
-const fetchPermissions = require('../helpers/fetchPermissions');
 const money = require('../utils/money');
 const { getTaxableRatio } = require('../utils/taxable-ratio.util');
 const { getPoReceivedValue } = require('./grn.service');
+
+const DOCUMENT_TYPE = 'payment_requisition';
+
+const prWorkflow = createWorkflowDocumentService({
+	documentType: DOCUMENT_TYPE,
+	fetchById: (id) => paymentRequisitionRepo.findById(id),
+});
 
 const TDS_DEDUCTION_TYPES = ['TDS', 'GST_TDS', 'WCT'];
 
@@ -366,7 +374,6 @@ exports.createPaymentRequisition = async (req, payload) => {
 			payment_term_id,
 			paymentType,
 			transactionId,
-			status,
 		} = payload;
 
 		const gross = parseFloat(grossAmount ?? requisitionAmount ?? 0);
@@ -554,7 +561,7 @@ exports.createPaymentRequisition = async (req, payload) => {
 				payment_term_id: payment_term_id ? Number(payment_term_id) : null,
 				payment_type: paymentType || null,
 				transaction_id: transactionId || null,
-				status: status || 'PENDING',
+				status: 'PENDING',
 			},
 			{ transaction },
 		);
@@ -569,27 +576,23 @@ exports.createPaymentRequisition = async (req, payload) => {
 			await deductionRepo.bulkCreate(rows, { transaction });
 		}
 
-		// A requisition can in principle be created pre-approved (status passed
-		// directly) rather than approved later via updatePaymentRequisition — keep
-		// the PO/WO sync and TDS liability creation consistent regardless of which
-		// path took it there.
-		const finalStatus = status || 'PENDING';
-		if (finalStatus === 'APPROVED') {
-			const { parentId, ParentModel } = await resolveSyncTarget({ po_id, wo_id, purchase_invoice_id }, transaction);
-			const paidAmount = poWoSyncAmount({ requisition_type: requisitionType, gross_amount: gross });
-			if (parentId && paidAmount !== null) {
-				await syncPoWoPaymentFields(ParentModel, parentId, user.org_id, paidAmount, transaction);
-			}
-			const freshRequisition = await paymentRequisitionRepo.findById(requisition.id, { transaction });
-			await tdsLiabilityService.createLiabilitiesForApprovedRequisition(req, freshRequisition, transaction);
-		}
+		// Enter the same generic workflow PO/WO use — a requisition can no longer be
+		// created pre-approved; it always starts PENDING at the PR Approver stage and
+		// moves to APPROVED only via approvePaymentRequisition below.
+		await workflowEngine.startInstance({
+			req,
+			documentType: DOCUMENT_TYPE,
+			documentId: requisition.id,
+			orgId: user.org_id,
+			transaction,
+		});
 
 		await auditLogService.record({
 			req,
 			entityType: 'payment_requisition',
 			entityId: requisition.id,
 			action: 'create',
-			newState: { requisition_no: requisitionNo, gross_amount: gross, total_deductions: totalDed, net_payable: netPayable, status: finalStatus },
+			newState: { requisition_no: requisitionNo, gross_amount: gross, total_deductions: totalDed, net_payable: netPayable, status: 'PENDING' },
 			transaction,
 		});
 
@@ -658,15 +661,21 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 	try {
 		const { org_id } = req.user;
 
-		// Lock the requisition row itself first so two concurrent updates (e.g. a
-		// double-click approve, or two approvers racing) on the same PR serialize
-		// instead of both reading the same "not yet approved" oldStatus and both
-		// applying their PO/WO sync / TDS liability creation.
+		// Lock the requisition row itself first so two concurrent edits on the same
+		// PR serialize instead of racing on the same `existing` snapshot.
 		const lockedRow = await PaymentRequisition.findOne({ where: { id }, transaction, lock: transaction.LOCK.UPDATE });
 		if (!lockedRow || lockedRow.org_id !== org_id) {
 			throw new AppError('Payment requisition not found', StatusCodes.NOT_FOUND);
 		}
 		const existing = await paymentRequisitionRepo.findById(id, { transaction });
+
+		// Locked the same way PO/WO are — once the workflow has moved past the
+		// editable stage (i.e. this requisition is APPROVED), the maker can no
+		// longer edit it. Status itself is no longer part of this payload at all;
+		// it only ever changes via approvePaymentRequisition/rejectPaymentRequisition.
+		if (!(await workflowEngine.isEditable({ documentType: DOCUMENT_TYPE, documentId: id }))) {
+			throw new AppError('This Payment Requisition can no longer be edited at its current workflow stage', StatusCodes.FORBIDDEN);
+		}
 
 		const {
 			requisitionAgainst,
@@ -691,12 +700,8 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 			activityId,
 			budgetId,
 			paymentDate,
-			remark,
 			termCondition,
 			payment_term_id,
-			paymentType,
-			transactionId,
-			status,
 		} = payload;
 
 		const gross = parseFloat(grossAmount ?? requisitionAmount ?? existing.gross_amount ?? existing.requisition_amount ?? 0);
@@ -739,36 +744,12 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 			throw new AppError('total_deductions exceeds gross_amount', StatusCodes.UNPROCESSABLE_ENTITY);
 		}
 
-		const userPermissions = await fetchPermissions(req);
-		const isApprover = userPermissions.includes('payment-requisition:approver');
-
-		const authorizedByUpdate = isApprover
-			? { authorized_by_id: req.user.id, authorized_by: { id: req.user.id, name: req.user.name, email: req.user.email } }
-			: { authorized_by_id: existing.authorized_by_id, authorized_by: existing.authorized_by };
-
-		const approverOnlyFields = isApprover
-			? { status: status || existing.status, payment_type: paymentType || null, transaction_id: transactionId || null, remark: remark || null }
-			: { status: existing.status, payment_type: existing.payment_type, transaction_id: existing.transaction_id, remark: existing.remark };
-
-		// authorized_at records the moment status genuinely transitions to APPROVED/REJECTED,
-		// unlike authorized_by(_id) which is refreshed on every approver edit.
-		const isStatusTransition =
-			isApprover &&
-			approverOnlyFields.status !== existing.status &&
-			['APPROVED', 'REJECTED'].includes(approverOnlyFields.status);
-		const authorizedAtUpdate = {
-			authorized_at: isStatusTransition ? new Date() : existing.authorized_at,
-		};
-
-		const oldStatus = existing.status;
-		const newStatus = approverOnlyFields.status;
-
 		// Re-validate the receipt-value cap if this PO-direct requisition's gross
 		// amount is changing and it isn't rejected — same "subtract this
 		// requisition's own prior contribution before comparing" pattern as the
 		// retention check below, so editing gross_amount can't silently bypass
 		// the cap createPaymentRequisition already enforces at creation time.
-		if (po_id && newStatus !== 'REJECTED' && gross !== parseFloat(existing.gross_amount || 0)) {
+		if (po_id && existing.status !== 'REJECTED' && gross !== parseFloat(existing.gross_amount || 0)) {
 			const poForCap = await PurchaseOrder.findByPk(po_id, {
 				attributes: ['grandTotal'],
 				transaction,
@@ -802,7 +783,7 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 		// PRs against the same invoice are counted too, per the multi-PR partial
 		// drawdown rule createPaymentRequisition enforces — this row's own prior
 		// gross is excluded so editing its amount doesn't double-count itself.
-		if (purchase_invoice_id && newStatus !== 'REJECTED' && gross !== parseFloat(existing.gross_amount || 0)) {
+		if (purchase_invoice_id && existing.status !== 'REJECTED' && gross !== parseFloat(existing.gross_amount || 0)) {
 			const invoiceForCap = await PurchaseInvoice.findByPk(purchase_invoice_id, { attributes: ['grandTotal'], transaction });
 			if (invoiceForCap) {
 				const alreadyRequisitioned =
@@ -835,7 +816,7 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 			{ po_id, wo_id, purchase_invoice_id },
 			transaction,
 		);
-		if (dedList !== null && retentionOrderId && newStatus !== 'REJECTED') {
+		if (dedList !== null && retentionOrderId && existing.status !== 'REJECTED') {
 			const retentionDeds = dedList.filter((d) => d.deduction_type === 'RETENTION');
 			const newRetentionAmt = money.sum(retentionDeds.map((d) => d.amount));
 			if (finalRequisitionType === 'RETENTION_RELEASE' || newRetentionAmt > 0) {
@@ -875,18 +856,6 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 			}
 		}
 
-		// Block reversing an APPROVED requisition once any TDS liability it
-		// generated has already been (partially) settled — that money has left
-		// the org's account and must be unwound via settlement reversal first.
-		if (oldStatus === 'APPROVED' && newStatus !== 'APPROVED' && isStatusTransition) {
-			await tdsLiabilityService.cancelLiabilitiesForRequisition(
-				req,
-				id,
-				remark || `Requisition status changed from APPROVED to ${newStatus}`,
-				transaction,
-			);
-		}
-
 		await paymentRequisitionRepo.updateById(
 			id,
 			{
@@ -914,13 +883,10 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 				project_name: projectName || null,
 				activity_id: activityId || null,
 				budget_id: budgetId || null,
-				...authorizedByUpdate,
-				...authorizedAtUpdate,
 				updated_by_id: req.user.id,
 				payment_date: paymentDate || null,
 				term_condition: termCondition || null,
 				payment_term_id: payment_term_id ? Number(payment_term_id) : existing.payment_term_id || null,
-				...approverOnlyFields,
 			},
 			{ transaction },
 		);
@@ -936,43 +902,18 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 			}
 		}
 
-		// Sync totalPaid on parent PO/WO when approval status changes. RETENTION_RELEASE
-		// requisitions are skipped on both sides (poWoSyncAmount returns null for them) —
-		// see poWoSyncAmount's doc comment for why.
-		const { parentId, ParentModel } = await resolveSyncTarget(
-			{
-				po_id: po_id || existing.po_id,
-				wo_id: wo_id || existing.wo_id,
-				purchase_invoice_id: purchase_invoice_id || existing.purchase_invoice_id,
-			},
-			transaction,
-		);
-		const oldPaidAmount = poWoSyncAmount(existing);
-		const newPaidAmount = poWoSyncAmount({ requisition_type: finalRequisitionType, gross_amount: gross });
-
-		if (parentId) {
-			let amountDelta = 0;
-			if (oldStatus === 'APPROVED' && oldPaidAmount !== null) amountDelta -= oldPaidAmount;
-			if (newStatus === 'APPROVED' && newPaidAmount !== null) amountDelta += newPaidAmount;
-			if (amountDelta !== 0) {
-				await syncPoWoPaymentFields(ParentModel, parentId, org_id, amountDelta, transaction);
-			}
-		}
-
-		// Generate TDS liabilities the moment this requisition first becomes
-		// APPROVED (idempotent — safe even if called again on a no-op re-save).
-		if (newStatus === 'APPROVED' && oldStatus !== 'APPROVED') {
-			const freshRequisition = await paymentRequisitionRepo.findById(id, { transaction });
-			await tdsLiabilityService.createLiabilitiesForApprovedRequisition(req, freshRequisition, transaction);
-		}
+		// No PO/WO totalPaid sync or TDS liability creation here — status can no
+		// longer change via this endpoint (see approvePaymentRequisition /
+		// rejectPaymentRequisition below), and this requisition can't reach here
+		// while APPROVED anyway (blocked by the isEditable check above).
 
 		await auditLogService.record({
 			req,
 			entityType: 'payment_requisition',
 			entityId: id,
 			action: 'update',
-			previousState: { status: oldStatus, gross_amount: existing.gross_amount, net_payable: existing.net_payable },
-			newState: { status: newStatus, gross_amount: gross, net_payable: netPayable },
+			previousState: { gross_amount: existing.gross_amount, net_payable: existing.net_payable },
+			newState: { gross_amount: gross, net_payable: netPayable },
 			transaction,
 		});
 
@@ -988,6 +929,128 @@ exports.updatePaymentRequisition = async (req, id, payload) => {
 };
 
 // ---------------------------------------------------------------------------
+// Approve / Reject — the workflow actions, distinct from the maker's own edits
+// above. Mirrors purchase-order.service.js's approvePurchaseOrder/rejectPurchaseOrder,
+// except PR's approve action also records how the payment was actually executed
+// (Payment Type, Transaction ID / UTR) — PO/WO's approve never needs that, so it
+// can't be folded into workflowDocument.factory.js's generic reject() (which would
+// also try to write the workflow engine's lowercase 'rejected' straight onto this
+// model's uppercase PENDING/APPROVED/REJECTED enum).
+// ---------------------------------------------------------------------------
+
+exports.approvePaymentRequisition = async (req, id, { paymentType, transactionId, remark } = {}) => {
+	const requisition = await prWorkflow.fetchOrThrow(id);
+	await prWorkflow.assertCanAct(req, requisition);
+
+	const transaction = await sequelize.transaction();
+	try {
+		await workflowEngine.advanceStage({
+			req,
+			documentType: DOCUMENT_TYPE,
+			documentId: id,
+			action: 'approved',
+			remarks: remark || null,
+			transaction,
+		});
+
+		await paymentRequisitionRepo.updateById(
+			id,
+			{
+				status: 'APPROVED',
+				authorized_by_id: req.user.id,
+				authorized_by: { id: req.user.id, name: req.user.name, email: req.user.email },
+				authorized_at: new Date(),
+				payment_type: paymentType || null,
+				transaction_id: transactionId || null,
+				remark: remark || null,
+				updated_by_id: req.user.id,
+			},
+			{ transaction },
+		);
+
+		// Same PO/WO totalPaid sync and TDS liability creation that used to live
+		// inline in updatePaymentRequisition's status-transition branch.
+		const { parentId, ParentModel } = await resolveSyncTarget(
+			{ po_id: requisition.po_id, wo_id: requisition.wo_id, purchase_invoice_id: requisition.purchase_invoice_id },
+			transaction,
+		);
+		const paidAmount = poWoSyncAmount(requisition);
+		if (parentId && paidAmount !== null) {
+			await syncPoWoPaymentFields(ParentModel, parentId, req.user.org_id, paidAmount, transaction);
+		}
+
+		const freshRequisition = await paymentRequisitionRepo.findById(id, { transaction });
+		await tdsLiabilityService.createLiabilitiesForApprovedRequisition(req, freshRequisition, transaction);
+
+		await auditLogService.record({
+			req,
+			entityType: 'payment_requisition',
+			entityId: Number(id),
+			action: 'approved',
+			remarks: remark,
+			newState: { status: 'APPROVED', payment_type: paymentType || null, transaction_id: transactionId || null },
+			transaction,
+		});
+
+		await transaction.commit();
+	} catch (error) {
+		await transaction.rollback();
+		throw error;
+	}
+
+	return paymentRequisitionRepo.findById(id);
+};
+
+exports.rejectPaymentRequisition = async (req, id, remarks) => {
+	if (!remarks || !remarks.trim()) {
+		throw new AppError('Remarks are required to reject a Payment Requisition', StatusCodes.BAD_REQUEST);
+	}
+
+	const requisition = await prWorkflow.fetchOrThrow(id);
+	await prWorkflow.assertCanAct(req, requisition);
+
+	const transaction = await sequelize.transaction();
+	try {
+		await workflowEngine.rejectInstance({ req, documentType: DOCUMENT_TYPE, documentId: id, remarks, transaction });
+
+		await paymentRequisitionRepo.updateById(
+			id,
+			{
+				status: 'REJECTED',
+				authorized_by_id: req.user.id,
+				authorized_by: { id: req.user.id, name: req.user.name, email: req.user.email },
+				authorized_at: new Date(),
+				remark: remarks,
+				updated_by_id: req.user.id,
+			},
+			{ transaction },
+		);
+
+		await auditLogService.record({
+			req,
+			entityType: 'payment_requisition',
+			entityId: Number(id),
+			action: 'rejected',
+			remarks,
+			newState: { status: 'REJECTED' },
+			transaction,
+		});
+
+		await transaction.commit();
+	} catch (error) {
+		await transaction.rollback();
+		throw error;
+	}
+
+	return paymentRequisitionRepo.findById(id);
+};
+
+exports.getPaymentRequisitionWorkflow = async (req, id) => {
+	await prWorkflow.fetchOrThrow(id);
+	return prWorkflow.getWorkflow(req, id);
+};
+
+// ---------------------------------------------------------------------------
 // Deduction CRUD (individual endpoints)
 // ---------------------------------------------------------------------------
 
@@ -999,6 +1062,9 @@ exports.addDeduction = async (req, requisitionId, deductionPayload) => {
 
 		if (!requisition || requisition.org_id !== org_id) {
 			throw new AppError('Payment requisition not found', StatusCodes.NOT_FOUND);
+		}
+		if (!(await workflowEngine.isEditable({ documentType: DOCUMENT_TYPE, documentId: requisitionId }))) {
+			throw new AppError('This Payment Requisition can no longer be edited at its current workflow stage', StatusCodes.FORBIDDEN);
 		}
 
 		const { orderId, isPo: retentionIsPo } = await resolveRetentionOrderId(
@@ -1096,6 +1162,9 @@ exports.updateDeduction = async (req, requisitionId, deductionId, deductionPaylo
 
 		if (!requisition || requisition.org_id !== org_id) {
 			throw new AppError('Payment requisition not found', StatusCodes.NOT_FOUND);
+		}
+		if (!(await workflowEngine.isEditable({ documentType: DOCUMENT_TYPE, documentId: requisitionId }))) {
+			throw new AppError('This Payment Requisition can no longer be edited at its current workflow stage', StatusCodes.FORBIDDEN);
 		}
 
 		const deduction = await deductionRepo.findById(deductionId, { transaction });
@@ -1195,6 +1264,9 @@ exports.deleteDeduction = async (req, requisitionId, deductionId) => {
 
 		if (!requisition || requisition.org_id !== org_id) {
 			throw new AppError('Payment requisition not found', StatusCodes.NOT_FOUND);
+		}
+		if (!(await workflowEngine.isEditable({ documentType: DOCUMENT_TYPE, documentId: requisitionId }))) {
+			throw new AppError('This Payment Requisition can no longer be edited at its current workflow stage', StatusCodes.FORBIDDEN);
 		}
 
 		const deduction = await deductionRepo.findById(deductionId, { transaction });

@@ -8,6 +8,31 @@ jest.mock('../../utils/s3Bucket', () => ({ generateSignedUrl: jest.fn() }));
 jest.mock('../../helpers/fetchPermissions', () => jest.fn().mockResolvedValue(['payment-requisition:approver']));
 jest.mock('../auditLog.service', () => ({ record: jest.fn().mockResolvedValue(undefined) }));
 
+// payment-requisition.service.js now goes through the same generic workflow engine
+// PO/WO use (create -> startInstance, update -> isEditable gate, approve/reject ->
+// advanceStage/rejectInstance + canActOnCurrentStage via workflowDocument.factory).
+// Mocked the same way purchase-order.service.test.js mocks it, so these tests stay
+// focused on payment-requisition.service.js's own financial logic rather than
+// exercising the real workflow engine against mocked Workflow* models that don't exist
+// in the models/index mock below.
+const mockIsEditable = jest.fn().mockResolvedValue(true);
+const mockStartInstance = jest.fn().mockResolvedValue({ status: 'in_progress' });
+const mockAdvanceStage = jest.fn().mockResolvedValue({ status: 'approved' });
+const mockRejectInstance = jest.fn().mockResolvedValue({ status: 'rejected' });
+const mockCanActOnCurrentStage = jest.fn().mockResolvedValue({ allowed: true });
+jest.mock('../workflowEngine.service', () => ({
+	isEditable: (...args) => mockIsEditable(...args),
+	startInstance: (...args) => mockStartInstance(...args),
+	advanceStage: (...args) => mockAdvanceStage(...args),
+	rejectInstance: (...args) => mockRejectInstance(...args),
+	canActOnCurrentStage: (...args) => mockCanActOnCurrentStage(...args),
+	findInstance: jest.fn(),
+	getInstanceWithStages: jest.fn(),
+	getHistory: jest.fn(),
+	getTimeline: jest.fn(),
+	computeDisplayStatus: jest.fn(),
+}));
+
 const mockCreateLiabilities = jest.fn().mockResolvedValue([]);
 const mockCancelLiabilities = jest.fn().mockResolvedValue([]);
 jest.mock('../tds-liability.service', () => ({
@@ -110,6 +135,11 @@ function baseReq(overrides = {}) {
 beforeEach(() => {
 	jest.clearAllMocks();
 	sequelize.transaction.mockResolvedValue(mockTransaction);
+	// clearAllMocks() only clears call history, not a previously-set default
+	// implementation — reset these back to their happy-path default every test so
+	// a test that overrides one (e.g. "not eligible") can't leak into the next.
+	mockIsEditable.mockResolvedValue(true);
+	mockCanActOnCurrentStage.mockResolvedValue({ allowed: true });
 	mockPrCreate.mockResolvedValue({ id: 501, org_id: 7 });
 	mockPrFindById.mockResolvedValue({ id: 501, org_id: 7, po_id: 200, gross_amount: 100000, net_payable: 90000, status: 'PENDING', deductions: [] });
 	// Default: PO received-value and grandTotal far exceed any test's gross
@@ -242,9 +272,9 @@ describe('createPaymentRequisition — TDS is computed on the taxable value, not
 	});
 });
 
-describe('createPaymentRequisition — pre-approved creation', () => {
-	test('creating directly with status APPROVED syncs PO totals and creates TDS liabilities', async () => {
-		mockPrFindById.mockResolvedValue({ id: 501, org_id: 7, po_id: 200, gross_amount: 100000, net_payable: 98000, status: 'APPROVED', deductions: [] });
+describe('createPaymentRequisition — always starts PENDING', () => {
+	test('a client-supplied status is ignored — the row is created PENDING and enters the workflow, no PO sync or TDS liability yet', async () => {
+		mockPrFindById.mockResolvedValue({ id: 501, org_id: 7, po_id: 200, gross_amount: 100000, net_payable: 98000, status: 'PENDING', deductions: [] });
 		mockPurchaseOrderFindOne.mockResolvedValue({ grandTotal: 100000, totalPaid: 0 });
 
 		await prService.createPaymentRequisition(baseReq(), {
@@ -252,11 +282,86 @@ describe('createPaymentRequisition — pre-approved creation', () => {
 			poWoId: 200,
 			grossAmount: 100000,
 			deductions: [{ deduction_type: 'TDS', amount: 2000 }],
-			status: 'APPROVED',
+			status: 'APPROVED', // ignored — create no longer accepts a pre-approved status
 		});
 
-		expect(mockPurchaseOrderUpdate).toHaveBeenCalled();
-		expect(mockCreateLiabilities).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 501 }), mockTransaction);
+		expect(mockPrCreate).toHaveBeenCalledWith(expect.objectContaining({ status: 'PENDING' }), expect.anything());
+		expect(mockStartInstance).toHaveBeenCalledWith(
+			expect.objectContaining({ documentType: 'payment_requisition', documentId: 501, orgId: 7 }),
+		);
+		expect(mockPurchaseOrderUpdate).not.toHaveBeenCalled();
+		expect(mockCreateLiabilities).not.toHaveBeenCalled();
+	});
+});
+
+describe('approvePaymentRequisition', () => {
+	test('advances the workflow, records payment execution fields, syncs PO totals, and creates TDS liabilities', async () => {
+		mockPrFindById.mockResolvedValue({ id: 501, org_id: 7, po_id: 200, wo_id: null, purchase_invoice_id: null, gross_amount: 100000, net_payable: 98000, status: 'PENDING', requisition_type: 'REGULAR', deductions: [] });
+		mockPurchaseOrderFindOne.mockResolvedValue({ grandTotal: 100000, totalPaid: 0 });
+
+		await prService.approvePaymentRequisition(baseReq(), 501, {
+			paymentType: 'NEFT',
+			transactionId: 'UTR123',
+			remark: 'Paid via NEFT',
+		});
+
+		expect(mockCanActOnCurrentStage).toHaveBeenCalled();
+		expect(mockAdvanceStage).toHaveBeenCalledWith(
+			expect.objectContaining({ documentType: 'payment_requisition', documentId: 501, action: 'approved' }),
+		);
+		expect(mockPrUpdateById).toHaveBeenCalledWith(
+			501,
+			expect.objectContaining({ status: 'APPROVED', payment_type: 'NEFT', transaction_id: 'UTR123' }),
+			expect.anything(),
+		);
+		expect(mockPurchaseOrderUpdate).toHaveBeenCalledWith(
+			expect.objectContaining({ totalPaid: 100000 }),
+			expect.anything(),
+		);
+		expect(mockCreateLiabilities).toHaveBeenCalledTimes(1);
+		expect(mockTransaction.commit).toHaveBeenCalled();
+	});
+
+	test('rejects when the acting user is not eligible for the current stage', async () => {
+		mockPrFindById.mockResolvedValue({ id: 501, org_id: 7, po_id: 200, gross_amount: 100000, status: 'PENDING', deductions: [] });
+		mockCanActOnCurrentStage.mockResolvedValue({ allowed: false, reason: 'not eligible' });
+
+		await expect(prService.approvePaymentRequisition(baseReq(), 501, {})).rejects.toThrow(/not eligible/);
+		expect(mockAdvanceStage).not.toHaveBeenCalled();
+	});
+});
+
+describe('rejectPaymentRequisition', () => {
+	test('requires non-empty remarks', async () => {
+		await expect(prService.rejectPaymentRequisition(baseReq(), 501, '  ')).rejects.toThrow(/Remarks are required/);
+		expect(mockRejectInstance).not.toHaveBeenCalled();
+	});
+
+	test('rejects the workflow instance and flips status to REJECTED', async () => {
+		mockPrFindById.mockResolvedValue({ id: 501, org_id: 7, po_id: 200, gross_amount: 100000, status: 'PENDING', deductions: [] });
+
+		await prService.rejectPaymentRequisition(baseReq(), 501, 'Missing supporting invoice');
+
+		expect(mockRejectInstance).toHaveBeenCalledWith(
+			expect.objectContaining({ documentType: 'payment_requisition', documentId: 501, remarks: 'Missing supporting invoice' }),
+		);
+		expect(mockPrUpdateById).toHaveBeenCalledWith(
+			501,
+			expect.objectContaining({ status: 'REJECTED', remark: 'Missing supporting invoice' }),
+			expect.anything(),
+		);
+		expect(mockTransaction.commit).toHaveBeenCalled();
+	});
+});
+
+describe('updatePaymentRequisition — locked once no longer editable', () => {
+	test('rejects the edit once the workflow reports this requisition is not editable (e.g. already APPROVED)', async () => {
+		mockPaymentRequisitionFindOne.mockResolvedValue({ id: 501, org_id: 7 });
+		mockPrFindById.mockResolvedValue({ id: 501, org_id: 7, po_id: 200, status: 'APPROVED', deductions: [] });
+		mockIsEditable.mockResolvedValue(false);
+
+		await expect(prService.updatePaymentRequisition(baseReq(), 501, { grossAmount: 50000 })).rejects.toThrow(/can no longer be edited/);
+		expect(mockTransaction.rollback).toHaveBeenCalled();
 	});
 });
 
@@ -291,11 +396,7 @@ describe('regression: PO/WO totalPaid must reach grandTotal once fully requisiti
 				authorized_by_id: null,
 				deductions: [],
 			});
-			return prService.updatePaymentRequisition(baseReq(), id, {
-				status: 'APPROVED',
-				grossAmount: 20160,
-				deductions: [{ deduction_type: 'TDS', amount: 1008 }],
-			});
+			return prService.approvePaymentRequisition(baseReq(), id, {});
 		}
 
 		await approveRequisition(12);
@@ -310,57 +411,6 @@ describe('regression: PO/WO totalPaid must reach grandTotal once fully requisiti
 			expect.objectContaining({ totalPaid: 40320, remainingAmount: 0, paymentStatus: 'PAID' }),
 			expect.anything(),
 		);
-	});
-});
-
-describe('updatePaymentRequisition — approval triggers liability creation', () => {
-	test('PENDING -> APPROVED creates TDS liabilities exactly once', async () => {
-		mockPaymentRequisitionFindOne.mockResolvedValue({ id: 501, org_id: 7 });
-		mockPrFindById.mockResolvedValue({
-			id: 501,
-			org_id: 7,
-			po_id: 200,
-			wo_id: null,
-			gross_amount: 100000,
-			total_deductions: 2000,
-			net_payable: 98000,
-			status: 'PENDING',
-			requisition_type: 'REGULAR',
-			requisition_against: 'PO',
-			authorized_by_id: null,
-			deductions: [],
-		});
-		mockPurchaseOrderFindOne.mockResolvedValue({ grandTotal: 100000, totalPaid: 0 });
-
-		await prService.updatePaymentRequisition(baseReq(), 501, { status: 'APPROVED' });
-
-		expect(mockCreateLiabilities).toHaveBeenCalledTimes(1);
-		expect(mockTransaction.commit).toHaveBeenCalled();
-	});
-});
-
-describe('updatePaymentRequisition — reversal blocked once TDS is settled', () => {
-	test('APPROVED -> REJECTED is blocked when cancelLiabilitiesForRequisition rejects', async () => {
-		mockPaymentRequisitionFindOne.mockResolvedValue({ id: 501, org_id: 7 });
-		mockPrFindById.mockResolvedValue({
-			id: 501,
-			org_id: 7,
-			po_id: 200,
-			wo_id: null,
-			gross_amount: 100000,
-			total_deductions: 2000,
-			net_payable: 98000,
-			status: 'APPROVED',
-			requisition_type: 'REGULAR',
-			requisition_against: 'PO',
-			authorized_by_id: 1,
-			deductions: [],
-		});
-		mockCancelLiabilities.mockRejectedValue(new Error('already been settled with the government'));
-
-		await expect(prService.updatePaymentRequisition(baseReq(), 501, { status: 'REJECTED' })).rejects.toThrow(/already been settled/);
-
-		expect(mockTransaction.rollback).toHaveBeenCalled();
 	});
 });
 
@@ -511,7 +561,7 @@ describe('regression: syncPoWoPaymentFields caps remainingAmount at received val
 		mockPurchaseOrderFindOne.mockResolvedValue({ grandTotal: 100000, totalPaid: 0 });
 		mockSequelizeQuery.mockResolvedValue([{ price: 100, received_qty: 600 }]); // 60000 received
 
-		await prService.updatePaymentRequisition(baseReq(), 501, { status: 'APPROVED', grossAmount: 60000 });
+		await prService.approvePaymentRequisition(baseReq(), 501, {});
 
 		expect(mockPurchaseOrderUpdate).toHaveBeenCalledWith(
 			expect.objectContaining({ totalPaid: 60000, remainingAmount: 0, paymentStatus: 'PAID' }),
@@ -601,24 +651,27 @@ describe('createPaymentRequisition — Invoice path', () => {
 		expect(mockTransaction.commit).toHaveBeenCalled();
 	});
 
-	it('creates successfully and syncs the underlying PO (not a parallel ledger) when approved', async () => {
+	it('creates PENDING, and approving it syncs the underlying PO (not a parallel ledger)', async () => {
 		mockPurchaseInvoiceFindOne.mockResolvedValue(approvedInvoice());
 		mockPaymentRequisitionSum.mockResolvedValue(0);
 		mockPurchaseInvoiceFindByPk.mockResolvedValue({ purchase_order_id: 50 });
 		mockPurchaseOrderFindOne.mockResolvedValue({ grandTotal: 100000, totalPaid: 0 });
-		mockPrFindById.mockResolvedValue({ id: 501, org_id: 7, purchase_invoice_id: 900, gross_amount: 60000, net_payable: 60000, status: 'APPROVED', deductions: [] });
+		mockPrFindById.mockResolvedValue({ id: 501, org_id: 7, purchase_invoice_id: 900, gross_amount: 60000, net_payable: 60000, status: 'PENDING', requisition_type: 'REGULAR', deductions: [] });
 
 		await prService.createPaymentRequisition(baseReq(), {
 			requisitionAgainst: 'Invoice',
 			poWoId: 900,
 			grossAmount: 60000,
-			status: 'APPROVED',
 		});
 
 		expect(mockPrCreate).toHaveBeenCalledWith(
-			expect.objectContaining({ purchase_invoice_id: 900, po_id: null, wo_id: null }),
+			expect.objectContaining({ purchase_invoice_id: 900, po_id: null, wo_id: null, status: 'PENDING' }),
 			expect.anything(),
 		);
+		expect(mockPurchaseOrderUpdate).not.toHaveBeenCalled();
+
+		await prService.approvePaymentRequisition(baseReq(), 501, {});
+
 		// Sync resolves through the invoice's own purchase_order_id, landing on
 		// the PO's totalPaid — not a separate per-invoice counter.
 		expect(mockPurchaseOrderUpdate).toHaveBeenCalledWith(
