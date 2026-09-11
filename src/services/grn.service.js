@@ -139,6 +139,19 @@ exports.createGRN = async (req) => {
 
 	const poItemsById = new Map(po.items.map((i) => [i.id, i]));
 
+	// MRN date must fall on or after the PO's own date, and — when this PO required QC — on or
+	// after the approval date of whichever QC round each line actually draws from (checked
+	// per-line below, since a single MRN can span multiple QC rounds). Compared as calendar
+	// dates (YYYY-MM-DD) since grn_date arrives as a date-only string with no time component.
+	const grnDateOnly = grn_date ? String(grn_date).slice(0, 10) : new Date().toISOString().slice(0, 10);
+	const poDateOnly = new Date(po.createdAt).toISOString().slice(0, 10);
+	if (grnDateOnly < poDateOnly) {
+		throw new AppError(
+			`MRN date (${grnDateOnly}) cannot be before this Purchase Order's date (${poDateOnly})`,
+			StatusCodes.BAD_REQUEST,
+		);
+	}
+
 	// When this PO required QC, GRN creation is gated on an approved inspection — see
 	// resolveQcInspectionItem below. Non-QC POs (the vast majority today) take the exact same
 	// path as before this gate existed.
@@ -218,6 +231,17 @@ exports.createGRN = async (req) => {
 		let qcInspectionItemId = null;
 		if (qcRequired) {
 			const { qcItem, alreadyDrawn } = await resolveQcInspectionItem(poItem, input);
+
+			if (qcItem.inspection.approved_at) {
+				const qcDateOnly = new Date(qcItem.inspection.approved_at).toISOString().slice(0, 10);
+				if (grnDateOnly < qcDateOnly) {
+					throw new AppError(
+						`MRN date (${grnDateOnly}) cannot be before the QC approval date (${qcDateOnly}) of inspection ${qcItem.inspection.qc_no}`,
+						StatusCodes.BAD_REQUEST,
+					);
+				}
+			}
+
 			const acceptedQty = parseFloat(qcItem.accepted_qty);
 			if (alreadyDrawn + effectiveReceivedQty > acceptedQty) {
 				throw new AppError(
@@ -382,7 +406,13 @@ exports.getReceivableLinesForPurchaseOrder = async (req, purchaseOrderId) => {
 				};
 			}),
 		);
-		return { po_qc_check: false, lines: lines.filter((l) => l.remaining_qty > 0.001), awaiting_qc: [] };
+		return {
+			po_qc_check: false,
+			po_created_at: po.createdAt,
+			qc_min_date: null,
+			lines: lines.filter((l) => l.remaining_qty > 0.001),
+			awaiting_qc: [],
+		};
 	}
 
 	const poItemsById = new Map(po.items.map((i) => [i.id, i]));
@@ -468,7 +498,16 @@ exports.getReceivableLinesForPurchaseOrder = async (req, purchaseOrderId) => {
 			}),
 	);
 
-	return { po_qc_check: true, lines: receivable, awaiting_qc };
+	// The MRN date picker's lower bound when QC is required: the earliest approval date among
+	// the QC rounds this MRN can actually draw from. Only a lower bound hint for the UI — the
+	// authoritative per-line check happens in createGRN against each line's own QC round.
+	const receivableQcIds = new Set(receivable.map((l) => l.qc_inspection_item_id));
+	const receivableQcApprovedDates = qcItems
+		.filter((qi) => receivableQcIds.has(qi.id) && qi.inspection.approved_at)
+		.map((qi) => new Date(qi.inspection.approved_at).getTime());
+	const qcMinDate = receivableQcApprovedDates.length ? new Date(Math.min(...receivableQcApprovedDates)) : null;
+
+	return { po_qc_check: true, po_created_at: po.createdAt, qc_min_date: qcMinDate, lines: receivable, awaiting_qc };
 };
 
 exports.getAllGRNs = async (req) => {
