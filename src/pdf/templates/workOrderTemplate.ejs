@@ -227,6 +227,21 @@
             font-weight: 600;
         }
 
+        .group-header-row td {
+            background-color: #dbe9f5;
+            font-weight: 700;
+            font-size: 11px;
+            text-align: left;
+        }
+
+        .group-desc-row td {
+            background-color: #f2f7fb;
+            font-style: italic;
+            font-size: 10px;
+            text-align: left;
+            color: #555;
+        }
+
 
         /* Totals */
         .totals {
@@ -620,10 +635,73 @@
                         </thead>
 
                         <tbody>
-                             <% invoice.productItems.forEach((item, index)=> { %>
+                            <%
+                                // When groupByProductGroup is on, cluster items under a header (group name)
+                                // + description row per Product Group (vcp-service ProductGroups, fetched
+                                // per-item in work-order.service.js). An item in more than one group is
+                                // shown once, under its is_primary-flagged group (set on the product in vcp),
+                                // to avoid duplicate/double-counted rows.
+                                // Items with no group render as plain rows with no header, same as before.
+                                // Groups are lettered in appearance order (A, B, C, ... Z, AA, AB, ...) and
+                                // their items numbered A.1, A.2, ... so a multi-line-item product under one
+                                // group reads as a cluster instead of just continuing the flat 1,2,3 count.
+                                const toLetter = (n) => {
+                                    let s = '';
+                                    while (n > 0) {
+                                        s = String.fromCharCode(65 + ((n - 1) % 26)) + s;
+                                        n = Math.floor((n - 1) / 26);
+                                    }
+                                    return s;
+                                };
+                                let displayRows = [];
+                                if (invoice.groupByProductGroup) {
+                                    const groupMap = new Map();
+                                    const groupOrder = [];
+                                    const ungrouped = [];
+                                    invoice.productItems.forEach((item) => {
+                                        // A product can belong to more than one group; whichever one is
+                                        // flagged is_primary (set on the product's group assignment in vcp)
+                                        // is the one used for clustering here. Falls back to array position
+                                        // only for legacy data with no primary flag set at all.
+                                        const groups = item.product_groups || [];
+                                        const group = groups.find((g) => g.is_primary) || groups[0];
+                                        if (!group) {
+                                            ungrouped.push(item);
+                                            return;
+                                        }
+                                        if (!groupMap.has(group.id)) {
+                                            groupMap.set(group.id, { name: group.name, description: group.description, items: [] });
+                                            groupOrder.push(group.id);
+                                        }
+                                        groupMap.get(group.id).items.push(item);
+                                    });
+                                    groupOrder.forEach((id, groupIndex) => {
+                                        const group = groupMap.get(id);
+                                        const letter = toLetter(groupIndex + 1);
+                                        displayRows.push({ type: 'header', name: `${letter}. ${group.name}`, description: group.description });
+                                        group.items.forEach((item, itemIndex) => displayRows.push({ type: 'item', item, label: `${letter}.${itemIndex + 1}` }));
+                                    });
+                                    ungrouped.forEach((item, index) => displayRows.push({ type: 'item', item, label: String(index + 1) }));
+                                } else {
+                                    invoice.productItems.forEach((item, index) => displayRows.push({ type: 'item', item, label: String(index + 1) }));
+                                }
+                                const columnCount = invoice.same_state ? 13 : 11;
+                            %>
+                            <% displayRows.forEach((row) => { %>
+                                <% if (row.type === 'header') { %>
+                                    <tr class="group-header-row">
+                                        <td colspan="<%= columnCount %>"><%= row.name %></td>
+                                    </tr>
+                                    <% if (row.description) { %>
+                                        <tr class="group-desc-row">
+                                            <td colspan="<%= columnCount %>"><%- row.description %></td>
+                                        </tr>
+                                    <% } %>
+                                <% } else { %>
+                                    <% const item = row.item; %>
                             <tr>
                                 <td style="text-align:center;">
-                                    <%= index + 1 %>
+                                    <%= row.label %>
                                 </td>
 
                                 <td>
@@ -659,6 +737,7 @@
         <% } %>
         <td style="text-align:right;"><%= parseFloat(item.total).toFixed(2) %></td>
       </tr>
+      <% } %>
     <% }) %>
     <!-- 👇 Move total row here -->
   <tr class="total-row">
