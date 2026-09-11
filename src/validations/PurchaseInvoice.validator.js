@@ -12,6 +12,8 @@ exports.validationCreatePurchaseInvoice = [
 		.isIn(['purchase_order', 'work_order'])
 		.withMessage('document_type must be purchase_order or work_order'),
 	body('document_id').notEmpty().withMessage('document_id is required').isInt().withMessage('document_id must be a valid id').toInt(),
+	body('mrn_id').optional({ checkFalsy: true }).isInt().withMessage('mrn_id must be a valid id').toInt(),
+	body('qc_id').optional({ checkFalsy: true }).isInt().withMessage('qc_id must be a valid id').toInt(),
 
 	body('vendor_invoice_no')
 		.notEmpty()
