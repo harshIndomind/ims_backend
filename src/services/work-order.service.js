@@ -11,6 +11,7 @@ const { validateDocumentAgainstIndentBudget } = require('./budget-validation.ser
 const { round2 } = require('../utils/money');
 const { toEngineItems, chargeBreakdownToRows, dbRowsToCharges } = require('../utils/document-charges.helper');
 const paymentRequisitionAnalyticsRepo = require('../repository/payment-requisition-analytics.repository');
+const { fetchProductGroupsByIds } = require('../utils/vcpProductGroups');
 const logger = require('../utils/logger');
 const { sequelize } = require('../models/index');
 const { Op } = require('sequelize');
@@ -787,7 +788,7 @@ exports.getSameState = async (id) => {
 
 exports.generateInvoiceHtml = async (req) => {
 	const { id } = req.params;
-	const { copies = [] } = req.body;
+	const { copies = [], groupByProductGroup = false } = req.body;
 
 	const workOrder = await workOrderRepository.findById(id, {
 		include: [
@@ -804,7 +805,8 @@ exports.generateInvoiceHtml = async (req) => {
 
 	if (!workOrder) throw new AppError('Work order not found', StatusCodes.NOT_FOUND);
 
-	const response = await calculateWorkOrderInvoice(workOrder);
+	const response = await calculateWorkOrderInvoice(workOrder, req);
+	response.groupByProductGroup = Boolean(groupByProductGroup);
 
 	const copyTitles = {
 		original: 'ORIGINAL FOR RECIPIENT',
@@ -838,9 +840,17 @@ exports.downloadInvoicePdf = async (req) => {
 	return pdfPath;
 };
 
-async function calculateWorkOrderInvoice(workOrder) {
+async function calculateWorkOrderInvoice(workOrder, req) {
 	const invoiceData = workOrder.get({ plain: true });
 	console.log("invoiceData ", invoiceData);
+
+	// WO items only carry a productSnapshot captured at creation time (no product-group
+	// data), so group membership for the printable preview is fetched fresh from
+	// vcp-service per distinct product_id.
+	const productGroupsMap = await fetchProductGroupsByIds(
+		req,
+		invoiceData.items.map((item) => item.product_id),
+	);
 	const totalTaxableAmount = invoiceData.items.reduce((sum, item) => {
 		const priceAfterDiscount =
 			item.discount_price_type === 'percentage'
@@ -950,6 +960,7 @@ async function calculateWorkOrderInvoice(workOrder) {
 				...item,
 				item_type: snapshot?.item_type,
 				product_name: snapshot?.name,
+				product_groups: productGroupsMap.get(item.product_id) || [],
 				uomDisplay: item.uomSnapshot?.unit?.name || item.uomSnapshot?.unit?.code || snapshot?.baseUnit?.name || snapshot?.baseUnit?.code || '',
 				batches: [],
 				serials: [],

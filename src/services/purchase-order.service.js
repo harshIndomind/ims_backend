@@ -12,6 +12,7 @@ const { validateDocumentAgainstIndentBudget, taxableAmountOf } = require('./budg
 const { round2 } = require('../utils/money');
 const { toEngineItems, chargeBreakdownToRows, dbRowsToCharges } = require('../utils/document-charges.helper');
 const paymentRequisitionAnalyticsRepo = require('../repository/payment-requisition-analytics.repository');
+const { fetchProductGroupsByIds } = require('../utils/vcpProductGroups');
 const logger = require('../utils/logger');
 const { sequelize } = require('../models/index');
 const { Op, where } = require('sequelize');
@@ -1081,7 +1082,7 @@ exports.getSameState = async (id) => {
 exports.generateInvoiceHtml = async (req) => {
 	try {
 		const { id } = req.params;
-		const { copies = [] } = req.body;
+		const { copies = [], groupByProductGroup = false } = req.body;
 
 		const purchaseOrder = await purchaseOrderRepository.findById(id, {
 			include: [
@@ -1102,7 +1103,8 @@ exports.generateInvoiceHtml = async (req) => {
 		if (!purchaseOrder)
 			return res.status(404).json({ message: 'Purchase order not found' });
 
-		const response = await calculateSaleInvoice(purchaseOrder);
+		const response = await calculateSaleInvoice(purchaseOrder, req);
+		response.groupByProductGroup = Boolean(groupByProductGroup);
 		logger.debug('response ', response);
 		// return
 		const copyTitles = {
@@ -1132,10 +1134,18 @@ exports.generateInvoiceHtml = async (req) => {
 	}
 };
 
-async function calculateSaleInvoice(invoice) {
+async function calculateSaleInvoice(invoice, req) {
 	// const serialsData = await ProductSerial.findAll();
 	// const batchData = await ProductBatch.findAll();
 	const invoiceData = invoice.get({ plain: true });
+
+	// PO items only carry a productSnapshot captured at creation time (no product-group
+	// data), so group membership for the printable preview is fetched fresh from
+	// vcp-service per distinct product_id.
+	const productGroupsMap = await fetchProductGroupsByIds(
+		req,
+		invoiceData.items.map((item) => item.product_id),
+	);
 
 	// return;
 	const totalTaxableAmount = invoiceData.items.reduce((sum, item) => {
@@ -1255,6 +1265,7 @@ async function calculateSaleInvoice(invoice) {
 				...item,
 				item_type: snapshot.item_type,
 				product_name: snapshot.name,
+				product_groups: productGroupsMap.get(item.product_id) || [],
 				batches: [],
 				// serials: serialsData?.map((s) => ({
 				// 	...s,
