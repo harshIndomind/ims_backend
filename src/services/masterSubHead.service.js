@@ -2,7 +2,12 @@ const AppError = require('../utils/AppError');
 const { StatusCodes } = require('http-status-codes');
 const { masterSubHeadRepo } = require('../repository/index');
 const logger = require('../utils/logger');
-const { organization, MasterSubHeadAmount } = require('../models/index');
+const {
+	organization,
+	MasterSubHeadAmount,
+	Budget,
+	MasterSubHeadCostCenterAmount,
+} = require('../models/index');
 const { Op } = require('sequelize');
 
 /**
@@ -150,6 +155,33 @@ exports.deleteMasterSubHead = async (id) => {
 	if (!MasterSubHead) {
 		logger.warn('Sub Head not found for delete', { id });
 		throw new AppError('Sub Head not found', StatusCodes.NOT_FOUND);
+	}
+
+	// Each of these carries a CASCADE FK back to this sub head — deleting it unguarded
+	// would silently wipe out amount allocations, budgets and cost-center allocations
+	// already created against it.
+	const subHeadAmountCount = await MasterSubHeadAmount.count({ where: { sub_head_id: id } });
+	if (subHeadAmountCount > 0) {
+		throw new AppError(
+			'Cannot delete this Sub Head because amounts have already been allocated against it. Remove those Sub Head Amount records first.',
+			StatusCodes.CONFLICT,
+		);
+	}
+
+	const budgetCount = await Budget.count({ where: { sub_head_id: id } });
+	if (budgetCount > 0) {
+		throw new AppError(
+			'Cannot delete this Sub Head because it is already used in one or more Budgets. Remove those budgets first.',
+			StatusCodes.CONFLICT,
+		);
+	}
+
+	const costCenterAmountCount = await MasterSubHeadCostCenterAmount.count({ where: { sub_head_id: id } });
+	if (costCenterAmountCount > 0) {
+		throw new AppError(
+			'Cannot delete this Sub Head because cost-center-wise amounts have already been allocated against it. Remove those allocations first.',
+			StatusCodes.CONFLICT,
+		);
 	}
 
 	await masterSubHeadRepo.delete(MasterSubHead);

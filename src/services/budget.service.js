@@ -13,6 +13,8 @@ const {
 	MasterSubHeadCostCenterAmount,
 	Budget,
 	IndentItem,
+	PurchaseOrderItem,
+	WorkOrderItem,
 	organization,
 	Department,
 	CostCenter,
@@ -357,6 +359,26 @@ exports.deleteBudget = async (req, id) => {
 	if (indentCount > 0) {
 		throw new AppError(
 			`Cannot delete budget: it has ${indentCount} indent${indentCount > 1 ? 's' : ''} linked to it. Remove the indents first.`,
+			StatusCodes.CONFLICT,
+		);
+	}
+
+	// PurchaseOrderItems.budget_id and WorkOrderItems.budget_id are ON DELETE CASCADE —
+	// a value-wise PO/WO item can reference this budget directly, without ever going
+	// through an IndentItem. Deleting the budget unguarded would silently delete those
+	// items off an otherwise-real purchase/work order.
+	const poItemCount = await PurchaseOrderItem.count({ where: { budget_id: id } });
+	if (poItemCount > 0) {
+		throw new AppError(
+			`Cannot delete budget: it is already used by ${poItemCount} Purchase Order item${poItemCount > 1 ? 's' : ''}. Remove it from those Purchase Orders first.`,
+			StatusCodes.CONFLICT,
+		);
+	}
+
+	const woItemCount = await WorkOrderItem.count({ where: { budget_id: id } });
+	if (woItemCount > 0) {
+		throw new AppError(
+			`Cannot delete budget: it is already used by ${woItemCount} Work Order item${woItemCount > 1 ? 's' : ''}. Remove it from those Work Orders first.`,
 			StatusCodes.CONFLICT,
 		);
 	}

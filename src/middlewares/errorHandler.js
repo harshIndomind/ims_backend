@@ -20,6 +20,15 @@ module.exports = (err, req, res, next) => {
 		err.message = `${label} already exists`;
 	}
 
+	// Safety net for any dependency chain a delete guard doesn't explicitly check yet —
+	// without this, an unhandled FK constraint would otherwise fall through as a bare
+	// "Internal Server Error" with no indication that the record is still in use.
+	if (err.name === 'SequelizeForeignKeyConstraintError') {
+		err.statusCode = 409;
+		err.isOperational = true;
+		err.message = 'This record cannot be deleted because it is still being used elsewhere in the system. Please remove or update the related records first.';
+	}
+
 	const statusCode = err.statusCode || 500;
 	const message = err.isOperational ? err.message : 'Internal Server Error';
 

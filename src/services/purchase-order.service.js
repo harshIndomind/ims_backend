@@ -990,6 +990,64 @@ exports.deletePurchaseOrder = async (req) => {
 			throw new AppError('Purchase Order not found', StatusCodes.NOT_FOUND);
 		}
 		logger.warn('third');
+
+		// Same guard updatePurchaseOrder uses when a line item is removed from the
+		// payload (see the idsToRemove block above) — applied here to every item on
+		// the PO, since deleting the whole PO is exactly that same destructive case.
+		// GRN items CASCADE off PurchaseOrderItem; QC/Purchase Invoice/Short Close
+		// items hold po_wo_item_id as a plain polymorphic int with no FK, so the DB
+		// would not stop any of this from silently vanishing — including, for GRN,
+		// receipts that have already updated VCP's stock ledger.
+		const itemIds = purchaseOrder.items.map((item) => item.id);
+		if (itemIds.length > 0) {
+			const [grnCount, qcCount, invoiceCount, shortCloseCount] = await Promise.all([
+				GoodsReceiptNoteItem.count({ where: { purchase_order_item_id: { [Op.in]: itemIds } }, transaction }),
+				QcInspectionItem.count({ where: { po_wo_item_id: { [Op.in]: itemIds } }, transaction }),
+				PurchaseInvoiceItem.count({ where: { po_wo_item_id: { [Op.in]: itemIds } }, transaction }),
+				ShortCloseRequestItem.count({ where: { po_wo_item_id: { [Op.in]: itemIds } }, transaction }),
+			]);
+			if (grnCount > 0) {
+				await transaction.rollback();
+				throw new AppError(
+					'Cannot delete this Purchase Order because it already has MRN (goods receipt) records against it, which have already updated stock in VCP. Cancel or reverse those MRNs first.',
+					StatusCodes.CONFLICT,
+				);
+			}
+			if (qcCount > 0) {
+				await transaction.rollback();
+				throw new AppError(
+					'Cannot delete this Purchase Order because it already has Quality Control inspection records against it. Cancel those QC inspections first.',
+					StatusCodes.CONFLICT,
+				);
+			}
+			if (invoiceCount > 0) {
+				await transaction.rollback();
+				throw new AppError(
+					'Cannot delete this Purchase Order because a Purchase Invoice has already been raised against it. Cancel/reject that invoice first.',
+					StatusCodes.CONFLICT,
+				);
+			}
+			if (shortCloseCount > 0) {
+				await transaction.rollback();
+				throw new AppError(
+					'Cannot delete this Purchase Order because a Short Close request already exists against it.',
+					StatusCodes.CONFLICT,
+				);
+			}
+		}
+
+		// A Payment Requisition already raised against this PO is real financial history —
+		// it must be deleted/rejected through its own guarded flow (which itself blocks
+		// once TDS liability exists) rather than silently destroyed here.
+		const paymentRequisitionCount = await PaymentRequisition.count({ where: { po_id: id }, transaction });
+		if (paymentRequisitionCount > 0) {
+			await transaction.rollback();
+			throw new AppError(
+				'Cannot delete this Purchase Order because one or more Payment Requisitions have already been raised against it. Delete or reject those payment requisitions first.',
+				StatusCodes.CONFLICT,
+			);
+		}
+
 		// Only restore indent qty if the PO was submitted (delta was applied on submit).
 		if (purchaseOrder.status !== 'draft') {
 			for (const item of purchaseOrder.items) {
@@ -1004,7 +1062,6 @@ exports.deletePurchaseOrder = async (req) => {
 			}
 		}
 		logger.warn('fourth');
-		await PaymentRequisition.destroy({ where: { po_id: id }, transaction });
 		await documentChargesRepository.bulkReplaceForDocument(DOCUMENT_TYPE, id, [], { transaction });
 		logger.warn('five');
 		const orderFileKeys = await orderDispatchService.deleteAllForDocument(DOCUMENT_TYPE, id, transaction);

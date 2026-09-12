@@ -27,6 +27,8 @@ const {
 	User,
 	organization,
 	Role,
+	PurchaseOrder,
+	WorkOrder,
 } = require('../models/index');
 const AppError = require('../utils/AppError');
 const { roundQty } = require('../utils/qty');
@@ -1530,6 +1532,30 @@ exports.deleteIndent = async (req, id) => {
 
 	if (indent.status === 'approved') {
 		throw new AppError('Approved indents cannot be deleted', StatusCodes.BAD_REQUEST);
+	}
+
+	// PurchaseOrders.indent_id and WorkOrders.indent_id are ON DELETE CASCADE, and GRN
+	// (MRN)/QC/Purchase Invoice records in turn hang off those POs/WOs — so deleting an
+	// indent that already has a PO/WO raised against it would silently cascade away real
+	// purchase documents (and, transitively, any MRN that has already updated VCP stock,
+	// leaving VCP's stock ledger permanently out of sync with SCM). The 'approved' status
+	// check above only catches this while the indent is still approved; an indent can be
+	// cancelled after a PO/WO already exists against it, so check for PO/WO directly
+	// regardless of current status.
+	const poCount = await PurchaseOrder.count({ where: { indent_id: id } });
+	if (poCount > 0) {
+		throw new AppError(
+			`Cannot delete this Indent because ${poCount} Purchase Order${poCount > 1 ? 's have' : ' has'} already been raised against it. Delete those Purchase Orders first.`,
+			StatusCodes.CONFLICT,
+		);
+	}
+
+	const woCount = await WorkOrder.count({ where: { indent_id: id } });
+	if (woCount > 0) {
+		throw new AppError(
+			`Cannot delete this Indent because ${woCount} Work Order${woCount > 1 ? 's have' : ' has'} already been raised against it. Delete those Work Orders first.`,
+			StatusCodes.CONFLICT,
+		);
 	}
 
 	// If already verified AND not already cancelled (cancel already rolled back VCP stock),
