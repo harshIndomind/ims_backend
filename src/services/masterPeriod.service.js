@@ -7,7 +7,13 @@ const {
 const logger = require('../utils/logger');
 const { MasterMajorHead } = require('../models/index');
 const { organization } = require('../models/index');
-const { Budget, Indent, MasterMajorHeadAmount, MasterSubHeadAmount } = require('../models/index');
+const {
+	Budget,
+	Indent,
+	MasterMajorHeadAmount,
+	MasterSubHeadAmount,
+	MasterSubHeadCostCenterAmount,
+} = require('../models/index');
 
 /**
  * Check whether a Master Period is referenced by a Budget or an Indent.
@@ -239,6 +245,15 @@ exports.deleteMasterPeriod = async (id) => {
 		logger.warn('Master Period has linked sub head amounts, cannot delete', { id });
 		throw new AppError(
 			'This period cannot be deleted as it has Sub Head Amount records linked to it',
+			StatusCodes.BAD_REQUEST,
+		);
+	}
+
+	const costCenterAmountCount = await MasterSubHeadCostCenterAmount.count({ where: { period_id: id } });
+	if (costCenterAmountCount > 0) {
+		logger.warn('Master Period has linked cost-center-wise amounts, cannot delete', { id });
+		throw new AppError(
+			'This period cannot be deleted as it has cost-center-wise amount records linked to it',
 			StatusCodes.BAD_REQUEST,
 		);
 	}

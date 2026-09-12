@@ -15,7 +15,7 @@ const paymentRequisitionAnalyticsRepo = require('../repository/payment-requisiti
 const { fetchProductGroupsByIds } = require('../utils/vcpProductGroups');
 const logger = require('../utils/logger');
 const { sequelize } = require('../models/index');
-const { Op, where } = require('sequelize');
+const { Op, where, QueryTypes } = require('sequelize');
 const {
 	User,
 	organization,
@@ -613,9 +613,55 @@ exports.updatePurchaseOrder = async (req) => {
  * silently drift apart — "Export" is meant to download exactly what the list page is currently
  * showing, so it must apply the identical set of filters the same way.
  */
-function buildPurchaseOrderFilters(req) {
+// Resolves the "workflow_status" list-page filter to a set of matching PO ids via one plain
+// SQL query per call, rather than trying to express the QC/receipt join as Sequelize
+// association `where`s — QcInspection links to its PO polymorphically (document_type/
+// document_id, no FK), same idiom grn.service.js uses throughout, and "has anything been
+// received yet" needs a join through PurchaseOrderItems that doesn't map to an existing
+// association either. Mirrors the join shape of getPoReceivedValue in grn.service.js (active
+// GRNs only — a cancelled GRN doesn't count as "received").
+async function getPoIdsForWorkflowStatus(orgId, workflowStatus) {
+	const approvedQcExists = `EXISTS (
+		SELECT 1 FROM qc_inspections qi
+		WHERE qi.document_type = 'purchase_order' AND qi.document_id = po.id AND qi.status = 'approved'
+	)`;
+	const anyReceivedQtyExists = `EXISTS (
+		SELECT 1 FROM GoodsReceiptNoteItems gi
+		JOIN GoodsReceiptNotes g ON g.id = gi.goods_receipt_note_id AND g.status = 'active'
+		JOIN PurchaseOrderItems poi ON poi.id = gi.purchase_order_item_id
+		WHERE poi.purchase_order_id = po.id
+	)`;
+
+	let sql;
+	switch (workflowStatus) {
+		case 'qc_required':
+			sql = `SELECT po.id FROM PurchaseOrders po WHERE po.org_id = :orgId AND po.po_qc_check = true`;
+			break;
+		case 'qc_pending':
+			sql = `SELECT po.id FROM PurchaseOrders po WHERE po.org_id = :orgId AND po.po_qc_check = true AND NOT ${approvedQcExists}`;
+			break;
+		case 'mrn_pending':
+			sql = `
+				SELECT po.id FROM PurchaseOrders po
+				WHERE po.org_id = :orgId
+				AND (po.po_qc_check = false OR ${approvedQcExists})
+				AND NOT ${anyReceivedQtyExists}
+			`;
+			break;
+		case 'approved':
+			sql = `SELECT po.id FROM PurchaseOrders po WHERE po.org_id = :orgId AND po.status = 'approved'`;
+			break;
+		default:
+			return null;
+	}
+
+	const rows = await sequelize.query(sql, { replacements: { orgId }, type: QueryTypes.SELECT });
+	return rows.map((r) => r.id);
+}
+
+async function buildPurchaseOrderFilters(req) {
 	const { org_id } = req.user;
-	const { from_date, to_date, unit_id, due_date_from, due_date_to, payment_status, dispatch_status_filter } = req.query;
+	const { from_date, to_date, unit_id, due_date_from, due_date_to, payment_status, dispatch_status_filter, workflow_status } = req.query;
 
 	const andConditions = [{ org_id }];
 
@@ -669,6 +715,18 @@ function buildPurchaseOrderFilters(req) {
 		andConditions.push({ dispatch_status: 'dispatched' });
 	}
 
+	// 'qc_required': po_qc_check is set, regardless of how far QC/receipt has progressed.
+	// 'qc_pending': QC is required and no inspection on it has been approved yet.
+	// 'mrn_pending': QC (if required) is approved — or not required at all — but nothing has
+	// been received against this PO yet.
+	// 'approved': the PO's own approval status, independent of QC/receipt progress.
+	// These buckets aren't mutually exclusive (e.g. a PO can be both 'approved' and
+	// 'qc_required'), so this is a single-select filter rather than combinable with itself.
+	if (workflow_status) {
+		const matchingIds = await getPoIdsForWorkflowStatus(org_id, workflow_status);
+		if (matchingIds) andConditions.push({ id: { [Op.in]: matchingIds } });
+	}
+
 	return { andConditions, unitId: unit_id ? Number(unit_id) : null };
 }
 
@@ -682,7 +740,7 @@ exports.getAllPurchaseOrders = async (req) => {
 		throw new AppError(`You don't authorize to access this api.`);
 	}
 
-	const { andConditions, unitId } = buildPurchaseOrderFilters(req);
+	const { andConditions, unitId } = await buildPurchaseOrderFilters(req);
 
 	const findOptions = {
 		where: { [Op.and]: andConditions },
@@ -932,6 +990,64 @@ exports.deletePurchaseOrder = async (req) => {
 			throw new AppError('Purchase Order not found', StatusCodes.NOT_FOUND);
 		}
 		logger.warn('third');
+
+		// Same guard updatePurchaseOrder uses when a line item is removed from the
+		// payload (see the idsToRemove block above) — applied here to every item on
+		// the PO, since deleting the whole PO is exactly that same destructive case.
+		// GRN items CASCADE off PurchaseOrderItem; QC/Purchase Invoice/Short Close
+		// items hold po_wo_item_id as a plain polymorphic int with no FK, so the DB
+		// would not stop any of this from silently vanishing — including, for GRN,
+		// receipts that have already updated VCP's stock ledger.
+		const itemIds = purchaseOrder.items.map((item) => item.id);
+		if (itemIds.length > 0) {
+			const [grnCount, qcCount, invoiceCount, shortCloseCount] = await Promise.all([
+				GoodsReceiptNoteItem.count({ where: { purchase_order_item_id: { [Op.in]: itemIds } }, transaction }),
+				QcInspectionItem.count({ where: { po_wo_item_id: { [Op.in]: itemIds } }, transaction }),
+				PurchaseInvoiceItem.count({ where: { po_wo_item_id: { [Op.in]: itemIds } }, transaction }),
+				ShortCloseRequestItem.count({ where: { po_wo_item_id: { [Op.in]: itemIds } }, transaction }),
+			]);
+			if (grnCount > 0) {
+				await transaction.rollback();
+				throw new AppError(
+					'Cannot delete this Purchase Order because it already has MRN (goods receipt) records against it, which have already updated stock in VCP. Cancel or reverse those MRNs first.',
+					StatusCodes.CONFLICT,
+				);
+			}
+			if (qcCount > 0) {
+				await transaction.rollback();
+				throw new AppError(
+					'Cannot delete this Purchase Order because it already has Quality Control inspection records against it. Cancel those QC inspections first.',
+					StatusCodes.CONFLICT,
+				);
+			}
+			if (invoiceCount > 0) {
+				await transaction.rollback();
+				throw new AppError(
+					'Cannot delete this Purchase Order because a Purchase Invoice has already been raised against it. Cancel/reject that invoice first.',
+					StatusCodes.CONFLICT,
+				);
+			}
+			if (shortCloseCount > 0) {
+				await transaction.rollback();
+				throw new AppError(
+					'Cannot delete this Purchase Order because a Short Close request already exists against it.',
+					StatusCodes.CONFLICT,
+				);
+			}
+		}
+
+		// A Payment Requisition already raised against this PO is real financial history —
+		// it must be deleted/rejected through its own guarded flow (which itself blocks
+		// once TDS liability exists) rather than silently destroyed here.
+		const paymentRequisitionCount = await PaymentRequisition.count({ where: { po_id: id }, transaction });
+		if (paymentRequisitionCount > 0) {
+			await transaction.rollback();
+			throw new AppError(
+				'Cannot delete this Purchase Order because one or more Payment Requisitions have already been raised against it. Delete or reject those payment requisitions first.',
+				StatusCodes.CONFLICT,
+			);
+		}
+
 		// Only restore indent qty if the PO was submitted (delta was applied on submit).
 		if (purchaseOrder.status !== 'draft') {
 			for (const item of purchaseOrder.items) {
@@ -946,7 +1062,6 @@ exports.deletePurchaseOrder = async (req) => {
 			}
 		}
 		logger.warn('fourth');
-		await PaymentRequisition.destroy({ where: { po_id: id }, transaction });
 		await documentChargesRepository.bulkReplaceForDocument(DOCUMENT_TYPE, id, [], { transaction });
 		logger.warn('five');
 		const orderFileKeys = await orderDispatchService.deleteAllForDocument(DOCUMENT_TYPE, id, transaction);
@@ -1487,7 +1602,7 @@ exports.exportPurchaseOrders = async (req) => {
 		throw new AppError("You don't have access to this API.", 403);
 	}
 
-	const { andConditions, unitId } = buildPurchaseOrderFilters(req);
+	const { andConditions, unitId } = await buildPurchaseOrderFilters(req);
 	const whereClause = { [Op.and]: andConditions };
 
 	const now = new Date();

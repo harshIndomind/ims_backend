@@ -11,6 +11,18 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'work_order_id',
 				as: 'workOrder',
 			});
+			// Which MRN/QC (if any) this invoice was originally looked up/scoped
+			// from — display-only (traceability + creation-date lookup), the
+			// qty ceiling itself is always recomputed live off po_wo_item_id
+			// regardless of which single MRN/QC these point at.
+			PurchaseInvoice.belongsTo(models.GoodsReceiptNote, {
+				foreignKey: 'mrn_id',
+				as: 'mrn',
+			});
+			PurchaseInvoice.belongsTo(models.QcInspection, {
+				foreignKey: 'qc_id',
+				as: 'qcInspection',
+			});
 			PurchaseInvoice.hasMany(models.PurchaseInvoiceItem, {
 				foreignKey: 'purchase_invoice_id',
 				as: 'items',
@@ -44,6 +56,14 @@ module.exports = (sequelize, DataTypes) => {
 				allowNull: true,
 			},
 			work_order_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
+			mrn_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
+			qc_id: {
 				type: DataTypes.INTEGER,
 				allowNull: true,
 			},

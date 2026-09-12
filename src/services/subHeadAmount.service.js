@@ -8,6 +8,7 @@ const {
 	MasterMajorHeadAmount,
 	MasterSubHead,
 	Budget,
+	MasterSubHeadCostCenterAmount,
 	organization,
 } = require('../models/index');
 const {
@@ -373,6 +374,17 @@ exports.deleteSubHeadAmount = async (req, id) => {
 	if (budgetCount > 0) {
 		throw new AppError(
 			'Cannot delete — budgets are already using this sub-head allocation',
+			StatusCodes.UNPROCESSABLE_ENTITY,
+		);
+	}
+
+	// MasterSubHeadCostCenterAmounts.sub_head_amount_id is also ON DELETE CASCADE off
+	// this table — deleting unguarded would silently wipe out any cost-center-wise
+	// splits already made against this allocation.
+	const costCenterAmountCount = await MasterSubHeadCostCenterAmount.count({ where: { sub_head_amount_id: id } });
+	if (costCenterAmountCount > 0) {
+		throw new AppError(
+			'Cannot delete — cost-center-wise amounts have already been allocated from this sub-head allocation',
 			StatusCodes.UNPROCESSABLE_ENTITY,
 		);
 	}

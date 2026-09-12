@@ -139,6 +139,19 @@ async function fetchInvoiceOrThrow(id) {
 				attributes: ['id', 'doc_number', 'woPrefix', 'woNo', 'woPostfix', 'payment_term_id'],
 				include: [{ model: WorkOrderItem, as: 'items', attributes: ['id', 'budget_id', 'budget_no'] }],
 			},
+			// Sideloaded purely so the frontend can show "MRN/QC Created On" in
+			// view mode — the invoice's own qty matching never reads these,
+			// only document_type + purchase_order_id/work_order_id.
+			{
+				model: GoodsReceiptNote,
+				as: 'mrn',
+				attributes: ['id', 'grnPrefix', 'grnNo', 'grnPostfix', 'createdAt'],
+			},
+			{
+				model: QcInspection,
+				as: 'qcInspection',
+				attributes: ['id', 'qc_no', 'createdAt'],
+			},
 		],
 	});
 	if (!invoice) {
@@ -314,6 +327,8 @@ exports.createPurchaseInvoice = async (req, body) => {
 	const {
 		document_type,
 		document_id,
+		mrn_id = null,
+		qc_id = null,
 		invoiceDetail = {},
 		vendor_invoice_no,
 		vendor_invoice_date,
@@ -334,6 +349,20 @@ exports.createPurchaseInvoice = async (req, body) => {
 		include: [{ model: config.itemModel, as: 'items' }],
 	});
 	if (!doc) throw new AppError(`${config.label} not found`, StatusCodes.NOT_FOUND);
+
+	// Display-only traceability, not a matching input — still verified to
+	// actually belong to this document so the header never ends up pointing
+	// at an MRN/QC from an unrelated PO/WO.
+	let mrn = null;
+	if (mrn_id && document_type === 'purchase_order') {
+		mrn = await GoodsReceiptNote.findOne({ where: { id: mrn_id, purchase_order_id: doc.id } });
+		if (!mrn) throw new AppError('Selected MRN does not belong to this Purchase Order', StatusCodes.BAD_REQUEST);
+	}
+	let qcInspection = null;
+	if (qc_id) {
+		qcInspection = await QcInspection.findOne({ where: { id: qc_id, document_type, document_id: doc.id } });
+		if (!qcInspection) throw new AppError(`Selected QC does not belong to this ${config.label}`, StatusCodes.BAD_REQUEST);
+	}
 
 	// Vendor invoice dates against the same order must move forward — a
 	// backdated bill arriving after a later one was already recorded would
@@ -572,6 +601,8 @@ exports.createPurchaseInvoice = async (req, body) => {
 				document_type,
 				purchase_order_id: document_type === 'purchase_order' ? doc.id : null,
 				work_order_id: document_type === 'work_order' ? doc.id : null,
+				mrn_id: mrn?.id ?? null,
+				qc_id: qcInspection?.id ?? null,
 				invoicePrefix: invoiceDetail.invoicePrefix || null,
 				invoiceNo: invoiceNumber,
 				invoicePostfix: invoiceDetail.invoicePostfix || null,

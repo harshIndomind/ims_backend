@@ -28,6 +28,9 @@ const {
 	MasterUnit,
 	Department,
 	MasterPlaceOfUse,
+	QcInspectionItem,
+	PurchaseInvoiceItem,
+	ShortCloseRequestItem,
 } = require('../models/index');
 const workflowEngine = require('./workflowEngine.service');
 const auditLogService = require('./auditLog.service');
@@ -746,6 +749,52 @@ exports.deleteWorkOrder = async (req) => {
 			throw new AppError('Work Order not found', StatusCodes.NOT_FOUND);
 		}
 
+		// Mirrors purchase-order.service.js's deletePurchaseOrder guard. WO has no
+		// GRN/MRN equivalent, but QC/Purchase Invoice/Short Close items hold
+		// po_wo_item_id as a plain polymorphic int with no FK — the DB will not stop
+		// any of this from silently vanishing if the WO is deleted underneath it.
+		const itemIds = workOrder.items.map((item) => item.id);
+		if (itemIds.length > 0) {
+			const [qcCount, invoiceCount, shortCloseCount] = await Promise.all([
+				QcInspectionItem.count({ where: { po_wo_item_id: { [Op.in]: itemIds } }, transaction }),
+				PurchaseInvoiceItem.count({ where: { po_wo_item_id: { [Op.in]: itemIds } }, transaction }),
+				ShortCloseRequestItem.count({ where: { po_wo_item_id: { [Op.in]: itemIds } }, transaction }),
+			]);
+			if (qcCount > 0) {
+				await transaction.rollback();
+				throw new AppError(
+					'Cannot delete this Work Order because it already has Quality Control inspection records against it. Cancel those QC inspections first.',
+					StatusCodes.CONFLICT,
+				);
+			}
+			if (invoiceCount > 0) {
+				await transaction.rollback();
+				throw new AppError(
+					'Cannot delete this Work Order because a Purchase Invoice has already been raised against it. Cancel/reject that invoice first.',
+					StatusCodes.CONFLICT,
+				);
+			}
+			if (shortCloseCount > 0) {
+				await transaction.rollback();
+				throw new AppError(
+					'Cannot delete this Work Order because a Short Close request already exists against it.',
+					StatusCodes.CONFLICT,
+				);
+			}
+		}
+
+		// A Payment Requisition already raised against this WO is real financial history —
+		// it must be deleted/rejected through its own guarded flow (which itself blocks
+		// once TDS liability exists) rather than silently destroyed here.
+		const paymentRequisitionCount = await PaymentRequisition.count({ where: { wo_id: id }, transaction });
+		if (paymentRequisitionCount > 0) {
+			await transaction.rollback();
+			throw new AppError(
+				'Cannot delete this Work Order because one or more Payment Requisitions have already been raised against it. Delete or reject those payment requisitions first.',
+				StatusCodes.CONFLICT,
+			);
+		}
+
 		for (const item of workOrder.items) {
 			if (isServiceItem(item)) continue;
 			await applyIndentQtyDeltaForWorkOrder(parseFloat(item.qty), workOrder.indent_id, item.product_id, transaction, {
@@ -755,7 +804,6 @@ exports.deleteWorkOrder = async (req) => {
 			});
 		}
 
-		await PaymentRequisition.destroy({ where: { wo_id: id }, transaction });
 		await documentChargesRepository.bulkReplaceForDocument(DOCUMENT_TYPE, id, [], { transaction });
 
 		const orderFileKeys = await orderDispatchService.deleteAllForDocument(DOCUMENT_TYPE, id, transaction);

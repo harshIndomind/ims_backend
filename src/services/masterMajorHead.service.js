@@ -2,7 +2,13 @@ const AppError = require('../utils/AppError');
 const { StatusCodes } = require('http-status-codes');
 const { masterMajorHeadRepo } = require('../repository/index');
 const logger = require('../utils/logger');
-const { organization, MasterMajorHeadAmount } = require('../models/index');
+const {
+	organization,
+	MasterMajorHeadAmount,
+	MasterSubHeadAmount,
+	Budget,
+	MasterSubHeadCostCenterAmount,
+} = require('../models/index');
 const { Op } = require('sequelize');
 
 exports.createMasterMajorHead = async (req, payload) => {
@@ -135,6 +141,42 @@ exports.deleteMasterMajorHead = async (id) => {
 	if (!masterMajorHead) {
 		logger.warn('Master Major Head not found for delete', { id });
 		throw new AppError('Master Major Head not found', StatusCodes.NOT_FOUND);
+	}
+
+	// Every one of these has a CASCADE FK back to this major head — deleting it
+	// unguarded would silently wipe out amount allocations, budgets and cost-center
+	// allocations already created against it. Block instead, same pattern as
+	// masterMajorHeadAmount.service.js's own delete guard.
+	const majorHeadAmountCount = await MasterMajorHeadAmount.count({ where: { major_head_id: id } });
+	if (majorHeadAmountCount > 0) {
+		throw new AppError(
+			'Cannot delete this Major Head because amounts have already been allocated against it. Remove those Major Head Amount records first.',
+			StatusCodes.CONFLICT,
+		);
+	}
+
+	const subHeadAmountCount = await MasterSubHeadAmount.count({ where: { major_head_id: id } });
+	if (subHeadAmountCount > 0) {
+		throw new AppError(
+			'Cannot delete this Major Head because sub-head amounts have already been allocated against it. Remove those Sub Head Amount records first.',
+			StatusCodes.CONFLICT,
+		);
+	}
+
+	const budgetCount = await Budget.count({ where: { major_head_id: id } });
+	if (budgetCount > 0) {
+		throw new AppError(
+			'Cannot delete this Major Head because it is already used in one or more Budgets. Remove those budgets first.',
+			StatusCodes.CONFLICT,
+		);
+	}
+
+	const costCenterAmountCount = await MasterSubHeadCostCenterAmount.count({ where: { major_head_id: id } });
+	if (costCenterAmountCount > 0) {
+		throw new AppError(
+			'Cannot delete this Major Head because cost-center-wise amounts have already been allocated against it. Remove those allocations first.',
+			StatusCodes.CONFLICT,
+		);
 	}
 
 	await masterMajorHeadRepo.delete(masterMajorHead);

@@ -2,7 +2,13 @@ const AppError = require('../utils/AppError');
 const { StatusCodes } = require('http-status-codes');
 const { costCenterRepository } = require('../repository/index');
 const logger = require('../utils/logger');
-const { organization, MasterAccount } = require('../models/index');
+const {
+	organization,
+	MasterAccount,
+	Budget,
+	PaymentRequisition,
+	MasterSubHeadCostCenterAmount,
+} = require('../models/index');
 
 exports.createCostCenter = async (req, payload) => {
 	const { org_id } = req.user;
@@ -104,6 +110,36 @@ exports.deleteCostCenter = async (id) => {
 	if (!costCenter) {
 		logger.warn('Cost center not found for delete', { id });
 		throw new AppError('Cost center not found', StatusCodes.NOT_FOUND);
+	}
+
+	// MasterSubHeadCostCenterAmounts.cost_center_id is ON DELETE CASCADE — deleting
+	// unguarded would silently wipe out cost-center-wise amount allocations.
+	const costCenterAmountCount = await MasterSubHeadCostCenterAmount.count({ where: { cost_center_id: id } });
+	if (costCenterAmountCount > 0) {
+		throw new AppError(
+			'Cannot delete this Cost Center because cost-center-wise amounts have already been allocated against it. Remove those allocations first.',
+			StatusCodes.CONFLICT,
+		);
+	}
+
+	// Budgets.cost_center_id and PaymentRequisitions.cost_center_id are ON DELETE SET
+	// NULL, so the DB would let this through — but that would silently strip cost-center
+	// attribution from budgets/payment requisitions that already exist, breaking their
+	// accounting trail. Block explicitly instead.
+	const budgetCount = await Budget.count({ where: { cost_center_id: id } });
+	if (budgetCount > 0) {
+		throw new AppError(
+			'Cannot delete this Cost Center because it is already used in one or more Budgets. Remove it from those budgets first.',
+			StatusCodes.CONFLICT,
+		);
+	}
+
+	const paymentRequisitionCount = await PaymentRequisition.count({ where: { cost_center_id: id } });
+	if (paymentRequisitionCount > 0) {
+		throw new AppError(
+			'Cannot delete this Cost Center because it is already used in one or more Payment Requisitions. Remove it from those payment requisitions first.',
+			StatusCodes.CONFLICT,
+		);
 	}
 
 	await costCenterRepository.delete(costCenter);

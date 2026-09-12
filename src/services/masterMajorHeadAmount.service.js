@@ -6,6 +6,7 @@ const {
 	MasterMajorHead,
 	MasterPeriod,
 	MasterSubHeadAmount,
+	Budget,
 	organization,
 } = require('../models/index');
 const auditLogService = require('./auditLog.service');
@@ -236,6 +237,17 @@ exports.deleteMasterMajorHeadAmount = async (req, id) => {
 	if (subHeadCount > 0) {
 		throw new AppError(
 			'Cannot delete — sub-heads have already been allocated from this major head amount',
+			StatusCodes.UNPROCESSABLE_ENTITY,
+		);
+	}
+
+	// Budgets.major_head_amount_id is also ON DELETE CASCADE off this table directly
+	// (a value-wise budget can be raised straight off the major head amount without
+	// going through a sub-head amount) — guard that path too.
+	const budgetCount = await Budget.count({ where: { major_head_amount_id: id } });
+	if (budgetCount > 0) {
+		throw new AppError(
+			'Cannot delete — one or more budgets have already been created against this major head amount',
 			StatusCodes.UNPROCESSABLE_ENTITY,
 		);
 	}

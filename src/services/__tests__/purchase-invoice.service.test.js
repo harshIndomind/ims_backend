@@ -25,6 +25,8 @@ const mockPurchaseInvoiceCreate = jest.fn();
 const mockPurchaseInvoiceFindOne = jest.fn();
 const mockPurchaseInvoiceItemBulkCreate = jest.fn().mockResolvedValue([]);
 const mockPurchaseInvoiceChargeBulkCreate = jest.fn().mockResolvedValue([]);
+const mockGoodsReceiptNoteFindOne = jest.fn();
+const mockQcInspectionFindOne = jest.fn();
 
 jest.mock('../../models/index', () => ({
 	sequelize: { transaction: jest.fn() },
@@ -40,6 +42,8 @@ jest.mock('../../models/index', () => ({
 	PurchaseInvoiceItem: { bulkCreate: (...args) => mockPurchaseInvoiceItemBulkCreate(...args) },
 	PurchaseInvoiceCharge: { bulkCreate: (...args) => mockPurchaseInvoiceChargeBulkCreate(...args) },
 	MasterOtherChargeType: {},
+	GoodsReceiptNote: { findOne: (...args) => mockGoodsReceiptNoteFindOne(...args) },
+	QcInspection: { findOne: (...args) => mockQcInspectionFindOne(...args) },
 }));
 
 const mockSumInvoicedQtyForPoWoItem = jest.fn();
@@ -170,6 +174,93 @@ describe('createPurchaseInvoice — quantity hard block (purchase_order)', () =>
 		).resolves.toBeDefined();
 
 		expect(mockTransaction.commit).toHaveBeenCalled();
+	});
+});
+
+describe('createPurchaseInvoice — MRN/QC traceability (mrn_id/qc_id)', () => {
+	it('persists mrn_id/qc_id on the header when both actually belong to the resolved PO', async () => {
+		mockPurchaseOrderFindOne.mockResolvedValue(poWithItems());
+		mockGetReceivedQtyForPoItem.mockResolvedValue(60);
+		mockSumInvoicedQtyForPoWoItem.mockResolvedValue(0);
+		mockGoodsReceiptNoteFindOne.mockResolvedValue({ id: 700, purchase_order_id: 50 });
+		mockQcInspectionFindOne.mockResolvedValue({ id: 800, document_type: 'purchase_order', document_id: 50 });
+
+		await piService.createPurchaseInvoice(baseReq(), {
+			document_type: 'purchase_order',
+			document_id: 50,
+			mrn_id: 700,
+			qc_id: 800,
+			vendor_invoice_no: 'INV-4',
+			vendor_invoice_date: '2026-08-20',
+			items: [{ po_wo_item_id: 300, invoiced_qty: 60, price: 100, total: 6000 }],
+		});
+
+		expect(mockPurchaseInvoiceCreate).toHaveBeenCalledWith(
+			expect.objectContaining({ mrn_id: 700, qc_id: 800 }),
+			expect.anything(),
+		);
+	});
+
+	it('rejects when mrn_id belongs to a different Purchase Order', async () => {
+		mockPurchaseOrderFindOne.mockResolvedValue(poWithItems());
+		mockGetReceivedQtyForPoItem.mockResolvedValue(60);
+		mockSumInvoicedQtyForPoWoItem.mockResolvedValue(0);
+		mockGoodsReceiptNoteFindOne.mockResolvedValue(null); // not found for this PO
+
+		await expect(
+			piService.createPurchaseInvoice(baseReq(), {
+				document_type: 'purchase_order',
+				document_id: 50,
+				mrn_id: 999,
+				vendor_invoice_no: 'INV-5',
+				vendor_invoice_date: '2026-08-20',
+				items: [{ po_wo_item_id: 300, invoiced_qty: 60, price: 100, total: 6000 }],
+			}),
+		).rejects.toThrow(/Selected MRN does not belong to this Purchase Order/);
+
+		expect(mockTransaction.commit).not.toHaveBeenCalled();
+	});
+
+	it('rejects when qc_id belongs to a different document', async () => {
+		mockPurchaseOrderFindOne.mockResolvedValue(poWithItems());
+		mockGetReceivedQtyForPoItem.mockResolvedValue(60);
+		mockSumInvoicedQtyForPoWoItem.mockResolvedValue(0);
+		mockQcInspectionFindOne.mockResolvedValue(null); // not found for this PO
+
+		await expect(
+			piService.createPurchaseInvoice(baseReq(), {
+				document_type: 'purchase_order',
+				document_id: 50,
+				qc_id: 999,
+				vendor_invoice_no: 'INV-6',
+				vendor_invoice_date: '2026-08-20',
+				items: [{ po_wo_item_id: 300, invoiced_qty: 60, price: 100, total: 6000 }],
+			}),
+		).rejects.toThrow(/Selected QC does not belong to this Purchase Order/);
+
+		expect(mockTransaction.commit).not.toHaveBeenCalled();
+	});
+
+	it('never looks up an MRN for a work_order invoice — WO has no MRN-equivalent', async () => {
+		mockWorkOrderFindOne.mockResolvedValue(woWithItems({ wo_qc_check: false }));
+		mockSumInvoicedQtyForPoWoItem.mockResolvedValue(0);
+		mockQcInspectionFindOne.mockResolvedValue({ id: 800, document_type: 'work_order', document_id: 60 });
+
+		await piService.createPurchaseInvoice(baseReq(), {
+			document_type: 'work_order',
+			document_id: 60,
+			mrn_id: 700,
+			qc_id: 800,
+			vendor_invoice_no: 'WINV-3',
+			vendor_invoice_date: '2026-08-20',
+			items: [{ po_wo_item_id: 400, invoiced_qty: 100, price: 100, total: 10000 }],
+		});
+
+		expect(mockGoodsReceiptNoteFindOne).not.toHaveBeenCalled();
+		expect(mockPurchaseInvoiceCreate).toHaveBeenCalledWith(
+			expect.objectContaining({ mrn_id: null, qc_id: 800 }),
+			expect.anything(),
+		);
 	});
 });
 
