@@ -202,6 +202,21 @@
             font-weight: 600;
         }
 
+        .group-header-row td {
+            background-color: #dbe9f5;
+            font-weight: 700;
+            font-size: 11px;
+            text-align: left;
+        }
+
+        .group-desc-row td {
+            background-color: #f2f7fb;
+            font-style: italic;
+            font-size: 10px;
+            text-align: left;
+            color: #555;
+        }
+
         .status-pill {
             display: inline-block;
             padding: 2px 6px;
@@ -546,36 +561,90 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <% invoice.productItems.forEach((item, index) => { %>
-                    <tr>
-                        <td style="text-align:center;"><%= index + 1 %></td>
-                        <td>
-                            <%= item.item_name %>
-                            <% if (item.item_code) { %>
-                                <br><small><strong>Code:</strong> <%= item.item_code %></small>
+                    <%
+                        // Cluster items under a header (group name) + description row per Product
+                        // Group (vcp-service ProductGroups, fetched per-item in qc-inspection.service.js).
+                        // Unlike PO/WO's preview this is always on — no user toggle — since QC has no
+                        // print-options row to put one in; items with no group just render plain, same
+                        // as before. An item in more than one group is shown once, under its
+                        // is_primary-flagged group, to avoid duplicate/double-counted rows. Groups are
+                        // lettered in appearance order (A, B, C, ...) and their items numbered A.1, A.2, ...
+                        const toLetter = (n) => {
+                            let s = '';
+                            while (n > 0) {
+                                s = String.fromCharCode(65 + ((n - 1) % 26)) + s;
+                                n = Math.floor((n - 1) / 26);
+                            }
+                            return s;
+                        };
+                        const groupMap = new Map();
+                        const groupOrder = [];
+                        const ungrouped = [];
+                        invoice.productItems.forEach((item) => {
+                            const groups = item.product_groups || [];
+                            const group = groups.find((g) => g.is_primary) || groups[0];
+                            if (!group) {
+                                ungrouped.push(item);
+                                return;
+                            }
+                            if (!groupMap.has(group.id)) {
+                                groupMap.set(group.id, { name: group.name, description: group.description, items: [] });
+                                groupOrder.push(group.id);
+                            }
+                            groupMap.get(group.id).items.push(item);
+                        });
+                        const displayRows = [];
+                        groupOrder.forEach((id, groupIndex) => {
+                            const group = groupMap.get(id);
+                            const letter = toLetter(groupIndex + 1);
+                            displayRows.push({ type: 'header', name: `${letter}. ${group.name}`, description: group.description });
+                            group.items.forEach((item, itemIndex) => displayRows.push({ type: 'item', item, label: `${letter}.${itemIndex + 1}` }));
+                        });
+                        ungrouped.forEach((item, index) => displayRows.push({ type: 'item', item, label: String(index + 1) }));
+                        const columnCount = 12;
+                    %>
+                    <% displayRows.forEach((row) => { %>
+                        <% if (row.type === 'header') { %>
+                            <tr class="group-header-row">
+                                <td colspan="<%= columnCount %>"><%= row.name %></td>
+                            </tr>
+                            <% if (row.description) { %>
+                                <tr class="group-desc-row">
+                                    <td colspan="<%= columnCount %>"><%- row.description %></td>
+                                </tr>
                             <% } %>
-                        </td>
-                        <td style="text-align:right;"><%= item.orderedQty.toFixed(2) %></td>
-                        <td style="text-align:right;"><%= item.previouslyAcceptedQty.toFixed(2) %></td>
-                        <td style="text-align:right;"><%= item.currentAcceptedQty.toFixed(2) %></td>
-                        <td style="text-align:right;"><strong><%= item.totalAcceptedQty.toFixed(2) %></strong></td>
-                        <td style="text-align:right;"><%= item.previouslyRejectedQty.toFixed(2) %></td>
-                        <td style="text-align:right;"><%= item.currentRejectedQty.toFixed(2) %></td>
-                        <td style="text-align:right;"><strong><%= item.totalRejectedQty.toFixed(2) %></strong></td>
-                        <td style="text-align:right;"><%= item.reworkQty.toFixed(2) %></td>
-                        <td style="text-align:center;">
-                            <% if (item.result === 'passed') { %>
-                                <span class="status-pill status-passed">Passed</span>
-                            <% } else if (item.result === 'failed') { %>
-                                <span class="status-pill status-failed">Failed</span>
-                            <% } else if (item.result === 'partial') { %>
-                                <span class="status-pill status-partial">Partial</span>
-                            <% } else { %>
-                                <span class="status-pill status-pending">Pending</span>
-                            <% } %>
-                        </td>
-                        <td><%= item.rejectionReasonName %></td>
-                    </tr>
+                        <% } else { %>
+                            <% const item = row.item; %>
+                            <tr>
+                                <td style="text-align:center;"><%= row.label %></td>
+                                <td>
+                                    <%= item.item_name %>
+                                    <% if (item.item_code) { %>
+                                        <br><small><strong>Code:</strong> <%= item.item_code %></small>
+                                    <% } %>
+                                </td>
+                                <td style="text-align:right;"><%= item.orderedQty.toFixed(2) %></td>
+                                <td style="text-align:right;"><%= item.previouslyAcceptedQty.toFixed(2) %></td>
+                                <td style="text-align:right;"><%= item.currentAcceptedQty.toFixed(2) %></td>
+                                <td style="text-align:right;"><strong><%= item.totalAcceptedQty.toFixed(2) %></strong></td>
+                                <td style="text-align:right;"><%= item.previouslyRejectedQty.toFixed(2) %></td>
+                                <td style="text-align:right;"><%= item.currentRejectedQty.toFixed(2) %></td>
+                                <td style="text-align:right;"><strong><%= item.totalRejectedQty.toFixed(2) %></strong></td>
+                                <td style="text-align:right;"><%= item.reworkQty.toFixed(2) %></td>
+                                <td style="text-align:center;">
+                                    <% if (item.result === 'passed') { %>
+                                        <span class="status-pill status-passed">Passed</span>
+                                    <% } else if (item.result === 'failed') { %>
+                                        <span class="status-pill status-failed">Failed</span>
+                                    <% } else if (item.result === 'partial') { %>
+                                        <span class="status-pill status-partial">Partial</span>
+                                    <% } else { %>
+                                        <span class="status-pill status-pending">Pending</span>
+                                    <% } %>
+                                </td>
+                                <td><%= item.rejectionReasonName %></td>
+                            </tr>
+                        <% } %>
                     <% }) %>
                 </tbody>
                 <tfoot>
