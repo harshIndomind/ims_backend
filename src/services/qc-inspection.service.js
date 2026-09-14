@@ -47,6 +47,7 @@ const auditLogService = require('./auditLog.service');
 const { createWorkflowDocumentService } = require('./workflowDocument.factory');
 const { s3, PutObjectCommand, generateSignedUrl, getImageAsBase64DataUrl } = require('../utils/s3Bucket');
 const { generateInvoiceHTML, generateInvoiceHTMLPDF } = require('../pdf/htmlPdfGenerator');
+const { fetchProductGroupsByIds } = require('../utils/vcpProductGroups');
 
 const DOCUMENT_TYPE = 'qc_inspection';
 
@@ -334,6 +335,18 @@ exports.getAllInspections = async (req) => {
 exports.getInspectionById = async (req, id) => {
 	const inspection = await fetchInspectionOrThrow(req, id);
 	const [withDocumentNo] = await attachDocumentNumbers([inspection]);
+
+	// Attach each item's active Product Group(s) here (not just in the print-preview path)
+	// so the QC entry form can cluster items by group too — see qc-inspection-items-form.tsx.
+	const productGroupsMap = await fetchProductGroupsByIds(
+		req,
+		(withDocumentNo.items || []).map((item) => item.product_id),
+	);
+	withDocumentNo.items = (withDocumentNo.items || []).map((item) => ({
+		...item,
+		product_groups: productGroupsMap.get(item.product_id) || [],
+	}));
+
 	return withDocumentNo;
 };
 
@@ -896,7 +909,7 @@ exports.generateInvoiceHtml = async (req) => {
 	const inspection = await fetchInspectionOrThrow(req, id);
 	const [withDocumentNo] = await attachDocumentNumbers([inspection]);
 
-	const response = await calculateQcInvoice(inspection, withDocumentNo);
+	const response = await calculateQcInvoice(inspection, withDocumentNo, req);
 
 	const html = await generateInvoiceHTML({ ...response, copyTitle: 'QC INSPECTION COPY' }, 'qcTemplate');
 	return `<div class="preview-page">\n${html}\n</div>`;
@@ -908,8 +921,16 @@ exports.downloadInvoicePdf = async (req) => {
 	return pdfPath;
 };
 
-async function calculateQcInvoice(inspection, withDocumentNo) {
+async function calculateQcInvoice(inspection, withDocumentNo, req) {
 	const invoiceData = inspection.get({ plain: true });
+
+	// QC items only carry a productSnapshot captured at creation time (no product-group data),
+	// so group membership for the printable preview is fetched fresh from vcp-service per
+	// distinct product_id — same approach as purchase-order.service.js/work-order.service.js.
+	const productGroupsMap = await fetchProductGroupsByIds(
+		req,
+		(invoiceData.items || []).map((item) => item.product_id),
+	);
 
 	// Logo lives on the org-admin user, not on MasterUnit — same lookup indent.service.js uses.
 	let businessLogo = null;
@@ -994,6 +1015,7 @@ async function calculateQcInvoice(inspection, withDocumentNo) {
 			...item,
 			item_name: item.productSnapshot?.name || 'N/A',
 			item_code: item.productSnapshot?.code || item.productSnapshot?.item_code || '',
+			product_groups: productGroupsMap.get(item.product_id) || [],
 			orderedQty,
 			previouslyReceivedQty,
 			currentReceivedQty,
