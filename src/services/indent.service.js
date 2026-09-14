@@ -10,6 +10,7 @@ const {
 	IndentItemRepository,
 	IndentSerialRepository,
 	indentItemQtyLogRepository,
+	purchaseInvoiceItemsRepository,
 } = require('../repository/index');
 const { fetch } = require('undici');
 const {
@@ -29,6 +30,7 @@ const {
 	Role,
 	PurchaseOrder,
 	WorkOrder,
+	WorkOrderItem,
 } = require('../models/index');
 const AppError = require('../utils/AppError');
 const { roundQty } = require('../utils/qty');
@@ -149,7 +151,7 @@ exports.createIndent = async (req, payload) => {
 						qty: i.qty,
 						requested_qty: i.qty,
 						avg_rate: i.price,
-						discount: i.discount,
+						discount: Number(i.discount) || 0,
 						amount: i.total,
 						issue_date: i.issue_date,
 						days: i.days,
@@ -324,12 +326,10 @@ exports.getAllIndents = async (req) => {
 	logger.debug("Get All Indents Where ", {where});
 	
 	const indentItemsWhere = {};
-	// Service items always carry qty_for_purchase_order = 0 (VCP's verify-stock treats
-	// services as unlimited/always-fully-issued — see work-order.service.js's isServiceItem
-	// comment), so this check is meaningless for them and must be skipped when the caller is
-	// specifically asking for service items — otherwise it ANDs into an impossible condition
-	// and every service-only indent silently disappears from the result.
-	if (hasPurchaseQuantityIssue === 'true' && selectedItemTypeId !== 'service') {
+	// Service lines get a real qty_for_purchase_order too (set at approveIndent — see the
+	// comment there), equal to the approved qty since nothing is ever "in stock" for a
+	// service, so this filter now applies uniformly to product and service items alike.
+	if (hasPurchaseQuantityIssue === 'true') {
 		indentItemsWhere['qty_for_purchase_order'] = {
 			[Op.gt]: 0,
 		};
@@ -434,6 +434,13 @@ exports.getAllIndents = async (req) => {
 		return indent;
 	});
 
+	// Batched once across every service item on this page, not per-indent — see
+	// attachPendingReissueForServiceItems's own comment for why this is a new field
+	// rather than overwriting balance_indent_qty.
+	await attachPendingReissueForServiceItems(
+		result.rows.flatMap((indent) => indent.IndentItems || []),
+	);
+
 	return result;
 };
 
@@ -509,6 +516,70 @@ exports.verifyIndentQuantity = async (req, indent_ids) => {
 	return verifiedQuantities;
 };
 
+// qty_issued/qty_updated_by_verifier ("Actual Issue"/"Qty For Issue") and balance_indent_qty
+// ("Pending Re-issue") are all set once at approveIndent and never touched again for service
+// items — because VCP has no stock concept for services, it always reports them as instantly
+// "fully issued", so those columns permanently show the full requested qty even though nothing
+// has actually been delivered yet. That's misleading and internally inconsistent (an indent
+// showing "Actual Issue: 10" while a Work Order for the same line is still open makes no
+// sense). For services, "actually issued" only has a real meaning once a Purchase Invoice
+// confirms what the vendor/contractor actually delivered against a Work Order raised for that
+// line — the same "actual delivered" signal Short Close's remaining-qty formula already uses
+// for QC-bypassed WOs (qc-inspection.service.js / short-close.service.js).
+//
+// So for service items, both figures are computed live and attached as NEW fields —
+// `actual_delivered_qty` (what "Actual Issue"/"Qty For Issue" should show) and
+// `pending_reissue_qty` (`qty` minus that) — never overwriting the real qty_issued/
+// qty_updated_by_verifier/balance_indent_qty columns, so callers that mutate those for real
+// (approveIndent, reissuePendingQuantity, the hasPendingReissueQty filter) are unaffected.
+//
+// Batched (not one query per item) since this runs both for a single indent's detail view and
+// for every service item across a whole page of the indent list.
+async function attachPendingReissueForServiceItems(items) {
+	const serviceItems = items.filter(
+		(i) => (i.item_type ?? i.get?.('item_type')) === 'service',
+	);
+	if (!serviceItems.length) return;
+
+	const indentIds = [...new Set(serviceItems.map((i) => i.indent_id))];
+	const productIds = [...new Set(serviceItems.map((i) => i.product_id))];
+
+	const woItems = await WorkOrderItem.findAll({
+		attributes: ['id', 'product_id'],
+		where: { product_id: { [Op.in]: productIds } },
+		include: [
+			{
+				model: WorkOrder,
+				as: 'workOrder',
+				attributes: ['indent_id'],
+				required: true,
+				where: { indent_id: { [Op.in]: indentIds } },
+			},
+		],
+	});
+
+	const invoicedByWoItem = await purchaseInvoiceItemsRepository.sumInvoicedQtyForPoWoItems(
+		woItems.map((w) => w.id),
+	);
+
+	const invoicedByIndentProduct = new Map();
+	for (const w of woItems) {
+		const key = `${w.workOrder.indent_id}:${w.product_id}`;
+		const invoiced = invoicedByWoItem.get(w.id) || 0;
+		invoicedByIndentProduct.set(key, (invoicedByIndentProduct.get(key) || 0) + invoiced);
+	}
+
+	for (const item of serviceItems) {
+		const key = `${item.indent_id}:${item.product_id}`;
+		const delivered = roundQty(invoicedByIndentProduct.get(key) || 0);
+		const requestedQty = parseFloat(item.qty || 0);
+		const pending = roundQty(Math.max(0, requestedQty - delivered));
+		const target = item.dataValues || item;
+		target.actual_delivered_qty = delivered;
+		target.pending_reissue_qty = pending;
+	}
+}
+
 async function fetchIndentForWorkflowAction(id) {
 	const indent = await IndentRepository.findById({
 		where: { id },
@@ -534,6 +605,7 @@ async function fetchIndentForWorkflowAction(id) {
 	if (!indent) {
 		throw new AppError(`Indent with ID ${id} not found`, StatusCodes.NOT_FOUND);
 	}
+	await attachPendingReissueForServiceItems(indent.IndentItems || []);
 	return indent;
 }
 
@@ -735,7 +807,18 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 			const dryRun = dryRunMap.get(i.product_id);
 			const issuedQty = roundQty(allocation?.issued_qty || 0);
 			const baseIssuedQty = allocation?.base_issued_qty ?? issuedQty;
-			const purchaseQty = roundQty(Math.max(0, parseFloat(i.qty || 0) - issuedQty));
+			// Services never carry stock, so VCP always reports them as fully issued
+			// (backorder 0) — that's correct for "issued" but wrong for "what's still
+			// open for a Work Order": nothing is ever in stock for a service, so the
+			// WO ceiling should be the full approved qty, not the (always-zero) product
+			// backorder formula. balance_indent_qty stays 0 for services regardless —
+			// that counter is GRN/stock-return-specific (Reissue Pending Quantity) and
+			// has no equivalent for labor; Short Close is the release mechanism there.
+			const isService = i.item_type === 'service';
+			const purchaseQty = isService
+				? issuedQty
+				: roundQty(Math.max(0, parseFloat(i.qty || 0) - issuedQty));
+			const balanceIndentQty = isService ? 0 : purchaseQty;
 			const previousQtyForPurchaseOrder = parseFloat(i.qty_for_purchase_order || 0);
 			const previousBalanceIndentQty = parseFloat(i.balance_indent_qty || 0);
 
@@ -751,7 +834,7 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 					// point qty_for_purchase_order becomes binding, so it's also where the live
 					// PO balance gets initialized to match it.
 					qty_in_stock: dryRun?.total_available_quantity || 0,
-					balance_indent_qty: purchaseQty,
+					balance_indent_qty: balanceIndentQty,
 				},
 				{ transaction },
 			);
@@ -774,9 +857,9 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 				indentId: id,
 				productId: i.product_id,
 				field: 'balance_indent_qty',
-				delta: purchaseQty - previousBalanceIndentQty,
+				delta: balanceIndentQty - previousBalanceIndentQty,
 				previousValue: previousBalanceIndentQty,
-				newValue: purchaseQty,
+				newValue: balanceIndentQty,
 				source: 'indent_approved',
 				transaction,
 			});
@@ -1450,7 +1533,7 @@ exports.updateIndent = async (req, id, payload) => {
 						qty: i.qty,
 						requested_qty: i.qty,
 						avg_rate: i.price,
-						discount: i.discount,
+						discount: Number(i.discount) || 0,
 						amount: i.total,
 						issue_date: i.issue_date,
 						days: i.days,

@@ -7,7 +7,7 @@ const {
 	documentChargesRepository,
 } = require('../repository/index');
 const { calculateDocumentTotals, legacyCustomFieldsToCharges } = require('../utils/charge-tax-engine.util');
-const { validateDocumentAgainstIndentBudget } = require('./budget-validation.service');
+const { validateDocumentAgainstIndentBudget, taxableAmountOf } = require('./budget-validation.service');
 const { round2 } = require('../utils/money');
 const { toEngineItems, chargeBreakdownToRows, dbRowsToCharges } = require('../utils/document-charges.helper');
 const paymentRequisitionAnalyticsRepo = require('../repository/payment-requisition-analytics.repository');
@@ -69,12 +69,6 @@ const ExcelJS = require('exceljs');
 const path = require('path');
 const fs = require('fs/promises');
 const { existsSync } = require('node:fs');
-
-// Services have no stock and carry qty_for_purchase_order = 0 on the indent,
-// so they must be excluded from the purchase-order qty ledger (otherwise the
-// decrement drives the indent item negative).
-const isServiceItem = (item) =>
-	(item?.productSnapshot?.item_type ?? item?.item_type) === 'service';
 
 // Same increment pattern as purchase-order.service.js's applyIndentQtyDelta, but keyed by
 // indent_id + product_id only (no selected_uom_id disambiguation — matches the pre-existing
@@ -157,7 +151,6 @@ exports.createWorkOrder = async (req) => {
 		} = req.body;
 
 		for (const item of productItems) {
-			if (isServiceItem(item)) continue;
 			if (Number(item.qty) > Number(item.qty_for_purchase_order)) {
 				throw new AppError(
 					`${item.productSnapshot.name} qty ${item.qty} should not be greater than W.O Order qty ${item.qty_for_purchase_order}`,
@@ -188,9 +181,11 @@ exports.createWorkOrder = async (req) => {
 			roundOff: Boolean(isRoundOff),
 		});
 
-		// Authoritative check: unlike PO, a WO commits against its indent immediately here at
-		// create (applyIndentQtyDeltaForWorkOrder below has no draft gate), so this is the one
-		// point that must be validated under the IndentItem row lock, not merely advisory.
+		// Advisory only — a WO no longer commits against its indent at create (that now
+		// happens at approveWorkOrder, the one point qty_for_purchase_order becomes
+		// binding, mirroring approveIndent's own comment on the same field). This early
+		// check just gives the maker fast feedback; approveWorkOrder re-validates under
+		// the IndentItem row lock before it actually commits anything.
 		await validateDocumentAgainstIndentBudget({
 			indent_id,
 			lines: productItems.map((item, i) => ({
@@ -289,14 +284,6 @@ exports.createWorkOrder = async (req) => {
 			};
 
 			await workOrderItemsRepository.create(woItemObject, { transaction });
-
-			if (!isServiceItem(item)) {
-				await applyIndentQtyDeltaForWorkOrder(-parseFloat(item.qty), indent_id, item.product_id, transaction, {
-					req,
-					source: 'wo_created',
-					sourceRefId: workOrder.id,
-				});
-			}
 		}
 
 		await documentChargesRepository.bulkReplaceForDocument(
@@ -352,7 +339,6 @@ exports.updateWorkOrder = async (req) => {
 		} = req.body;
 
 		for (const item of productItems) {
-			if (isServiceItem(item)) continue;
 			if (Number(item.qty) > Number(item.qty_for_purchase_order)) {
 				throw new AppError(
 					`${item.productSnapshot.name} qty ${item.qty} should not be greater than W.O Order qty ${item.qty_for_purchase_order}`,
@@ -382,10 +368,11 @@ exports.updateWorkOrder = async (req) => {
 			roundOff: Boolean(isRoundOff),
 		});
 
-		// Authoritative check, same reasoning as createWorkOrder — WO update always applies
-		// its qty delta unconditionally below, so this must be the real (locked) gate too, not
-		// merely advisory. excludeWorkOrderId=id: this WO's own pre-edit lines must not count
-		// as "already committed" on top of the new lines being validated here.
+		// Advisory only — same reasoning as createWorkOrder's own call. isEditable above
+		// already guarantees this function never runs post-approval, so there is nothing
+		// committed yet to re-validate authoritatively here; approveWorkOrder is the real
+		// gate. excludeWorkOrderId=id kept for parity with PO's identical call shape,
+		// though a pre-approval WO's own lines never count as committed either way.
 		await validateDocumentAgainstIndentBudget({
 			indent_id,
 			lines: productItems.map((item, i) => ({
@@ -485,25 +472,9 @@ exports.updateWorkOrder = async (req) => {
 				throw new AppError('Work order item not found.');
 			}
 
-			if (!isServiceItem(item)) {
-				await applyIndentQtyDeltaForWorkOrder(parseFloat(existingItem.qty), indent_id, item.product_id, transaction, {
-					req,
-					source: 'wo_updated',
-					sourceRefId: workOrder.id,
-				});
-			}
-
 			await workOrderItemsRepository.update(existingItem, woItemObject, {
 				transaction,
 			});
-
-			if (!isServiceItem(item)) {
-				await applyIndentQtyDeltaForWorkOrder(-parseFloat(item.qty), indent_id, item.product_id, transaction, {
-					req,
-					source: 'wo_updated',
-					sourceRefId: workOrder.id,
-				});
-			}
 		}
 
 		await documentChargesRepository.bulkReplaceForDocument(
@@ -795,13 +766,17 @@ exports.deleteWorkOrder = async (req) => {
 			);
 		}
 
-		for (const item of workOrder.items) {
-			if (isServiceItem(item)) continue;
-			await applyIndentQtyDeltaForWorkOrder(parseFloat(item.qty), workOrder.indent_id, item.product_id, transaction, {
-				req,
-				source: 'wo_deleted',
-				sourceRefId: workOrder.id,
-			});
+		// Only release if this WO had actually committed anything — that now only happens
+		// at approval (see approveWorkOrder), same pattern purchase-order.service.js's
+		// deletePurchaseOrder already uses for its own (submit-gated) commit point.
+		if (workOrder.status === 'approved') {
+			for (const item of workOrder.items) {
+				await applyIndentQtyDeltaForWorkOrder(parseFloat(item.qty), workOrder.indent_id, item.product_id, transaction, {
+					req,
+					source: 'wo_deleted',
+					sourceRefId: workOrder.id,
+				});
+			}
 		}
 
 		await documentChargesRepository.bulkReplaceForDocument(DOCUMENT_TYPE, id, [], { transaction });
@@ -1449,6 +1424,32 @@ exports.approveWorkOrder = async (req, id, remarks) => {
 			transaction,
 		});
 
+		// This is the one point qty_for_purchase_order becomes binding (mirrors
+		// approveIndent's own comment on the same field) — a draft/in-progress WO
+		// reserves nothing. Gated on instance.status === 'approved' (not merely on being
+		// inside this function) because advanceStage is the generic per-stage primitive:
+		// for a multi-stage WO workflow, approveWorkOrder fires once per stage, and only
+		// the final stage actually resolves to 'approved' — committing unconditionally
+		// here would double/triple-commit the ledger on a multi-stage approval chain.
+		//
+		// MUST run before wo.update() below flips this WO's own status to 'approved' —
+		// the committed-amount query filters WorkOrder.status = 'approved', so checking
+		// after the flip would count this WO's own lines as "already committed" on top
+		// of being the "requested" amount, self-double-counting against the indent budget
+		// (mirrors submitPurchaseOrder's identical check-before-status-flip ordering).
+		if (instance.status === 'approved') {
+			await validateDocumentAgainstIndentBudget({
+				indent_id: wo.indent_id,
+				lines: wo.items.map((item) => ({
+					product_id: item.product_id,
+					taxableAmount: taxableAmountOf(item),
+				})),
+				matchUom: false,
+				documentLabel: 'this Work Order',
+				transaction,
+			});
+		}
+
 		await wo.update(
 			{
 				status: instance.status,
@@ -1457,6 +1458,16 @@ exports.approveWorkOrder = async (req, id, remarks) => {
 			},
 			{ transaction },
 		);
+
+		if (instance.status === 'approved') {
+			for (const item of wo.items) {
+				await applyIndentQtyDeltaForWorkOrder(-parseFloat(item.qty), wo.indent_id, item.product_id, transaction, {
+					req,
+					source: 'wo_approved',
+					sourceRefId: wo.id,
+				});
+			}
+		}
 
 		await auditLogService.record({
 			req,
@@ -1482,7 +1493,27 @@ exports.rejectWorkOrder = async (req, id, remarks) => {
 };
 
 exports.cancelWorkOrder = async (req, id, remarks) => {
-	return woWorkflow.cancel(req, id, remarks);
+	// Release whatever this WO committed at approval, if it had reached approval before
+	// being cancelled — captured here (pre-transition) rather than read off `doc.status`
+	// inside withinTransaction, since workflowDocument.factory.js's cancel() already
+	// flips doc.status to 'cancelled' before that hook runs. Mirrors cancelIndent's own
+	// beforeCancel-captures-pre-transition-state pattern.
+	let wasApproved = false;
+	return woWorkflow.cancel(req, id, remarks, {
+		beforeCancel: async (wo) => {
+			wasApproved = wo.status === 'approved';
+		},
+		withinTransaction: async (wo, transaction) => {
+			if (!wasApproved) return;
+			for (const item of wo.items) {
+				await applyIndentQtyDeltaForWorkOrder(parseFloat(item.qty), wo.indent_id, item.product_id, transaction, {
+					req,
+					source: 'wo_cancelled',
+					sourceRefId: wo.id,
+				});
+			}
+		},
+	});
 };
 
 exports.reopenWorkOrder = async (req, id, remarks) => {

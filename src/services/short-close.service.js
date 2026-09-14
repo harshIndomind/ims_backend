@@ -33,7 +33,11 @@ const {
 	ShortCloseRequest,
 	ShortCloseRequestItem,
 } = require('../models/index');
-const { qcInspectionItemsRepository, shortCloseRequestItemsRepository } = require('../repository/index');
+const {
+	qcInspectionItemsRepository,
+	shortCloseRequestItemsRepository,
+	purchaseInvoiceItemsRepository,
+} = require('../repository/index');
 const workflowEngine = require('./workflowEngine.service');
 const auditLogService = require('./auditLog.service');
 const { createWorkflowDocumentService } = require('./workflowDocument.factory');
@@ -49,8 +53,8 @@ const OPEN_STATUSES = ['draft', 'in_progress'];
 // Document_type values match qc-inspection.service.js's DOC_CONFIG exactly (purchase_order /
 // work_order) — the remaining-qty math in both modules must key off the same strings.
 const DOC_CONFIG = {
-	purchase_order: { model: PurchaseOrder, itemModel: PurchaseOrderItem, label: 'Purchase Order' },
-	work_order: { model: WorkOrder, itemModel: WorkOrderItem, label: 'Work Order' },
+	purchase_order: { model: PurchaseOrder, itemModel: PurchaseOrderItem, qcCheckField: 'po_qc_check', label: 'Purchase Order' },
+	work_order: { model: WorkOrder, itemModel: WorkOrderItem, qcCheckField: 'wo_qc_check', label: 'Work Order' },
 };
 
 function resolveDocConfig(documentType) {
@@ -92,13 +96,22 @@ exports.generateRequestNumber = async (req) => {
 	return next.toString().padStart(4, '0');
 };
 
-// Ordered − Σaccepted (finalized QC) − Σshort_close_qty (approved requests). Same formula as
+// Ordered − Σaccepted (finalized QC, or Σapproved-Purchase-Invoice invoiced_qty when QC is
+// bypassed — see below) − Σshort_close_qty (approved requests). Same formula as
 // qc-inspection.service.js's getRemainingForDocument — kept in sync by hand since the two
 // modules are intentionally decoupled (see file header); if you change one, change the other.
-async function computeRemainingForItem(item, options = {}) {
+//
+// `documentType`/`doc` are needed (not just `item`) because Work Orders with QC bypassed
+// (wo_qc_check=false — the norm for pure-service WOs, nothing physical to inspect) never get a
+// QC accepted_qty; "actual delivered qty" for those falls back to Purchase Invoice invoiced_qty
+// instead, the closest thing services have to a GRN/QC receipt confirmation.
+async function computeRemainingForItem(item, documentType, doc, options = {}) {
 	const orderedQty = parseFloat(item.qty);
+	const useInvoiceAsActual = documentType === 'work_order' && !doc?.[DOC_CONFIG[documentType]?.qcCheckField];
 	const [acceptedQty, shortClosedQty] = await Promise.all([
-		qcInspectionItemsRepository.sumAcceptedQtyForPoWoItem(item.id, options),
+		useInvoiceAsActual
+			? purchaseInvoiceItemsRepository.sumInvoicedQtyForPoWoItem(item.id, options)
+			: qcInspectionItemsRepository.sumAcceptedQtyForPoWoItem(item.id, options),
 		shortCloseRequestItemsRepository.sumApprovedQtyForPoWoItem(item.id, options),
 	]);
 	return {
@@ -123,7 +136,7 @@ exports.getShortCloseableItems = async (req, { document_type, document_id }) => 
 
 	const items = await Promise.all(
 		doc.items.map(async (item) => {
-			const remaining = await computeRemainingForItem(item);
+			const remaining = await computeRemainingForItem(item, document_type, doc);
 			return {
 				po_wo_item_id: item.id,
 				product_id: item.product_id,
@@ -161,7 +174,11 @@ exports.createShortCloseRequest = async (req, body) => {
 		include: [{ model: config.itemModel, as: 'items' }],
 	});
 	if (!doc) throw new AppError(`${config.label} not found`, StatusCodes.NOT_FOUND);
-	if (['draft', 'rejected', 'cancelled'].includes(doc.status)) {
+	// WO only commits its qty ledger at approval (see work-order.service.js's
+	// approveWorkOrder) — short-closing anything before that would release qty that was
+	// never actually committed, over-crediting the indent. PO's own commit point (submit)
+	// is unaffected, so its wider draft/rejected/cancelled-only block is unchanged.
+	if (document_type === 'work_order' ? doc.status !== 'approved' : ['draft', 'rejected', 'cancelled'].includes(doc.status)) {
 		throw new AppError(`Cannot short close a ${doc.status} ${config.label}`, StatusCodes.CONFLICT);
 	}
 
@@ -187,7 +204,7 @@ exports.createShortCloseRequest = async (req, body) => {
 			throw new AppError('short_close_qty must be greater than 0', StatusCodes.BAD_REQUEST);
 		}
 
-		const remaining = await computeRemainingForItem(poWoItem);
+		const remaining = await computeRemainingForItem(poWoItem, document_type, doc);
 		if (qty > remaining.remaining_qty + 0.001) {
 			throw new AppError(
 				`${poWoItem.productSnapshot?.name || 'Item'}: short close qty ${qty} exceeds remaining qty ${remaining.remaining_qty}`,
@@ -296,7 +313,7 @@ async function maybeCompleteDocument(documentType, documentId, transaction) {
 	if (!doc || doc.status !== 'approved') return;
 
 	const remainings = await Promise.all(
-		doc.items.map((item) => computeRemainingForItem(item, { transaction })),
+		doc.items.map((item) => computeRemainingForItem(item, documentType, doc, { transaction })),
 	);
 	const fullySettled = remainings.every((r) => r.remaining_qty <= 0.001);
 	if (fullySettled) {
@@ -345,7 +362,7 @@ exports.approveShortCloseRequest = async (req, id) => {
 		for (const line of request.items) {
 			const poWoItem = itemsById.get(line.po_wo_item_id);
 			if (!poWoItem) continue;
-			const remaining = await computeRemainingForItem(poWoItem, { transaction });
+			const remaining = await computeRemainingForItem(poWoItem, request.document_type, doc, { transaction });
 			if (parseFloat(line.short_close_qty) > remaining.remaining_qty + 0.001) {
 				throw new AppError(
 					`Only ${remaining.remaining_qty} remaining for ${poWoItem.productSnapshot?.name || `item ${poWoItem.id}`}; ` +

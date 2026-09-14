@@ -9,8 +9,10 @@ const QTY_LOG_SOURCE_LABELS = {
 	po_updated: 'PO Updated',
 	po_deleted: 'PO Deleted',
 	wo_created: 'WO Created',
+	wo_approved: 'WO Approved',
 	wo_updated: 'WO Updated',
 	wo_deleted: 'WO Deleted',
+	wo_cancelled: 'WO Cancelled',
 	short_close_released: 'Short Close Released',
 	reissued: 'Re-issued',
 };

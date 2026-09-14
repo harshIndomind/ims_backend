@@ -9,6 +9,11 @@
 const mockTransaction = { commit: jest.fn(), rollback: jest.fn(), LOCK: { UPDATE: 'UPDATE' } };
 const mockBudgetFindOne = jest.fn();
 const mockIndentItemFindAll = jest.fn();
+// attachPendingReissueForServiceItems (called from within fetchIndentForWorkflowAction, the
+// shared fetcher behind approveIndent/reissuePendingQuantity/previewReissue/etc.) needs
+// WorkOrderItem present — default to no WOs found, which is the correct/harmless case for
+// every existing test here (none of them have raised a WO yet at the point they run).
+const mockWorkOrderItemFindAll = jest.fn().mockResolvedValue([]);
 jest.mock('../../models/index', () => ({
 	sequelize: { transaction: jest.fn() },
 	Indent: {},
@@ -16,12 +21,15 @@ jest.mock('../../models/index', () => ({
 	IndentSerialItem: {},
 	IndentItem: { findAll: mockIndentItemFindAll, destroy: jest.fn() },
 	MasterUnit: {},
+	WorkOrder: {},
+	WorkOrderItem: { findAll: (...args) => mockWorkOrderItemFindAll(...args) },
 }));
 
 jest.mock('../../repository/index', () => ({
 	IndentRepository: { findById: jest.fn(), create: jest.fn(), updateById: jest.fn() },
 	IndentItemRepository: { create: jest.fn() },
 	IndentSerialRepository: { update: jest.fn(), create: jest.fn() },
+	purchaseInvoiceItemsRepository: { sumInvoicedQtyForPoWoItems: jest.fn().mockResolvedValue(new Map()) },
 }));
 
 jest.mock('undici', () => ({ fetch: jest.fn() }));
@@ -40,8 +48,11 @@ jest.mock('../auditLog.service', () => ({
 }));
 
 jest.mock('../workflowDocument.factory', () => ({
-	createWorkflowDocumentService: jest.fn(() => ({
+	createWorkflowDocumentService: jest.fn(({ fetchById }) => ({
 		assertCanAct: jest.fn().mockResolvedValue(true),
+		// Wired to the real fetchById (fetchIndentForWorkflowAction) so getIndentById tests can
+		// exercise it for real, instead of the fixed stub every other test here relies on.
+		getById: (req, id) => fetchById(id),
 	})),
 }));
 
@@ -255,6 +266,112 @@ describe('approveIndent — qty_in_stock + balance_indent_qty initialization', (
 			expect.objectContaining({ qty_issued: 0, qty_for_purchase_order: 10, qty_in_stock: 0, balance_indent_qty: 10 }),
 			expect.anything(),
 		);
+	});
+
+	it('service item, fully approved: qty_for_purchase_order = full approved qty, balance_indent_qty stays 0', async () => {
+		// Services never carry stock, so VCP always reports them as fully issued (backorder 0) —
+		// qty_for_purchase_order must still open up to the approved qty so a Work Order can be
+		// raised against it. balance_indent_qty is GRN/stock-return-specific (Reissue Pending
+		// Quantity) and has no equivalent for labor, so it must stay 0 regardless.
+		const item = makeIndentItem({ product_id: 1, qty: 10, item_type: 'service' });
+		setupApprove(item, {
+			dryRun: { product_id: 1, issued_qty: 10, qty_for_purchase_order: 0, total_available_quantity: null, minimum_stock_quantity: 0, checkMinimumStock: false },
+			allocation: { product_id: 1, issued_qty: 10, qty_for_purchase_order: 0, issuedSerials: [] },
+		});
+
+		const req = { cookies: { accessToken: 'tok' }, user: { id: 1, name: 'A', email: 'a@x.com' } };
+		await indentService.approveIndent(req, 1, [{ product_id: 1, issue_qty: 10 }]);
+
+		expect(item.update).toHaveBeenCalledWith(
+			expect.objectContaining({ qty_issued: 10, qty_for_purchase_order: 10, balance_indent_qty: 0 }),
+			expect.anything(),
+		);
+	});
+
+	it('service item, partially approved: qty_for_purchase_order tracks the approver-confirmed qty, not the original request', async () => {
+		// Indent asks for 10 workers; approver only confirms 6 (e.g. contractor availability at
+		// approval time) — the WO ceiling should open up to 6, not the original 10.
+		const item = makeIndentItem({ product_id: 1, qty: 10, item_type: 'service' });
+		setupApprove(item, {
+			dryRun: { product_id: 1, issued_qty: 10, qty_for_purchase_order: 0, total_available_quantity: null, minimum_stock_quantity: 0, checkMinimumStock: false },
+			allocation: { product_id: 1, issued_qty: 6, qty_for_purchase_order: 0, issuedSerials: [] },
+		});
+
+		const req = { cookies: { accessToken: 'tok' }, user: { id: 1, name: 'A', email: 'a@x.com' } };
+		await indentService.approveIndent(req, 1, [{ product_id: 1, issue_qty: 6 }]);
+
+		expect(item.update).toHaveBeenCalledWith(
+			expect.objectContaining({ qty_issued: 6, qty_for_purchase_order: 6, balance_indent_qty: 0 }),
+			expect.anything(),
+		);
+	});
+});
+
+describe('getIndentById — actual_delivered_qty / pending_reissue_qty for service items', () => {
+	const { purchaseInvoiceItemsRepository } = require('../../repository/index');
+
+	it('computes actual_delivered_qty from invoiced-so-far and pending_reissue_qty as the requested-qty shortfall, without touching the real columns', async () => {
+		// Asked for 10; VCP always reports services as fully issued at approval (qty_issued=10,
+		// matching this codebase's real behavior), but only 4 has actually been invoiced so far.
+		const item = makeIndentItem({
+			id: 42,
+			indent_id: 7,
+			product_id: 1,
+			item_type: 'service',
+			qty: 10,
+			qty_issued: 10,
+			qty_updated_by_verifier: 10,
+			balance_indent_qty: 0,
+		});
+		const indent = { id: 7, IndentItems: [item] };
+		indentRepo.findById.mockResolvedValue(indent);
+
+		mockWorkOrderItemFindAll.mockResolvedValueOnce([
+			{ id: 200, product_id: 1, workOrder: { indent_id: 7 } },
+		]);
+		purchaseInvoiceItemsRepository.sumInvoicedQtyForPoWoItems.mockResolvedValueOnce(
+			new Map([[200, 4]]),
+		);
+
+		const result = await indentService.getIndentById({}, 7);
+
+		expect(result.IndentItems[0].actual_delivered_qty).toBe(4);
+		expect(result.IndentItems[0].pending_reissue_qty).toBe(6);
+		// The real stored columns must be untouched — approveIndent/reissuePendingQuantity/etc.
+		// still read these for real and must never see the display override.
+		expect(result.IndentItems[0].qty_issued).toBe(10);
+		expect(result.IndentItems[0].qty_updated_by_verifier).toBe(10);
+		expect(result.IndentItems[0].balance_indent_qty).toBe(0);
+	});
+
+	it('treats a service line with no Work Order raised yet as nothing delivered, fully pending', async () => {
+		const item = makeIndentItem({
+			id: 43,
+			indent_id: 8,
+			product_id: 2,
+			item_type: 'service',
+			qty: 5,
+			qty_issued: 5,
+			balance_indent_qty: 0,
+		});
+		indentRepo.findById.mockResolvedValue({ id: 8, IndentItems: [item] });
+		mockWorkOrderItemFindAll.mockResolvedValueOnce([]);
+
+		const result = await indentService.getIndentById({}, 8);
+
+		expect(result.IndentItems[0].actual_delivered_qty).toBe(0);
+		expect(result.IndentItems[0].pending_reissue_qty).toBe(5);
+	});
+
+	it('leaves product items untouched (no actual_delivered_qty/pending_reissue_qty fields added)', async () => {
+		const item = makeIndentItem({ id: 44, indent_id: 9, product_id: 3, item_type: 'product', qty_issued: 8 });
+		indentRepo.findById.mockResolvedValue({ id: 9, IndentItems: [item] });
+
+		const result = await indentService.getIndentById({}, 9);
+
+		expect(result.IndentItems[0].actual_delivered_qty).toBeUndefined();
+		expect(result.IndentItems[0].pending_reissue_qty).toBeUndefined();
+		expect(mockWorkOrderItemFindAll).not.toHaveBeenCalled();
 	});
 });
 
