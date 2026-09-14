@@ -42,3 +42,31 @@ exports.sumInvoicedQtyForPoWoItem = async (poWoItemId, { excludeInvoiceId, trans
 	});
 	return total || 0;
 };
+
+// Batched version of sumInvoicedQtyForPoWoItem for read/listing paths that need this for many
+// WO items at once (e.g. Indent list/detail's "Actual Issue"/"Pending Re-issue" figures for
+// service lines) — one grouped query instead of one query per item. Unlike the singular
+// ceiling-check version above, this one only counts *approved* invoices: those figures are
+// meant to reflect what's actually been delivered, so a draft/in-progress invoice (still
+// editable, not yet vendor-confirmed) must not move them — only approval should. Returns a
+// Map<po_wo_item_id, invoiced_qty>; an id with no approved invoice rows is simply absent
+// (caller treats a missing key as 0).
+exports.sumInvoicedQtyForPoWoItems = async (poWoItemIds, { transaction } = {}) => {
+	if (!poWoItemIds?.length) return new Map();
+	const rows = await PurchaseInvoiceItem.findAll({
+		attributes: ['po_wo_item_id', [PurchaseInvoiceItem.sequelize.fn('SUM', PurchaseInvoiceItem.sequelize.col('invoiced_qty')), 'total']],
+		where: { po_wo_item_id: { [Op.in]: poWoItemIds } },
+		include: [
+			{
+				model: PurchaseInvoice,
+				as: 'purchaseInvoice',
+				attributes: [],
+				where: { status: 'approved' },
+			},
+		],
+		group: ['PurchaseInvoiceItem.po_wo_item_id'],
+		raw: true,
+		transaction,
+	});
+	return new Map(rows.map((r) => [r.po_wo_item_id, parseFloat(r.total || 0)]));
+};

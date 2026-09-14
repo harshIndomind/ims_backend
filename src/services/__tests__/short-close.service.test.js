@@ -41,9 +41,11 @@ jest.mock('../../models/index', () => ({
 
 const mockSumAccepted = jest.fn();
 const mockSumApprovedShortClose = jest.fn();
+const mockSumInvoiced = jest.fn();
 jest.mock('../../repository/index', () => ({
 	qcInspectionItemsRepository: { sumAcceptedQtyForPoWoItem: mockSumAccepted },
 	shortCloseRequestItemsRepository: { sumApprovedQtyForPoWoItem: mockSumApprovedShortClose },
+	purchaseInvoiceItemsRepository: { sumInvoicedQtyForPoWoItem: mockSumInvoiced },
 }));
 
 const { sequelize, ShortCloseRequest, ShortCloseRequestItem, PurchaseOrder, WorkOrder } = require('../../models/index');
@@ -80,11 +82,15 @@ beforeEach(() => {
 });
 
 describe('computeRemainingForItem', () => {
-	it('is ordered − accepted − short-closed, floored at 0', async () => {
+	it('is ordered − accepted − short-closed, floored at 0 (purchase_order, QC-sourced)', async () => {
 		mockSumAccepted.mockResolvedValue(70);
 		mockSumApprovedShortClose.mockResolvedValue(10);
 
-		const result = await shortCloseService.computeRemainingForItem(poItem({ qty: 100 }));
+		const result = await shortCloseService.computeRemainingForItem(
+			poItem({ qty: 100 }),
+			'purchase_order',
+			{ id: 50 },
+		);
 
 		expect(result).toEqual({
 			ordered_qty: 100,
@@ -92,15 +98,51 @@ describe('computeRemainingForItem', () => {
 			previously_short_closed_qty: 10,
 			remaining_qty: 20,
 		});
+		expect(mockSumInvoiced).not.toHaveBeenCalled();
 	});
 
 	it('never goes negative even if accepted+short-closed somehow exceeds ordered', async () => {
 		mockSumAccepted.mockResolvedValue(80);
 		mockSumApprovedShortClose.mockResolvedValue(30);
 
-		const result = await shortCloseService.computeRemainingForItem(poItem({ qty: 100 }));
+		const result = await shortCloseService.computeRemainingForItem(
+			poItem({ qty: 100 }),
+			'purchase_order',
+			{ id: 50 },
+		);
 
 		expect(result.remaining_qty).toBe(0);
+	});
+
+	it('sources "accepted" from QC when a work_order has wo_qc_check on', async () => {
+		mockSumAccepted.mockResolvedValue(40);
+		mockSumApprovedShortClose.mockResolvedValue(0);
+
+		const result = await shortCloseService.computeRemainingForItem(
+			poItem({ qty: 100 }),
+			'work_order',
+			{ id: 60, wo_qc_check: true },
+		);
+
+		expect(result.accepted_qty).toBe(40);
+		expect(mockSumAccepted).toHaveBeenCalledWith(200, {});
+		expect(mockSumInvoiced).not.toHaveBeenCalled();
+	});
+
+	it('falls back to approved Purchase Invoice invoiced_qty when a work_order has wo_qc_check off', async () => {
+		mockSumInvoiced.mockResolvedValue(45);
+		mockSumApprovedShortClose.mockResolvedValue(0);
+
+		const result = await shortCloseService.computeRemainingForItem(
+			poItem({ qty: 100 }),
+			'work_order',
+			{ id: 60, wo_qc_check: false },
+		);
+
+		expect(result.accepted_qty).toBe(45);
+		expect(result.remaining_qty).toBe(55);
+		expect(mockSumInvoiced).toHaveBeenCalledWith(200, {});
+		expect(mockSumAccepted).not.toHaveBeenCalled();
 	});
 });
 
@@ -281,7 +323,7 @@ describe('approveShortCloseRequest', () => {
 		ShortCloseRequest.findOne.mockResolvedValueOnce(woRequest);
 		ShortCloseRequest.findOne.mockResolvedValueOnce(woRequest);
 		WorkOrder.findOne.mockResolvedValue(
-			poDoc({ id: 60, indent_id: 9 }),
+			poDoc({ id: 60, indent_id: 9, wo_qc_check: true }),
 		);
 		mockSumAccepted.mockResolvedValue(70);
 		mockSumApprovedShortClose.mockResolvedValue(0);

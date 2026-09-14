@@ -200,7 +200,7 @@ describe('validateIndentLineBudget — committed-amount status filtering', () =>
 		);
 	});
 
-	it('excludes only cancelled/rejected WO lines — a draft WO already committed at create', async () => {
+	it('only counts approved WO lines — a WO commits nothing until approveWorkOrder', async () => {
 		mockIndentItemFindOne.mockResolvedValue(valueWiseIndentItem({ amount: 100 }));
 		await validateIndentLineBudget({
 			indent_id: 5,
@@ -210,9 +210,7 @@ describe('validateIndentLineBudget — committed-amount status filtering', () =>
 		});
 		const woCallArgs = mockWoItemFindAll.mock.calls[0][0];
 		const woInclude = woCallArgs.include[0];
-		expect(woInclude.where.status[Object.getOwnPropertySymbols(woInclude.where.status)[0]]).toEqual(
-			['cancelled', 'rejected'],
-		);
+		expect(woInclude.where.status).toBe('approved');
 	});
 
 	it('excludes the document being edited from its own committed-amount sum (no double count on update)', async () => {

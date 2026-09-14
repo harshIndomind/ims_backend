@@ -42,10 +42,10 @@ const {
 // the qty ledger only moves on submitPurchaseOrder); the amount ledger mirrors that exactly,
 // so draft/cancelled/rejected PO lines must not count as committed.
 const PO_UNCOMMITTED_STATUSES = ['draft', 'cancelled', 'rejected'];
-// A WO commits against its indent unconditionally at create (work-order.service.js's
-// createWorkOrder calls applyIndentQtyDeltaForWorkOrder immediately, with no draft gate) —
-// only cancelled/rejected WO lines release their commitment.
-const WO_UNCOMMITTED_STATUSES = ['cancelled', 'rejected'];
+// A WO only commits against its indent once approved (work-order.service.js's
+// approveWorkOrder calls applyIndentQtyDeltaForWorkOrder there, and only on the stage
+// that actually resolves to 'approved') — draft/in_progress/cancelled/rejected WO lines
+// never commit anything, so only 'approved' counts here (see getCommittedTaxableAmount).
 
 function round2(n) {
 	return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -124,7 +124,7 @@ async function getCommittedTaxableAmount({
 				required: true,
 				where: {
 					indent_id: indentItem.indent_id,
-					status: { [Op.notIn]: WO_UNCOMMITTED_STATUSES },
+					status: 'approved',
 					...(excludeWorkOrderId ? { id: { [Op.ne]: excludeWorkOrderId } } : {}),
 				},
 			},

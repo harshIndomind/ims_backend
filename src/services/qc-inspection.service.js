@@ -40,6 +40,7 @@ const {
 	qcInspectionItemsRepository,
 	shortCloseRequestItemsRepository,
 	orderDocumentRepository,
+	purchaseInvoiceItemsRepository,
 } = require('../repository/index');
 const workflowEngine = require('./workflowEngine.service');
 const auditLogService = require('./auditLog.service');
@@ -355,11 +356,21 @@ exports.getRemainingForDocument = async (req, { document_type, document_id }) =>
 	});
 	if (!doc) throw new AppError(`${config.label} not found`, StatusCodes.NOT_FOUND);
 
+	// Work Orders with QC bypassed (wo_qc_check=false — the norm for pure-service WOs, since
+	// there's nothing physical to inspect) never get a QC accepted_qty, so "actual delivered
+	// qty" falls back to Σ approved-Purchase-Invoice invoiced_qty for that line instead — the
+	// closest thing services have to a GRN/QC receipt confirmation. PO items and QC-required
+	// WO items are unaffected. Keep in sync with the identical formula in
+	// short-close.service.js::computeRemainingForItem (see its own header comment).
+	const useInvoiceAsActual = document_type === 'work_order' && !doc[config.qcCheckField];
+
 	const items = await Promise.all(
 		doc.items.map(async (item) => {
 			const orderedQty = parseFloat(item.qty);
 			const [acceptedQty, receivedQty, shortClosedQty] = await Promise.all([
-				qcInspectionItemsRepository.sumAcceptedQtyForPoWoItem(item.id),
+				useInvoiceAsActual
+					? purchaseInvoiceItemsRepository.sumInvoicedQtyForPoWoItem(item.id)
+					: qcInspectionItemsRepository.sumAcceptedQtyForPoWoItem(item.id),
 				qcInspectionItemsRepository.sumReceivedQtyForPoWoItem(item.id),
 				shortCloseRequestItemsRepository.sumApprovedQtyForPoWoItem(item.id),
 			]);
