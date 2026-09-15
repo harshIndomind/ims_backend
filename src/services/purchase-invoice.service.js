@@ -60,6 +60,7 @@ const auditLogService = require('./auditLog.service');
 const { createWorkflowDocumentService } = require('./workflowDocument.factory');
 const { calculateDocumentTotals } = require('../utils/charge-tax-engine.util');
 const { round2 } = require('../utils/money');
+const { fetchProductGroupsByIds } = require('../utils/vcpProductGroups');
 
 const DOCUMENT_TYPE = 'purchase_invoice';
 
@@ -189,6 +190,10 @@ exports.getInvoiceableItems = async (req, { document_type, document_id }) => {
 	});
 	if (!doc) throw new AppError(`${config.label} not found`, StatusCodes.NOT_FOUND);
 
+	// Fetched once for the whole document, not per-item, then attached below — same
+	// approach qc-inspection.service.js uses for its own item list.
+	const productGroupsMap = await fetchProductGroupsByIds(req, doc.items.map((item) => item.product_id));
+
 	const items = await Promise.all(
 		doc.items.map(async (item) => {
 			const [receivedQty, alreadyInvoicedQty] = await Promise.all([
@@ -199,6 +204,7 @@ exports.getInvoiceableItems = async (req, { document_type, document_id }) => {
 				po_wo_item_id: item.id,
 				product_id: item.product_id,
 				productSnapshot: item.productSnapshot ?? null,
+				product_groups: productGroupsMap.get(item.product_id) || [],
 				// Drives whether the create form even shows a Batch/Serial column
 				// for this row — the actual received batch/serial values come from
 				// whichever MRN/QC the line was scoped to (resolved client-side,
@@ -663,7 +669,20 @@ exports.createPurchaseInvoice = async (req, body) => {
 	return fetchInvoiceOrThrow(invoice.id);
 };
 
-exports.getPurchaseInvoice = async (req, id) => fetchInvoiceOrThrow(id);
+exports.getPurchaseInvoice = async (req, id) => {
+	const invoice = await fetchInvoiceOrThrow(id);
+	const plain = invoice.get({ plain: true });
+
+	// Attach each item's active Product Group(s) here too, so the edit/view form can
+	// cluster items by group — same approach as qc-inspection.service.js::getInspectionById.
+	const productGroupsMap = await fetchProductGroupsByIds(req, (plain.items || []).map((item) => item.product_id));
+	plain.items = (plain.items || []).map((item) => ({
+		...item,
+		product_groups: productGroupsMap.get(item.product_id) || [],
+	}));
+
+	return plain;
+};
 
 exports.listPurchaseInvoices = async (req, query = {}) => {
 	const { org_id } = req.user;
