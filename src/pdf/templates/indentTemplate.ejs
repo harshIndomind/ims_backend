@@ -530,6 +530,8 @@
                         <th>Issued Qty</th>
                         <th>Pending Qty (Re-issue)</th>
                         <th>Qty For PO</th>
+                        <th>Contractor</th>
+                        <th>Work Order</th>
                         <th>Status</th>
                     </tr>
                 </thead>
@@ -552,6 +554,13 @@
                         <td style="text-align:right;"><%= item.pendingQty.toFixed(2) %></td>
                         <td style="text-align:right;"><%= item.qtyForPurchaseOrder.toFixed(2) %></td>
                         <td style="text-align:center;">
+                            <%= item.contractorName || '-' %>
+                            <% if (item.contractorCode) { %>
+                                <br><small><strong>Code:</strong> <%= item.contractorCode %></small>
+                            <% } %>
+                        </td>
+                        <td style="text-align:center;"><%= item.workOrderNo || '-' %></td>
+                        <td style="text-align:center;">
                             <% if (item.statusLabel === 'Pending Re-issue') { %>
                                 <span class="status-pill status-pending">Pending Re-issue</span>
                             <% } else if (item.statusLabel === 'Fully Issued') { %>
@@ -573,6 +582,8 @@
                         <th style="text-align:right;"><%= parseFloat(invoice.totalPendingQty).toFixed(2) %></th>
                         <th></th>
                         <th></th>
+                        <th></th>
+                        <th></th>
                     </tr>
                 </tfoot>
             </table>
@@ -589,6 +600,8 @@
                             <th>UOM</th>
                             <th>Qty Issued</th>
                             <th>Balance After</th>
+                            <th>Contractor</th>
+                            <th>Work Order</th>
                             <th>Issued By</th>
                         </tr>
                     </thead>
@@ -600,6 +613,13 @@
                             <td style="text-align:center;"><%= log.uom_name %></td>
                             <td style="text-align:right;"><%= parseFloat(log.issued_qty).toFixed(2) %></td>
                             <td style="text-align:right;"><%= parseFloat(log.new_value).toFixed(2) %></td>
+                            <td style="text-align:center;">
+                                <%= log.vendor_snapshot?.name || '-' %>
+                                <% if (log.vendor_snapshot?.code) { %>
+                                    <br><small><strong>Code:</strong> <%= log.vendor_snapshot.code %></small>
+                                <% } %>
+                            </td>
+                            <td style="text-align:center;"><%= log.workOrderNo || '-' %></td>
                             <td style="text-align:center;"><%= log.performed_by?.name || '' %></td>
                         </tr>
                         <% }) %>

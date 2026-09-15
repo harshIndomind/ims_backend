@@ -11,6 +11,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'indent_item_id',
 				as: 'indentItem',
 			});
+			IndentItemQtyLog.belongsTo(models.WorkOrder, {
+				foreignKey: 'work_order_id',
+				as: 'workOrder',
+			});
 		}
 	}
 	IndentItemQtyLog.init(
@@ -40,6 +44,22 @@ module.exports = (sequelize, DataTypes) => {
 				allowNull: false,
 			},
 			source_ref_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
+			vendor_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
+			// Snapshot of VCP vendor fields (name, code, gstin, ...) at reissue time — vendor_id
+			// is a cross-service id with no local table to join for display. JSON so more fields
+			// can be captured later without another migration, same pattern as
+			// WorkOrder/PurchaseOrder.vendorInfo.
+			vendor_snapshot: {
+				type: DataTypes.JSON,
+				allowNull: true,
+			},
+			work_order_id: {
 				type: DataTypes.INTEGER,
 				allowNull: true,
 			},

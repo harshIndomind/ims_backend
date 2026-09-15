@@ -141,7 +141,8 @@ exports.previewReissue = catchAsync(async (req, res) => {
 
 exports.reissueIndent = catchAsync(async (req, res) => {
 	const { id } = req.params;
-	const data = await indentService.reissuePendingQuantity(req, id);
+	const { allocations } = req.body;
+	const data = await indentService.reissuePendingQuantity(req, id, allocations);
 
 	res.status(StatusCodes.OK).json({
 		message: 'Indent re-issue checked successfully',

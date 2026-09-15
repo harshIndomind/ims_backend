@@ -1067,12 +1067,95 @@ exports.previewReissue = async (req, indentId) => {
  * user-initiated action (see previewReissue above) — not triggered automatically by GRN
  * creation, so cancelling a GRN can never leave a re-issue dangling against stock that's
  * no longer there.
+ *
+ * `allocations` is the caller's per-item choice of how much to re-issue and to which
+ * contractor/work order it's being handed over — [{ indent_item_id, qty, vendor_id,
+ * work_order_id }]. Only items named here are touched; anything left out keeps its
+ * balance_indent_qty untouched for a later re-issue against a different contractor/WO.
+ * `qty` may be less than the item's full balance (a partial hand-over) but never more —
+ * and however much VCP actually manages to allocate (which can be less than requested,
+ * same as the no-allocations behavior this replaced) is what gets logged against that
+ * vendor/work order.
  */
-exports.reissuePendingQuantity = async (req, indentId) => {
-	const { pendingItems, plainPendingItems } = await getPendingReissueItems(req, indentId);
-	if (pendingItems.length === 0) {
+exports.reissuePendingQuantity = async (req, indentId, allocations) => {
+	if (!Array.isArray(allocations) || allocations.length === 0) {
+		throw new AppError(
+			'Select at least one item with a quantity, contractor and work order to re-issue',
+			StatusCodes.BAD_REQUEST,
+		);
+	}
+
+	const allocationMap = new Map();
+	for (const a of allocations) {
+		const itemId = parseInt(a.indent_item_id, 10);
+		const qty = parseFloat(a.qty);
+		const vendorId = parseInt(a.vendor_id, 10);
+		// Arbitrary VCP vendor fields (name, code, gstin, ...) captured at reissue time — kept as
+		// a single JSON blob so a new field never needs another migration. Just display data, not
+		// used for any authorization/business logic, so it's stored as-given.
+		const vendorSnapshot =
+			a.vendor_snapshot && typeof a.vendor_snapshot === 'object' && !Array.isArray(a.vendor_snapshot)
+				? a.vendor_snapshot
+				: null;
+		// Work order is optional for now — a contractor can be assigned material ahead of
+		// (or without) a specific work order being on file for it yet.
+		const workOrderId = a.work_order_id != null && a.work_order_id !== '' ? parseInt(a.work_order_id, 10) : null;
+		if (!itemId || !(qty > 0) || !vendorId) {
+			throw new AppError(
+				'Each re-issue allocation needs an item, a quantity greater than 0, and a contractor',
+				StatusCodes.BAD_REQUEST,
+			);
+		}
+		allocationMap.set(itemId, { qty, vendorId, vendorSnapshot, workOrderId });
+	}
+
+	const { pendingItems: allPendingItems, plainPendingItems: allPlainPendingItems } =
+		await getPendingReissueItems(req, indentId);
+	if (allPendingItems.length === 0) {
 		return { indent_id: indentId, reissued: [] };
 	}
+
+	const pendingItemsById = new Map(allPendingItems.map((item) => [item.id, item]));
+	const pendingItems = allPendingItems.filter((item) => allocationMap.has(item.id));
+	if (pendingItems.length === 0) {
+		throw new AppError(
+			'None of the selected items currently have a pending balance to re-issue',
+			StatusCodes.BAD_REQUEST,
+		);
+	}
+
+	// Work orders must belong to this indent — guards against a stale/foreign id slipping
+	// through from the client. Optional, so only checked where one was actually given.
+	const workOrderIds = [...new Set([...allocationMap.values()].map((a) => a.workOrderId).filter(Boolean))];
+	if (workOrderIds.length > 0) {
+		const validWorkOrders = await WorkOrder.findAll({
+			where: { id: { [Op.in]: workOrderIds }, indent_id: indentId },
+			attributes: ['id'],
+		});
+		const validWorkOrderIds = new Set(validWorkOrders.map((wo) => wo.id));
+		for (const allocation of allocationMap.values()) {
+			if (allocation.workOrderId && !validWorkOrderIds.has(allocation.workOrderId)) {
+				throw new AppError(
+					`Work order ${allocation.workOrderId} does not belong to this indent`,
+					StatusCodes.BAD_REQUEST,
+				);
+			}
+		}
+	}
+
+	const plainPendingItems = allPlainPendingItems
+		.filter((plain) => allocationMap.has(plain.id))
+		.map((plain) => {
+			const allocation = allocationMap.get(plain.id);
+			const balance = parseFloat(pendingItemsById.get(plain.id).balance_indent_qty);
+			if (allocation.qty > balance + 1e-6) {
+				throw new AppError(
+					`Requested qty for item ${plain.id} exceeds its pending balance (${balance})`,
+					StatusCodes.BAD_REQUEST,
+				);
+			}
+			return { ...plain, qty: allocation.qty };
+		});
 
 	const reissueIdempotencyKey = `INDENT-${indentId}-REISSUE-${crypto.randomUUID()}`;
 	const { allocationResults } = await verifyIndentQuantityWithProductServices(
@@ -1083,16 +1166,17 @@ exports.reissuePendingQuantity = async (req, indentId) => {
 	);
 	// See previewReissue's comment above — must key by indent_item_id, not product_id, or a
 	// second line for the same product overwrites the first's allocation in this map.
-	const allocationMap = new Map(allocationResults.map((a) => [a.indent_item_id, a]));
+	const resultMap = new Map(allocationResults.map((a) => [a.indent_item_id, a]));
 
 	const transaction = await sequelize.transaction();
 	const reissued = [];
 	try {
 		for (const item of pendingItems) {
-			const allocation = allocationMap.get(item.id);
+			const allocation = resultMap.get(item.id);
 			const newlyIssued = roundQty(allocation?.issued_qty || 0);
 			if (newlyIssued <= 0) continue;
 
+			const requested = allocationMap.get(item.id);
 			const newlyIssuedBase = parseFloat(allocation?.base_issued_qty ?? allocation?.issued_qty ?? 0);
 			const previousBalance = parseFloat(item.balance_indent_qty);
 			const updatedBalance = roundQty(previousBalance - newlyIssued);
@@ -1129,13 +1213,20 @@ exports.reissuePendingQuantity = async (req, indentId) => {
 				previousValue: previousBalance,
 				newValue: updatedBalance,
 				source: 'reissued',
+				vendorId: requested.vendorId,
+				vendorSnapshot: requested.vendorSnapshot,
+				workOrderId: requested.workOrderId,
 				transaction,
 			});
 
 			reissued.push({
+				indent_item_id: item.id,
 				product_id: item.product_id,
 				issued_qty: newlyIssued,
 				balance_indent_qty: updatedBalance,
+				vendor_id: requested.vendorId,
+				vendor_snapshot: requested.vendorSnapshot,
+				work_order_id: requested.workOrderId,
 			});
 		}
 
@@ -1293,9 +1384,18 @@ exports.generateInvoiceHtml = async (req) => {
 	if (!indent) throw new AppError('Indent not found', StatusCodes.NOT_FOUND);
 
 	// findByIndentIds spreads `options` over its default `where`, replacing it rather than
-	// merging, so indent_id must be included here alongside the extra filters.
+	// merging, so indent_id must be included here alongside the extra filters. WorkOrder is
+	// joined for its doc number — vendor has no local table (cross-service VCP id), so its
+	// display fields are a snapshot on `vendor_snapshot` (JSON) captured at reissue time instead.
 	const qtyLogs = await indentItemQtyLogRepository.findByIndentIds([id], {
 		where: { indent_id: id, field: 'balance_indent_qty', source: 'reissued' },
+		include: [
+			{
+				model: WorkOrder,
+				as: 'workOrder',
+				attributes: ['id', 'doc_number', 'woPrefix', 'woNo', 'woPostfix'],
+			},
+		],
 	});
 
 	const response = await calculateIndentInvoice(indent, qtyLogs);
@@ -1309,6 +1409,11 @@ exports.downloadInvoicePdf = async (req) => {
 	const pdfPath = await generateInvoiceHTMLPDF(html, 'indentTemplate', { multi: true });
 	return pdfPath;
 };
+
+function workOrderNumber(wo) {
+	if (!wo) return null;
+	return wo.doc_number || `${wo.woPrefix || ''}${wo.woNo || ''}${wo.woPostfix || ''}` || null;
+}
 
 async function calculateIndentInvoice(indent, qtyLogs) {
 	const invoiceData = indent.get({ plain: true });
@@ -1360,6 +1465,17 @@ async function calculateIndentInvoice(indent, qtyLogs) {
 			${business.city || ''} - ${business.pincode || ''}, ${business?._state?.state_name || ''}<br>`;
 	}
 
+	// One log row per reissue event, in ascending createdAt order (indentItemQtyLogRepository's
+	// default order) — so the last one written per item, kept here, is the most recent reissue.
+	// Used to show each item's current contractor/work order on the main table; the full
+	// per-event breakdown (an item can be reissued to different contractors over time) is in
+	// reissueHistory below.
+	const latestReissueByItem = new Map();
+	for (const log of qtyLogs || []) {
+		const plain = log.get ? log.get({ plain: true }) : log;
+		latestReissueByItem.set(plain.indent_item_id, plain);
+	}
+
 	const productItems = (invoiceData.IndentItems || []).map((item) => {
 		const requestedQty = parseFloat(item.qty || 0);
 		const issuedQty = parseFloat(item.qty_issued || 0);
@@ -1377,6 +1493,8 @@ async function calculateIndentInvoice(indent, qtyLogs) {
 			statusLabel = 'Open';
 		}
 
+		const latestReissue = latestReissueByItem.get(item.id);
+
 		return {
 			...item,
 			requestedQty,
@@ -1384,6 +1502,9 @@ async function calculateIndentInvoice(indent, qtyLogs) {
 			pendingQty,
 			qtyForPurchaseOrder,
 			statusLabel,
+			contractorName: latestReissue?.vendor_snapshot?.name || null,
+			contractorCode: latestReissue?.vendor_snapshot?.code || null,
+			workOrderNo: workOrderNumber(latestReissue?.workOrder),
 		};
 	});
 
@@ -1395,6 +1516,7 @@ async function calculateIndentInvoice(indent, qtyLogs) {
 			item_name: sourceItem?.item_name || `Item #${plain.indent_item_id}`,
 			uom_name: sourceItem?.uom_name || '',
 			issued_qty: Math.abs(parseFloat(plain.delta || 0)),
+			workOrderNo: workOrderNumber(plain.workOrder),
 		};
 	});
 

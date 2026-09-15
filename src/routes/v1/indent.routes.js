@@ -4,6 +4,8 @@ const indentDocumentController = require('../../controllers/indentDocument.contr
 const { upload: indentDocUpload } = require('../../middlewares/indentDocumentUpload');
 const checkPermission = require('../../middlewares/checkPermission');
 const verifyToken = require('../../middlewares/verifyToken');
+const { validate } = require('../../middlewares/validate');
+const { validationReissueIndent } = require('../../validations/Indent.validator');
 
 router.use(verifyToken); // all routes protected
 
@@ -55,6 +57,8 @@ router.post(
 router.post(
 	'/:id/reissue',
 	checkPermission('indent', 'approve'),
+	validationReissueIndent,
+	validate,
 	indentController.reissueIndent,
 );
 
