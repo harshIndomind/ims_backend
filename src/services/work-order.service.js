@@ -499,9 +499,17 @@ exports.updateWorkOrder = async (req) => {
  */
 function buildWorkOrderFilters(req) {
 	const { org_id } = req.user;
-	const { from_date, to_date, unit_id, due_date_from, due_date_to, payment_status, dispatch_status_filter } = req.query;
+	const { from_date, to_date, unit_id, due_date_from, due_date_to, payment_status, dispatch_status_filter, indent_id, status } = req.query;
 
 	const andConditions = [{ org_id }];
+
+	if (indent_id) {
+		andConditions.push({ indent_id: Number(indent_id) });
+	}
+
+	if (status) {
+		andConditions.push({ status });
+	}
 
 	if (from_date || to_date) {
 		const fromDate = new Date(from_date);
