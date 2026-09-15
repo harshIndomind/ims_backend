@@ -773,7 +773,7 @@ exports.getAllPurchaseOrders = async (req) => {
 			{
 				model: Indent,
 				as: 'indent',
-				attributes: ['id', 'unit_id', 'department_id'],
+				attributes: ['id', 'unit_id', 'department_id', 'indent_no'],
 				where: unitId ? { unit_id: unitId } : undefined,
 				required: !!unitId,
 				include: [
