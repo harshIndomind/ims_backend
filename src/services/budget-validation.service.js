@@ -37,6 +37,7 @@ const {
 	WorkOrder,
 	WorkOrderItem,
 } = require('../models/index');
+const shortCloseRequestItemsRepository = require('../repository/shortCloseRequestItems.repository');
 
 // A draft PO has never deducted anything from its indent (see purchase-order.service.js —
 // the qty ledger only moves on submitPurchaseOrder); the amount ledger mirrors that exactly,
@@ -61,6 +62,31 @@ function taxableAmountOf(row) {
 	const tax = Number(row.igst || 0) + Number(row.cgst || 0) + Number(row.sgst || 0);
 	const cess = Number(row.cess || 0);
 	return total - tax - cess;
+}
+
+/**
+ * A PO/WO line's taxable amount, net of any qty approved-short-closed off of it.
+ *
+ * Short Close (see short-close.service.js) releases short-closed qty back onto
+ * IndentItem.qty_for_purchase_order so a follow-up PO/WO can be raised for it, but it never
+ * reduces the original PO/WO line's own `qty`/`total` (short-closed qty is always derived via
+ * shortCloseRequestItemsRepository, same as QC's accepted_qty — never stored on the item). Left
+ * unaccounted for here, that released qty would count as "committed" TWICE: once on the
+ * original line (still carrying its full original amount) and again on the follow-up
+ * document's own requested amount — permanently eating indent budget headroom that Short
+ * Close was supposed to give back. Netting each line down to its still-active qty (qty minus
+ * approved short-close qty) before summing "committed" fixes that.
+ */
+async function netTaxableAmount(row, transaction) {
+	const total = taxableAmountOf(row);
+	const qty = Number(row.qty || 0);
+	if (!qty) return total;
+	const shortClosedQty = Number(
+		await shortCloseRequestItemsRepository.sumApprovedQtyForPoWoItem(row.id, { transaction }),
+	);
+	if (!shortClosedQty) return total;
+	const netQty = Math.max(qty - shortClosedQty, 0);
+	return (total / qty) * netQty;
 }
 
 /**
@@ -132,8 +158,12 @@ async function getCommittedTaxableAmount({
 		transaction,
 	});
 
-	const poAmount = poRows.reduce((sum, r) => sum + taxableAmountOf(r), 0);
-	const woAmount = woRows.reduce((sum, r) => sum + taxableAmountOf(r), 0);
+	const [poAmounts, woAmounts] = await Promise.all([
+		Promise.all(poRows.map((r) => netTaxableAmount(r, transaction))),
+		Promise.all(woRows.map((r) => netTaxableAmount(r, transaction))),
+	]);
+	const poAmount = poAmounts.reduce((sum, a) => sum + a, 0);
+	const woAmount = woAmounts.reduce((sum, a) => sum + a, 0);
 	return round2(poAmount + woAmount);
 }
 

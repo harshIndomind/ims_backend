@@ -3,6 +3,7 @@
 const mockIndentItemFindOne = jest.fn();
 const mockPoItemFindAll = jest.fn();
 const mockWoItemFindAll = jest.fn();
+const mockSumApprovedShortCloseQty = jest.fn();
 
 jest.mock('../../models/index', () => ({
 	Indent: {},
@@ -11,6 +12,10 @@ jest.mock('../../models/index', () => ({
 	PurchaseOrderItem: { findAll: mockPoItemFindAll },
 	WorkOrder: {},
 	WorkOrderItem: { findAll: mockWoItemFindAll },
+}));
+
+jest.mock('../../repository/shortCloseRequestItems.repository', () => ({
+	sumApprovedQtyForPoWoItem: mockSumApprovedShortCloseQty,
 }));
 
 const {
@@ -37,14 +42,15 @@ function valueWiseIndentItem(overrides = {}) {
 
 // A PO/WO line's stored shape: tax-inclusive `total` plus its own tax components — mirrors
 // what purchase-order.service.js/work-order.service.js actually persist per line.
-function poLine({ total = 118, igst = 0, cgst = 9, sgst = 9, cess = 0 } = {}) {
-	return { total, igst, cgst, sgst, cess };
+function poLine({ id = 1, qty, total = 118, igst = 0, cgst = 9, sgst = 9, cess = 0 } = {}) {
+	return { id, qty, total, igst, cgst, sgst, cess };
 }
 
 beforeEach(() => {
 	jest.clearAllMocks();
 	mockPoItemFindAll.mockResolvedValue([]);
 	mockWoItemFindAll.mockResolvedValue([]);
+	mockSumApprovedShortCloseQty.mockResolvedValue(0);
 });
 
 describe('taxableAmountOf', () => {
@@ -227,6 +233,53 @@ describe('validateIndentLineBudget — committed-amount status filtering', () =>
 		expect(poInclude.where.id[Object.getOwnPropertySymbols(poInclude.where.id)[0]]).toBe(42);
 		const woInclude = mockWoItemFindAll.mock.calls[0][0].include[0];
 		expect(woInclude.where.id[Object.getOwnPropertySymbols(woInclude.where.id)[0]]).toBe(7);
+	});
+});
+
+describe('validateIndentLineBudget — nets out approved short-closed qty from committed amount', () => {
+	// Reproduces the reported bug: Indent amount 650 (13 units @ 50), PO1 ordered all 13
+	// (taxable 650), then 3 were short-closed (released back onto IndentItem.qty_for_purchase_order
+	// so a follow-up PO/WO can be raised for them). Before this fix, the committed sum ignored the
+	// short-close and stayed at the full 650, so a follow-up PO for exactly the released 3 units
+	// (150) was wrongly rejected as a 150 excess even though nothing was actually over-ordered.
+	it('reduces a PO line\'s committed amount by its approved short-closed qty', async () => {
+		mockIndentItemFindOne.mockResolvedValue(valueWiseIndentItem({ amount: 650 }));
+		mockPoItemFindAll.mockResolvedValue([poLine({ id: 1, qty: 13, total: 650, cgst: 0, sgst: 0 })]);
+		mockSumApprovedShortCloseQty.mockResolvedValue(3);
+
+		// Committed nets to (650/13)*(13-3) = 500, leaving 150 available — exactly the
+		// short-closed qty's own value, so the follow-up PO for it must now pass.
+		await expect(
+			validateIndentLineBudget({
+				indent_id: 5,
+				product_id: 10,
+				requestedTaxableAmount: 150,
+				transaction: mockTransaction,
+			}),
+		).resolves.toBeUndefined();
+		expect(mockSumApprovedShortCloseQty).toHaveBeenCalledWith(1, { transaction: mockTransaction });
+
+		await expect(
+			validateIndentLineBudget({
+				indent_id: 5,
+				product_id: 10,
+				requestedTaxableAmount: 150.01,
+				transaction: mockTransaction,
+			}),
+		).rejects.toThrow(/Budget limit exceeded/);
+	});
+
+	it('does not look up short-close qty for a line with no qty on it', async () => {
+		mockIndentItemFindOne.mockResolvedValue(valueWiseIndentItem({ amount: 1000 }));
+		mockPoItemFindAll.mockResolvedValue([poLine({ id: 1, qty: undefined, total: 118 })]);
+
+		await validateIndentLineBudget({
+			indent_id: 5,
+			product_id: 10,
+			requestedTaxableAmount: 1,
+			transaction: mockTransaction,
+		});
+		expect(mockSumApprovedShortCloseQty).not.toHaveBeenCalled();
 	});
 });
 
