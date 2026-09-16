@@ -263,12 +263,21 @@ exports.getInvoiceableItems = async (req, { document_type, document_id }) => {
 // QC/MRN items reference po_wo_item_id/purchase_order_item_id directly (see
 // QcInspectionItem/GoodsReceiptNoteItem), so a QC or MRN is hidden once every
 // item it touches is exhausted — it cannot unlock any further invoiceable qty.
+// PO/WO status includes 'completed' alongside 'approved' — a document short-closed to zero
+// remaining_qty flips to 'completed' (short-close.service.js's maybeCompleteDocument) even
+// though its already-accepted-but-not-yet-invoiced qty can still be legitimately billed.
+// Scanning only 'approved' here would leave such a document out of `itemExhausted`/
+// `docExhausted` forever, so once the create form's dropdown (which must also accept
+// 'completed', see purchase-invoice-form.tsx) starts offering it, it would never get hidden
+// again even after being fully invoiced.
+const INVOICEABLE_DOC_STATUSES = ['approved', 'completed'];
+
 exports.getExhaustedLookupIds = async (req, { document_type }) => {
 	const { org_id } = req.user;
 	const config = resolveDocConfig(document_type);
 
 	const docs = await config.model.findAll({
-		where: { org_id, status: 'approved' },
+		where: { org_id, status: { [Op.in]: INVOICEABLE_DOC_STATUSES } },
 		include: [{ model: config.itemModel, as: 'items' }],
 	});
 
