@@ -508,7 +508,12 @@ function buildWorkOrderFilters(req) {
 	}
 
 	if (status) {
-		andConditions.push({ status });
+		// Comma-separated, same convention as payment_status below — a WO fully settled via
+		// Short Close moves from 'approved' to 'completed' (see short-close.service.js's
+		// maybeCompleteDocument), so callers that want "still a valid, active contract" need
+		// both, not just 'approved'.
+		const statuses = status.split(',').map((s) => s.trim()).filter(Boolean);
+		andConditions.push({ status: { [Op.in]: statuses } });
 	}
 
 	if (from_date || to_date) {
