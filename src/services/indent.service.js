@@ -1089,7 +1089,9 @@ exports.reissuePendingQuantity = async (req, indentId, allocations) => {
 	for (const a of allocations) {
 		const itemId = parseInt(a.indent_item_id, 10);
 		const qty = parseFloat(a.qty);
-		const vendorId = parseInt(a.vendor_id, 10);
+		// Contractor and work order are both optional — but a work order is meaningless without
+		// knowing which contractor it's for, so picking a contractor forces a work order too.
+		const vendorId = a.vendor_id != null && a.vendor_id !== '' ? parseInt(a.vendor_id, 10) : null;
 		// Arbitrary VCP vendor fields (name, code, gstin, ...) captured at reissue time — kept as
 		// a single JSON blob so a new field never needs another migration. Just display data, not
 		// used for any authorization/business logic, so it's stored as-given.
@@ -1097,12 +1099,16 @@ exports.reissuePendingQuantity = async (req, indentId, allocations) => {
 			a.vendor_snapshot && typeof a.vendor_snapshot === 'object' && !Array.isArray(a.vendor_snapshot)
 				? a.vendor_snapshot
 				: null;
-		// Work order is optional for now — a contractor can be assigned material ahead of
-		// (or without) a specific work order being on file for it yet.
 		const workOrderId = a.work_order_id != null && a.work_order_id !== '' ? parseInt(a.work_order_id, 10) : null;
-		if (!itemId || !(qty > 0) || !vendorId) {
+		if (!itemId || !(qty > 0)) {
 			throw new AppError(
-				'Each re-issue allocation needs an item, a quantity greater than 0, and a contractor',
+				'Each re-issue allocation needs an item and a quantity greater than 0',
+				StatusCodes.BAD_REQUEST,
+			);
+		}
+		if (vendorId && !workOrderId) {
+			throw new AppError(
+				'Select a work order for the item assigned to a contractor',
 				StatusCodes.BAD_REQUEST,
 			);
 		}

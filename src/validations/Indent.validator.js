@@ -5,6 +5,18 @@ exports.validationReissueIndent = [
 		.isArray({ min: 1 })
 		.withMessage('Select at least one item to re-issue'),
 
+	// Contractor and work order are both optional, but a work order is meaningless without
+	// knowing which contractor it's for — so picking a contractor forces a work order too.
+	body('allocations').custom((allocations) => {
+		if (!Array.isArray(allocations)) return true;
+		for (const allocation of allocations) {
+			if (allocation?.vendor_id && !allocation?.work_order_id) {
+				throw new Error('Select a work order for the item assigned to a contractor');
+			}
+		}
+		return true;
+	}),
+
 	body('allocations.*.indent_item_id')
 		.notEmpty()
 		.withMessage('indent_item_id is required')
@@ -20,8 +32,7 @@ exports.validationReissueIndent = [
 		.toFloat(),
 
 	body('allocations.*.vendor_id')
-		.notEmpty()
-		.withMessage('Contractor is required')
+		.optional({ checkFalsy: true })
 		.isInt()
 		.withMessage('Contractor must be a valid selection')
 		.toInt(),
