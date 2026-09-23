@@ -45,7 +45,7 @@ const indentQtyLogService = require('./indentQtyLog.service');
 const { createWorkflowDocumentService } = require('./workflowDocument.factory');
 const { generateInvoiceHTML, generateInvoiceHTMLPDF } = require('../pdf/htmlPdfGenerator');
 const { getImageAsBase64DataUrl } = require('../utils/s3Bucket');
-// const dataVisibility = require('./dataVisibility.service');
+const dataVisibility = require('./dataVisibility.service');
 
 const DOCUMENT_TYPE = 'indent';
 
@@ -320,7 +320,7 @@ exports.getAllIndents = async (req) => {
 	// selectedDepartmentId in the query string.
 	// super_admin / org_admin: no filter applied.
 	// All other roles: restricts to the user's own department_id across all units.
-	// await dataVisibility.applyIndentVisibility(where, req.user);
+	await dataVisibility.applyIndentVisibility(where, req.user);
 
 	logger.debug("hasPurchaseQuantityIssue ", {hasPurchaseQuantityIssue});
 	logger.debug("Get All Indents Where ", {where});
