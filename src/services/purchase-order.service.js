@@ -80,12 +80,8 @@ exports.createPurchaseOrder = async (req, payload) => {
 		// Preserves the role gate that used to live in the now-removed generate-po-number
 		// "peek" endpoint — checkPermission('purchase-order', 'create') alone isn't enough
 		// since it bypasses everything for super_admin.
-		if (
-			!req.user.org_id ||
-			!req.user.roles.includes('org_admin') ||
-			req.user.roles.includes('app_admin')
-		) {
-			const errorMsg = req.user.role === 'Super Admin'
+		if (!req.user.org_id || req.user.roles.includes('super_admin')) {
+			const errorMsg = req.user.roles.includes('super_admin')
 				? "As a super admin user you can't create a purchase order."
 				: 'Invalid user or organization ID';
 			throw new AppError(errorMsg, 403);

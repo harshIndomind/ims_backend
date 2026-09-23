@@ -109,11 +109,8 @@ exports.createWorkOrder = async (req) => {
 		// Preserves the role gate that used to live in the now-removed generate-wo-number
 		// "peek" endpoint — checkPermission('work-order', 'create') alone isn't enough
 		// since it bypasses everything for super_admin.
-		if (
-			!req.user.org_id ||
-			(!req.user.roles.includes('org_admin') && !req.user.roles.includes('app_admin'))
-		) {
-			const errorMsg = req.user.role === 'Super Admin'
+		if (!req.user.org_id || req.user.roles.includes('super_admin')) {
+			const errorMsg = req.user.roles.includes('super_admin')
 				? "As a super admin user you can't create a work order."
 				: 'Invalid user or organization ID';
 			throw new AppError(errorMsg, 403);
