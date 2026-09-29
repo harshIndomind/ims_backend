@@ -547,6 +547,12 @@
                             <% if (item.specification) { %>
                                 <br><small><strong>Spec:</strong> <%= item.specification %></small>
                             <% } %>
+                            <% if (item.issuedSerials && item.issuedSerials.length > 0) { %>
+                                <br><small><strong>Issued S/N:</strong> <%= item.issuedSerials.join(', ') %></small>
+                            <% } %>
+                            <% if (item.reissuedSerials && item.reissuedSerials.length > 0) { %>
+                                <br><small><strong>Re-issued S/N:</strong> <%= item.reissuedSerials.join(', ') %></small>
+                            <% } %>
                         </td>
                         <td style="text-align:center;"><%= item.uom_name || '' %></td>
                         <td style="text-align:right;"><%= item.requestedQty.toFixed(2) %></td>

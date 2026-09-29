@@ -200,10 +200,38 @@ exports.createGRN = async (req) => {
 	// --- Phase 0: validate every line against the PO's ordered qty (and, for QC orders, the
 	// approved QC-accepted qty) before touching anything ---
 	const linesToReceive = [];
+	const serialsInThisGrn = new Set();
 	for (const input of items) {
 		const poItem = poItemsById.get(input.purchase_order_item_id);
 		if (!poItem) {
 			throw new AppError(`Purchase order item ${input.purchase_order_item_id} does not belong to this PO`, StatusCodes.BAD_REQUEST);
+		}
+
+		// Serial lines: qty is the serial count, so the list itself must be clean — a
+		// duplicate would be counted twice here but received only once in VCP.
+		if (poItem.stock_type === 'serial') {
+			const productName = poItem.productSnapshot?.name || poItem.id;
+			const serialNos = (Array.isArray(input.serial_nos) ? input.serial_nos : [])
+				.map((s) => String(s ?? '').trim())
+				.filter(Boolean);
+			if (serialNos.length === 0) {
+				throw new AppError(`Serial numbers are required for serial item "${productName}"`, StatusCodes.BAD_REQUEST);
+			}
+			const invalid = serialNos.filter((s) => !/^[A-Za-z0-9\-_]+$/.test(s));
+			if (invalid.length > 0) {
+				throw new AppError(
+					`Invalid serial number(s) ${invalid.join(', ')} for "${productName}" — only letters, digits, hyphens and underscores are allowed`,
+					StatusCodes.BAD_REQUEST,
+				);
+			}
+			const duplicates = [...new Set(serialNos.filter((s, i) => serialNos.indexOf(s) !== i || serialsInThisGrn.has(s)))];
+			if (duplicates.length > 0) {
+				throw new AppError(`Duplicate serial number(s) ${duplicates.join(', ')} entered for "${productName}"`, StatusCodes.BAD_REQUEST);
+			}
+			serialNos.forEach((s) => serialsInThisGrn.add(s));
+			input.serial_nos = serialNos;
+		} else {
+			input.serial_nos = undefined;
 		}
 
 		const receivedQty = parseFloat(input.received_qty || 0);
@@ -266,7 +294,7 @@ exports.createGRN = async (req) => {
 			mfd: input.mfd || undefined,
 			expiry_date: input.expiry_date || undefined,
 			sell_price: input.sell_price != null ? parseFloat(input.sell_price) : undefined,
-			qty: parseFloat(input.received_qty || 0),
+			qty: poItem.stock_type === 'serial' ? input.serial_nos.length : parseFloat(input.received_qty || 0),
 			selected_uom_id: poItem.selected_uom_id || null,
 			serial_nos: input.serial_nos || undefined,
 			rate: parseFloat(poItem.price) || null,
