@@ -404,7 +404,7 @@ exports.getAllIndents = async (req) => {
 					{
 						model: IndentSerialItem,
 						as: 'serial_items',
-						attributes: ['serial_no', 'is_issued'],
+						attributes: ['serial_no', 'is_issued', 'issued_via', 'issued_at'],
 					},
 				],
 			},
@@ -864,14 +864,8 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 				transaction,
 			});
 
-			if (i.stock_type === 'serial' && allocation?.issuedSerials?.length > 0) {
-				await IndentSerialRepository.update(
-					{ is_issued: 1 },
-					{
-						where: { serial_no: { [Op.in]: allocation.issuedSerials } },
-						transaction,
-					},
-				);
+			if (i.stock_type === 'serial') {
+				await markIndentSerialsIssued(i, allocation?.issuedSerials, 'approval', transaction);
 			}
 		}
 
@@ -927,6 +921,42 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 
 	return fetchIndentForWorkflowAction(id);
 };
+
+/**
+ * Marks the serials VCP actually issued against one indent line. VCP may top up with
+ * serials the requester never selected (e.g. ones received on an MRN after the indent was
+ * raised), which have no IndentSerialItem row yet — create those so the line still
+ * records exactly which serials were handed over. Scoped to the line, since the same
+ * serial_no can appear on other indents' selections.
+ */
+async function markIndentSerialsIssued(item, issuedSerials, issuedVia, transaction) {
+	if (!issuedSerials?.length) return;
+	const issuedAt = new Date();
+	await IndentSerialItem.update(
+		{ is_issued: 1, issued_via: issuedVia, issued_at: issuedAt },
+		{ where: { indent_item_id: item.id, serial_no: { [Op.in]: issuedSerials } }, transaction },
+	);
+	const existing = await IndentSerialItem.findAll({
+		where: { indent_item_id: item.id, serial_no: { [Op.in]: issuedSerials } },
+		attributes: ['serial_no'],
+		transaction,
+	});
+	const existingSet = new Set(existing.map((s) => s.serial_no));
+	const missing = issuedSerials.filter((serialNo) => !existingSet.has(serialNo));
+	if (missing.length > 0) {
+		await IndentSerialItem.bulkCreate(
+			missing.map((serialNo) => ({
+				indent_item_id: item.id,
+				product_id: item.product_id,
+				serial_no: serialNo,
+				is_issued: 1,
+				issued_via: issuedVia,
+				issued_at: issuedAt,
+			})),
+			{ transaction },
+		);
+	}
+}
 
 /**
  * A batch-type IndentItem's `batch_id` is pinned to whichever batch was selected (FEFO
@@ -1202,11 +1232,8 @@ exports.reissuePendingQuantity = async (req, indentId, allocations) => {
 				{ transaction },
 			);
 
-			if (item.stock_type === 'serial' && allocation?.issuedSerials?.length > 0) {
-				await IndentSerialRepository.update(
-					{ is_issued: 1 },
-					{ where: { serial_no: { [Op.in]: allocation.issuedSerials } }, transaction },
-				);
+			if (item.stock_type === 'serial') {
+				await markIndentSerialsIssued(item, allocation?.issuedSerials, 'reissue', transaction);
 			}
 
 			await indentQtyLogService.record({
@@ -1382,7 +1409,14 @@ exports.generateInvoiceHtml = async (req) => {
 			{
 				model: IndentItem,
 				as: 'IndentItems',
-				include: [{ model: Budget, as: 'budget' }],
+				include: [
+					{ model: Budget, as: 'budget' },
+					{
+						model: IndentSerialItem,
+						as: 'serial_items',
+						attributes: ['serial_no', 'is_issued', 'issued_via', 'issued_at'],
+					},
+				],
 			},
 		],
 	});
@@ -1501,6 +1535,18 @@ async function calculateIndentInvoice(indent, qtyLogs) {
 
 		const latestReissue = latestReissueByItem.get(item.id);
 
+		// Serials issued at approval vs. handed over later by a re-issue. Rows issued before
+		// issued_via existed have it NULL and are counted as issued at approval.
+		const issuedSerialItems = (item.serial_items || [])
+			.filter((serial) => serial.is_issued)
+			.sort((a, b) => a.serial_no.localeCompare(b.serial_no, undefined, { numeric: true }));
+		const reissuedSerials = issuedSerialItems
+			.filter((serial) => serial.issued_via === 'reissue')
+			.map((serial) => serial.serial_no);
+		const issuedSerials = issuedSerialItems
+			.filter((serial) => serial.issued_via !== 'reissue')
+			.map((serial) => serial.serial_no);
+
 		return {
 			...item,
 			requestedQty,
@@ -1511,6 +1557,8 @@ async function calculateIndentInvoice(indent, qtyLogs) {
 			contractorName: latestReissue?.vendor_snapshot?.name || null,
 			contractorCode: latestReissue?.vendor_snapshot?.code || null,
 			workOrderNo: workOrderNumber(latestReissue?.workOrder),
+			issuedSerials,
+			reissuedSerials,
 		};
 	});
 

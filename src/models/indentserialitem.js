@@ -34,6 +34,14 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.BOOLEAN,
 				defaultValue: false,
 			},
+			issued_via: {
+				type: DataTypes.STRING(20),
+				allowNull: true,
+			},
+			issued_at: {
+				type: DataTypes.DATE,
+				allowNull: true,
+			},
 			createdAt: {
 				allowNull: false,
 				type: DataTypes.DATE,
