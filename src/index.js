@@ -113,6 +113,10 @@ async function prepareAndStartServer() {
 		require('./routes/v1/service-user.routes'),
 	);
 	app.use(
+		`${apiPrefix}/v1/service/products`,
+		require('./routes/v1/service-product.routes'),
+	);
+	app.use(
 		`${apiPrefix}/v1/admin-users`,
 		require('./routes/v1/admin-user.routes'),
 	);
