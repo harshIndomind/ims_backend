@@ -54,6 +54,11 @@ router.get(
 	budgetController.searchBudgets,
 );
 router.get(
+	'/:id/utilization',
+	checkPermission('budget', 'view'),
+	budgetController.getBudgetUtilization,
+);
+router.get(
 	'/:id',
 	checkPermission('budget', 'view'),
 	budgetController.getBudgetById,

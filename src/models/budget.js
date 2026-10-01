@@ -56,6 +56,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'budget_id',
 				as: 'indentItems',
 			});
+			Budget.hasMany(models.BudgetRevision, {
+				foreignKey: 'budget_id',
+				as: 'revisions',
+			});
 		}
 	}
 	Budget.init(
@@ -213,6 +217,38 @@ module.exports = (sequelize, DataTypes) => {
 			tax_duty_amount: {
 				type: DataTypes.DOUBLE,
 				allowNull: true,
+			},
+			provision_type: {
+				type: DataTypes.ENUM('none', 'percentage', 'fixed'),
+				allowNull: false,
+				defaultValue: 'none',
+			},
+			provision_percentage: {
+				type: DataTypes.DOUBLE,
+				allowNull: true,
+			},
+			provision_amount: {
+				type: DataTypes.DOUBLE,
+				allowNull: false,
+				defaultValue: 0,
+			},
+			// Whether the budget's tax_duty_amount (and PO/WO GST later committed against it)
+			// counts toward the commitment limit — see utils/budget-limit.util.js.
+			tax_budget_impact: {
+				type: DataTypes.ENUM('recoverable', 'non_recoverable'),
+				allowNull: false,
+				defaultValue: 'non_recoverable',
+			},
+			// Server-computed: amount + budget-impacting tax + provision_amount.
+			commitment_limit: {
+				type: DataTypes.DOUBLE,
+				allowNull: true,
+			},
+			// Σ approved budget_revisions — only ever written by budget-revision.service.js.
+			revised_amount: {
+				type: DataTypes.DOUBLE,
+				allowNull: false,
+				defaultValue: 0,
 			},
 			lup_date: {
 				type: DataTypes.DATE,

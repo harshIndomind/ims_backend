@@ -56,6 +56,13 @@ router.post(
 	validate,
 	purchaseInvoiceController.cancelPurchaseInvoice,
 );
+router.post(
+	'/:id/cancel-approved',
+	checkPermission('purchase-invoice', 'cancel_approved'),
+	validationRejectOrCancel,
+	validate,
+	purchaseInvoiceController.cancelApprovedPurchaseInvoice,
+);
 router.get('/:id/workflow', checkPermission('purchase-invoice', 'view'), purchaseInvoiceController.getPurchaseInvoiceWorkflow);
 
 // Vendor invoice document upload/list/delete — optional attachments kept for

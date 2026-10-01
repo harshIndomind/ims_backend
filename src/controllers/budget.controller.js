@@ -54,6 +54,15 @@ exports.getBudgetById = catchAsync(async (req, res) => {
 	});
 });
 
+exports.getBudgetUtilization = catchAsync(async (req, res) => {
+	const data = await budgetService.getBudgetUtilization(req, req.params.id);
+
+	res.status(StatusCodes.OK).json({
+		message: 'Budget utilization fetched successfully',
+		data,
+	});
+});
+
 exports.deleteBudget = catchAsync(async (req, res) => {
 	const { id } = req.params;
 

@@ -159,6 +159,37 @@ describe('updateIndent — value-wise budget re-validation', () => {
 		const findAllArgs = mockIndentItemFindAll.mock.calls[0][0];
 		expect(findAllArgs.where.indent_id[Object.getOwnPropertySymbols(findAllArgs.where.indent_id)[0]]).toBe(1);
 	});
+
+	it('does not count rejected/cancelled indents as consuming the budget', async () => {
+		const { Op } = require('sequelize');
+		const req = { user: { id: 1 } };
+		await indentService.updateIndent(req, 1, {
+			budgetType: 'value-wise',
+			selectedIndents: [{ budget_id: 99, product_id: 1, qty: 1, total: 100 }],
+		});
+		for (const [args] of mockIndentItemFindAll.mock.calls) {
+			expect(args.include[0].where.status[Op.notIn]).toEqual(['rejected', 'cancelled']);
+		}
+	});
+
+	it('still enforces the whole-budget base amount when the indent date is after the last phase', async () => {
+		// Previously getPhaseQuantityDateWise returned null here and every check was skipped.
+		mockBudgetFindOne.mockResolvedValue({
+			id: 99,
+			budget_id: 'BUD-1',
+			amount: 1000,
+			first_phase_date: new Date('2025-12-31'),
+			first_phase_qty: 1000,
+		});
+		const req = { user: { id: 1 } };
+		await expect(
+			indentService.updateIndent(req, 1, {
+				budgetType: 'value-wise',
+				selectedIndents: [{ budget_id: 99, product_id: 1, qty: 1, total: 1500 }],
+			}),
+		).rejects.toThrow(/exceeds base budget amount of 1000/);
+		expect(indentItemRepo.create).not.toHaveBeenCalled();
+	});
 });
 
 describe('verifyIndent — qty_in_stock snapshot', () => {

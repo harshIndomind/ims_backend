@@ -48,6 +48,11 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.DECIMAL(5, 2),
 				allowNull: true,
 			},
+			budget_impact: {
+				type: DataTypes.BOOLEAN,
+				allowNull: false,
+				defaultValue: true,
+			},
 			sequence: {
 				type: DataTypes.INTEGER,
 				allowNull: false,

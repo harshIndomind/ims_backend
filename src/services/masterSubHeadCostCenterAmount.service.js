@@ -13,6 +13,7 @@ const {
 } = require('../models/index');
 const auditLogService = require('./auditLog.service');
 const { Op } = require('sequelize');
+const { allocationUsage } = require('../utils/budget-limit.util');
 
 const ENTITY_TYPE = 'sub_head_cost_center_amount';
 
@@ -32,12 +33,10 @@ const getBudgetUsedAmount = async (sub_head_cost_center_amount_id, exclude_budge
 	if (exclude_budget_id) where.id = { [Op.ne]: exclude_budget_id };
 	const budgets = await Budget.findAll({
 		where,
-		attributes: ['amount', 'tax_duty_amount'],
+		attributes: ['amount', 'tax_duty_amount', 'provision_amount', 'revised_amount'],
 	});
-	return budgets.reduce(
-		(sum, b) => sum + Number(b.amount || 0) + Number(b.tax_duty_amount || 0),
-		0,
-	);
+	// base + tax + Additional Cost Provision + approved revisions — see budget-limit.util.js.
+	return budgets.reduce((sum, b) => sum + allocationUsage(b), 0);
 };
 
 /**

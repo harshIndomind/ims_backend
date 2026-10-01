@@ -156,6 +156,11 @@ async function prepareAndStartServer() {
 	);
 
 	app.use(
+		`${apiPrefix}/v1/budget-revisions`,
+		require('./routes/v1/budget-revision.routes'),
+	);
+
+	app.use(
 		`${apiPrefix}/v1/purchase-invoices`,
 		require('./routes/v1/purchase-invoice.routes'),
 	);
