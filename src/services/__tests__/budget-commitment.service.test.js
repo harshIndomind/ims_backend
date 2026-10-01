@@ -14,12 +14,13 @@ const mockInvoiceItemFindAll = jest.fn();
 const mockInvoiceChargeFindAll = jest.fn();
 const mockInvoiceChargeSum = jest.fn();
 const mockPoFindOne = jest.fn();
+const mockIndentItemFindAll = jest.fn();
 
 jest.mock('../../models/index', () => ({
 	Budget: { findOne: mockBudgetFindOne },
 	DocumentCharge: { findAll: mockChargeFindAll },
 	Indent: {},
-	IndentItem: {},
+	IndentItem: { findAll: mockIndentItemFindAll },
 	PurchaseOrder: { findAll: mockPoFindAll, findOne: mockPoFindOne },
 	PurchaseOrderItem: { findAll: mockPoItemFindAll },
 	WorkOrder: { findAll: mockWoFindAll },
@@ -40,6 +41,8 @@ const {
 	validateInvoiceBudget,
 	getInvoiceChargeVariance,
 	getCommittedBudgetImpact,
+	validateIndentAgainstLiveBudget,
+	getIndentBudgetPosition,
 } = require('../budget-validation.service');
 
 const mockTransaction = { LOCK: { UPDATE: 'UPDATE' } };
@@ -88,6 +91,7 @@ beforeEach(() => {
 	mockInvoiceChargeFindAll.mockResolvedValue([]);
 	mockInvoiceChargeSum.mockResolvedValue(0);
 	mockPoFindOne.mockResolvedValue(null);
+	mockIndentItemFindAll.mockResolvedValue([]);
 });
 
 describe('validateBudgetCommitment', () => {
@@ -328,6 +332,80 @@ describe('Purchase Invoice budget layer', () => {
 		mockInvoiceChargeSum.mockResolvedValue(6000); // earlier invoice billed 6,000 of it
 		await expect(
 			getInvoiceChargeVariance({ documentType: 'purchase_order', documentId: 10, newChargesTotal: 4100, tolerancePct: 2, transaction: mockTransaction }),
+		).resolves.toBeNull();
+	});
+});
+
+// IND-000021 scenario: BUD-000010 (base 8,00,000 + tax 1,44,000 + provision 20,000 = 9,64,000,
+// GST non-recoverable). IND-000020 reserves 7,50,000 and was ordered as PO 10, whose approved
+// invoice 9 is 9,15,000 (incl. 30,000 transport). A rice indent of 49,995 + 18% = 58,994.10.
+describe('Indent vs live budget', () => {
+	const bud10 = () =>
+		budget({ id: 10, budget_id: 'BUD-000010', amount: 800000, tax_duty_amount: 144000, provision_amount: 20000, commitment_limit: 964000, tax_budget_impact: 'non_recoverable' });
+	const poLine = { id: 11, qty: 50, budget_id: 10, total: 885000, igst: 135000, cgst: 0, sgst: 0, cess: 0 };
+
+	function withPo10Invoiced() {
+		mockPoFindAll.mockResolvedValue([{ id: 10, customFields: null, same_state: false, doc_number: 'PO-10', indent_id: 20 }]);
+		mockPoItemFindAll.mockResolvedValue([poLine]);
+		mockInvoiceFindAll.mockResolvedValue([{ id: 9, document_type: 'purchase_order' }]);
+		mockInvoiceItemFindAll.mockResolvedValue([{ po_wo_item_id: 11, total: 885000, igst: 135000, cgst: 0, sgst: 0, cess: 0 }]);
+		mockInvoiceChargeFindAll.mockResolvedValue([{ total: 30000, igst: 0, cgst: 0, sgst: 0, cess: 0 }]);
+		mockPoItemFindAll.mockImplementation(({ where }) => Promise.resolve(where.id ? [{ id: 11, budget_id: 10 }] : [poLine]));
+	}
+
+	it('blocks the rice indent with the same 9,994.10 excess the PO used to report', async () => {
+		withPo10Invoiced();
+		mockIndentItemFindAll.mockResolvedValue([{ indent_id: 20, amount: 750000, tax_amount: null }]);
+		await expect(
+			validateIndentAgainstLiveBudget({ budget: bud10(), newAmount: 49995, newTax: 8999.1, transaction: mockTransaction }),
+		).resolves.toMatch(/Already Consumed \(indents\/PO\/WO\/invoices\): 915000\.00, Available: 49000\.00.*Excess: 9994\.10/);
+	});
+
+	it('passes a quantity that fits (755 kg × 55 + 18%)', async () => {
+		withPo10Invoiced();
+		mockIndentItemFindAll.mockResolvedValue([{ indent_id: 20, amount: 750000, tax_amount: null }]);
+		await expect(
+			validateIndentAgainstLiveBudget({ budget: bud10(), newAmount: 41525, newTax: 7474.5, transaction: mockTransaction }),
+		).resolves.toBeNull();
+	});
+
+	it('an ordered indent counts once — at max(reserve, actual) — not reserve + actual', async () => {
+		withPo10Invoiced();
+		mockIndentItemFindAll.mockResolvedValue([{ indent_id: 20, amount: 750000, tax_amount: null }]);
+		const pos = await getIndentBudgetPosition({ budget: bud10(), transaction: mockTransaction });
+		expect(pos.consumedByOthers).toBe(915000);
+		expect(pos.reservedByOthers).toBe(750000);
+	});
+
+	it('editing an indent replaces its own reserve, but its existing PO actuals still count', async () => {
+		withPo10Invoiced();
+		mockIndentItemFindAll.mockResolvedValue([{ indent_id: 20, amount: 750000, tax_amount: null }]);
+		const pos = await getIndentBudgetPosition({ budget: bud10(), excludeIndentId: 20, transaction: mockTransaction });
+		expect(pos.reservedByOthers).toBe(0);
+		expect(pos.consumedByOthers).toBe(0);
+		expect(pos.actualOfThisIndent).toBe(915000);
+		// shrinking IND-000020 below what was already invoiced can't free budget
+		await expect(
+			validateIndentAgainstLiveBudget({ budget: bud10(), newAmount: 100, newTax: 0, excludeIndentId: 20, transaction: mockTransaction }),
+		).resolves.toBeNull();
+	});
+
+	it('reserve constraint: indents (incl. tax) cannot exceed base + tax, never the provision', async () => {
+		mockIndentItemFindAll.mockResolvedValue([{ indent_id: 20, amount: 800000, tax_amount: 140000 }]);
+		await expect(
+			validateIndentAgainstLiveBudget({ budget: bud10(), newAmount: 4000, newTax: 720, transaction: mockTransaction }),
+		).resolves.toMatch(/Base \+ Tax: 944000\.00, Already Indented: 940000\.00.*Excess: 720\.00/);
+	});
+
+	it('recoverable tax is ignored on both sides', async () => {
+		mockIndentItemFindAll.mockResolvedValue([{ indent_id: 20, amount: 790000, tax_amount: 142200 }]);
+		await expect(
+			validateIndentAgainstLiveBudget({
+				budget: { ...bud10(), tax_budget_impact: 'recoverable', commitment_limit: 820000 },
+				newAmount: 10000,
+				newTax: 1800,
+				transaction: mockTransaction,
+			}),
 		).resolves.toBeNull();
 	});
 });

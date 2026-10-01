@@ -46,6 +46,26 @@ const { createWorkflowDocumentService } = require('./workflowDocument.factory');
 const { generateInvoiceHTML, generateInvoiceHTMLPDF } = require('../pdf/htmlPdfGenerator');
 const { getImageAsBase64DataUrl } = require('../utils/s3Bucket');
 const dataVisibility = require('./dataVisibility.service');
+const { validateIndentAgainstLiveBudget, getIndentBudgetPosition } = require('./budget-validation.service');
+const { round2 } = require('../utils/money');
+
+/**
+ * Indent line tax from the client's taxSnapshot (same trust level as PO/WO, whose tax rate also
+ * comes from the client's taxSnapshot). tax_amount is always derived here from the pre-tax line
+ * amount (`total`), never taken from the client.
+ */
+function indentLineTax(i) {
+	const rate = parseFloat(i?.taxSnapshot?.rate ?? i?.tax_rate);
+	if (!i?.tax_id || !Number.isFinite(rate)) {
+		return { tax_id: null, taxSnapshot: null, tax_rate: null, tax_amount: null };
+	}
+	return {
+		tax_id: Number(i.tax_id),
+		taxSnapshot: i.taxSnapshot ?? { id: Number(i.tax_id), rate: String(rate) },
+		tax_rate: rate,
+		tax_amount: round2((Number(i.total || 0) * rate) / 100),
+	};
+}
 
 const DOCUMENT_TYPE = 'indent';
 
@@ -160,6 +180,7 @@ exports.createIndent = async (req, payload) => {
 						productSnapshot: i || null,
 						item_type: i?.productSnapshot?.item_type ?? i?.item_type ?? null,
 						rate_contract_id: i.rate_contract_id || null,
+						...indentLineTax(i),
 					},
 					{ transaction },
 				);
@@ -748,7 +769,12 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 	// approval used to value this indent at avg_rate × qty issued FROM STOCK while valuing
 	// every other indent at its full indented amount, so the two sides never compared like
 	// with like.
-	const budgetCheckItems = indent.IndentItems.map((i) => ({ budget_id: i.budget_id, qty: i.qty, total: i.amount }));
+	const budgetCheckItems = indent.IndentItems.map((i) => ({
+		budget_id: i.budget_id,
+		qty: i.qty,
+		total: i.amount,
+		stored_tax_amount: Number(i.tax_amount || 0),
+	}));
 	{
 		const errorMessage = await validateBudgetPhaseOnCreate(
 			budgetCheckItems,
@@ -1735,6 +1761,7 @@ exports.updateIndent = async (req, id, payload) => {
 						productSnapshot: i || null,
 						item_type: i?.productSnapshot?.item_type ?? i?.item_type ?? null,
 						rate_contract_id: i.rate_contract_id || null,
+						...indentLineTax(i),
 					},
 					{ transaction },
 				);
@@ -1990,7 +2017,24 @@ const sumQty = (items) => items.reduce((sum, i) => sum + Number(i.qty || 0), 0);
 exports.getConsumedBudgetByBudgetId = async (req, budgetId) => {
 	const budget = await Budget.findByPk(budgetId);
 	if (!budget) return null;
+	const phase = await consumedPhasePosition(req, budget, budgetId);
+	if (!phase) return null;
 
+	// Live position for the indent form: what's actually left after PO/WO/invoice actuals, and
+	// the tax-inclusive reserve headroom — exactly what validateIndentAgainstLiveBudget enforces.
+	const pos = await getIndentBudgetPosition({ budget, excludeIndentId: req.query.exclude_indent_id || null });
+	return {
+		...phase,
+		tax_budget_impact: budget.tax_budget_impact,
+		reserve_limit: pos.reserveLimit,
+		reserve_available: pos.reserveAvailable,
+		effective_limit: pos.effectiveLimit,
+		live_consumed: pos.consumedByOthers,
+		live_available: pos.available,
+	};
+};
+
+async function consumedPhasePosition(req, budget, budgetId) {
 	// [2026-06-03] Use the date passed by the frontend (indent_date) so phase detection
 	// matches the date the user selected, not the server's current time. This matters when
 	// the indent_date is changed to test a different phase — without it the backend always
@@ -2042,7 +2086,7 @@ exports.getConsumedBudgetByBudgetId = async (req, budgetId) => {
 		phase_period: phasePeriod,
 		phase_date: phaseDate,
 	};
-};
+}
 
 const getPhaseQuantityDateWise = (budget, date) => {
 	if (!budget?.id) return 0;
@@ -2271,6 +2315,23 @@ async function validateBudgetPhaseOnCreate(selectedIndents, indentDate, budgetTy
 		if (baseAmount > 0 && overallAmount > baseAmount) {
 			return `Budget ${budget.budget_id}: total amount ${overallAmount} (including ${overallAmount - newAmount} already indented) exceeds base budget amount of ${baseAmount}. Available: ${baseAmount - (overallAmount - newAmount)}.`;
 		}
+
+		// Tax-inclusive reserve + live consumption (PO/WO/invoice actuals) — catches at the
+		// indent what used to surface only at the PO (see budget-validation.service.js).
+		const newTax = items.reduce(
+			// stored_tax_amount: approve path (already-persisted lines); otherwise always derived
+			// server-side from the incoming line — a client-sent tax_amount is never trusted.
+			(sum, i) => sum + Number(i.stored_tax_amount ?? indentLineTax(i).tax_amount ?? 0),
+			0,
+		);
+		const liveError = await validateIndentAgainstLiveBudget({
+			budget,
+			newAmount,
+			newTax,
+			excludeIndentId,
+			transaction,
+		});
+		if (liveError) return liveError;
 	}
 
 	return null;

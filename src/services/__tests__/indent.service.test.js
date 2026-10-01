@@ -34,6 +34,14 @@ jest.mock('../../repository/index', () => ({
 
 jest.mock('undici', () => ({ fetch: jest.fn() }));
 
+// Live (PO/WO/invoice-aware) indent budget check — its own logic is covered in
+// budget-commitment.service.test.js; here only its wiring into indent create/update is asserted.
+const mockValidateIndentAgainstLiveBudget = jest.fn().mockResolvedValue(null);
+jest.mock('../budget-validation.service', () => ({
+	validateIndentAgainstLiveBudget: (...args) => mockValidateIndentAgainstLiveBudget(...args),
+	getIndentBudgetPosition: jest.fn(),
+}));
+
 jest.mock('../workflowEngine.service', () => ({
 	getInstanceWithStages: jest.fn().mockResolvedValue({ instance: { status: 'in_progress', currentStage: { stage_name: 'verify' } } }),
 	advanceStage: jest.fn().mockResolvedValue({ status: 'in_progress' }),
@@ -170,6 +178,36 @@ describe('updateIndent — value-wise budget re-validation', () => {
 		for (const [args] of mockIndentItemFindAll.mock.calls) {
 			expect(args.include[0].where.status[Op.notIn]).toEqual(['rejected', 'cancelled']);
 		}
+	});
+
+	it('runs the live budget check with the line tax derived server-side from the pre-tax amount', async () => {
+		const req = { user: { id: 1 } };
+		await indentService.updateIndent(req, 1, {
+			budgetType: 'value-wise',
+			selectedIndents: [
+				{ budget_id: 99, product_id: 1, qty: 1, total: 500, tax_id: 11, taxSnapshot: { id: 11, rate: '18' }, tax_amount: 1 },
+			],
+		});
+		expect(mockValidateIndentAgainstLiveBudget).toHaveBeenCalledWith(
+			// client-sent tax_amount (1) is ignored in favour of 500 × 18% = 90
+			expect.objectContaining({ newAmount: 500, newTax: 90, excludeIndentId: 1 }),
+		);
+		expect(indentItemRepo.create).toHaveBeenCalledWith(
+			expect.objectContaining({ amount: 500, tax_id: 11, tax_rate: 18, tax_amount: 90 }),
+			expect.anything(),
+		);
+	});
+
+	it('rejects the edit when the live budget check fails (e.g. PO/invoice actuals already used the budget)', async () => {
+		mockValidateIndentAgainstLiveBudget.mockResolvedValueOnce('Budget BUD-1: not enough budget left ... Excess: 9994.10.');
+		const req = { user: { id: 1 } };
+		await expect(
+			indentService.updateIndent(req, 1, {
+				budgetType: 'value-wise',
+				selectedIndents: [{ budget_id: 99, product_id: 1, qty: 1, total: 500 }],
+			}),
+		).rejects.toThrow(/Excess: 9994\.10/);
+		expect(indentItemRepo.create).not.toHaveBeenCalled();
 	});
 
 	it('still enforces the whole-budget base amount when the indent date is after the last phase', async () => {

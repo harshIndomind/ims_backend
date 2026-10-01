@@ -49,6 +49,7 @@ const {
 	computeDocumentBudgetComponents,
 	budgetImpactOf,
 	effectiveCommitmentLimit,
+	isTaxBudgetImpacting,
 } = require('../utils/budget-limit.util');
 
 // A draft PO has never deducted anything from its indent (see purchase-order.service.js —
@@ -493,7 +494,7 @@ async function getCommittedBudgetImpact({ budget, excludeDocumentType, excludeDo
 					attributes: ['id'],
 				},
 			],
-			attributes: ['id', 'customFields', 'same_state', 'doc_number'],
+			attributes: ['id', 'customFields', 'same_state', 'doc_number', 'indent_id'],
 			transaction,
 		});
 
@@ -513,6 +514,7 @@ async function getCommittedBudgetImpact({ budget, excludeDocumentType, excludeDo
 				document_type: documentType,
 				document_id: doc.id,
 				doc_number: doc.doc_number,
+				indent_id: doc.indent_id ?? null,
 				impact: round2(impact),
 				committed: commitment,
 				invoiced,
@@ -679,7 +681,10 @@ async function validateBudgetCommitment({
 				excess,
 				message:
 					`Budget ${budget.budget_id} commitment limit exceeded. ` +
-					`Limit: ${limit.toFixed(2)} (Base ${Number(budget.amount || 0).toFixed(2)}, ` +
+					`Limit: ${limit.toFixed(2)} (Base ${Number(budget.amount || 0).toFixed(2)} + ` +
+					(isTaxBudgetImpacting(budget.tax_budget_impact)
+						? `Tax ${Number(budget.tax_duty_amount || 0).toFixed(2)} + `
+						: 'Tax excluded (recoverable) + ') +
 					`Provision ${Number(budget.provision_amount || 0).toFixed(2)}), ` +
 					// BUDGET_REVISION_DISABLED: `Approved Revisions ${Number(budget.revised_amount || 0).toFixed(2)}), ` +
 					`Already Committed: ${committed.toFixed(2)}, Available: ${available.toFixed(2)}, ` +
@@ -697,6 +702,116 @@ async function validateBudgetCommitment({
 	return violations;
 }
 
+// ---------------------------------------------------------------------------------------
+// Indent layer against the LIVE budget. The phase/base checks in indent.service.js only ever
+// compared indents with other indents (pre-tax), so an indent could pass even though PO/WO/
+// invoice actuals had already eaten the budget — the overrun then only surfaced at the PO.
+// Two constraints, both evaluated here:
+//   (a) Reserve: Σ active indent reserves (amount + tax when non-recoverable) ≤ base + tax
+//       reserve. Indents never draw on the Additional Cost Provision.
+//   (b) Live:    Σ per indent max(its reserve, its PO/WO/invoice actuals) + documents with no
+//       tracked indent + this indent ≤ effective limit. Counting max() per indent means an
+//       indent that has been ordered is never double-counted with its own PO/WO.
+// ---------------------------------------------------------------------------------------
+
+const INACTIVE_INDENT_STATUSES = ['rejected', 'cancelled'];
+
+const indentLineReserve = (line, nonRecoverable) =>
+	Number(line.amount || 0) + (nonRecoverable ? Number(line.tax_amount || 0) : 0);
+
+/**
+ * A budget's position as seen by an indent being created/edited/approved (`excludeIndentId` =
+ * that indent, whose own saved lines are replaced by the incoming ones).
+ */
+async function getIndentBudgetPosition({ budget, excludeIndentId, transaction }) {
+	const nonRecoverable = isTaxBudgetImpacting(budget.tax_budget_impact);
+
+	const lines = await IndentItem.findAll({
+		where: { budget_id: budget.id },
+		include: [
+			{
+				model: Indent,
+				as: 'indent',
+				attributes: [],
+				required: true,
+				where: { status: { [Op.notIn]: INACTIVE_INDENT_STATUSES } },
+			},
+		],
+		attributes: ['indent_id', 'amount', 'tax_amount'],
+		transaction,
+	});
+	const reserveByIndent = new Map();
+	for (const line of lines) {
+		const key = Number(line.indent_id);
+		reserveByIndent.set(key, (reserveByIndent.get(key) || 0) + indentLineReserve(line, nonRecoverable));
+	}
+	const excludeKey = excludeIndentId ? Number(excludeIndentId) : null;
+	if (excludeKey) reserveByIndent.delete(excludeKey);
+
+	const { breakdown } = await getCommittedBudgetImpact({ budget, transaction });
+	const actualByIndent = new Map();
+	let untracked = 0;
+	for (const d of breakdown) {
+		const key = d.indent_id ? Number(d.indent_id) : null;
+		if (key && (reserveByIndent.has(key) || key === excludeKey)) {
+			actualByIndent.set(key, (actualByIndent.get(key) || 0) + d.impact);
+		} else {
+			untracked += d.impact;
+		}
+	}
+
+	let consumedByOthers = untracked;
+	let reservedByOthers = 0;
+	for (const [key, reserve] of reserveByIndent) {
+		reservedByOthers += reserve;
+		consumedByOthers += Math.max(reserve, actualByIndent.get(key) || 0);
+	}
+
+	const reserveLimit = round2(Number(budget.amount || 0) + (nonRecoverable ? Number(budget.tax_duty_amount || 0) : 0));
+	const effectiveLimit = effectiveCommitmentLimit(budget);
+	return {
+		nonRecoverable,
+		reserveLimit,
+		reservedByOthers: round2(reservedByOthers),
+		reserveAvailable: round2(reserveLimit - reservedByOthers),
+		effectiveLimit,
+		consumedByOthers: round2(consumedByOthers),
+		actualOfThisIndent: round2(excludeKey ? actualByIndent.get(excludeKey) || 0 : 0),
+		available: round2(effectiveLimit - consumedByOthers),
+	};
+}
+
+/**
+ * Validates an indent's lines on one budget against (a) and (b) above. Returns an error message
+ * or null (same contract as indent.service.js's validateBudgetPhaseOnCreate, which calls this
+ * with the Budget row already locked).
+ */
+async function validateIndentAgainstLiveBudget({ budget, newAmount, newTax, excludeIndentId, transaction }) {
+	const pos = await getIndentBudgetPosition({ budget, excludeIndentId, transaction });
+	const newReserve = round2(Number(newAmount || 0) + (pos.nonRecoverable ? Number(newTax || 0) : 0));
+	const label = pos.nonRecoverable ? 'incl. tax' : 'excl. recoverable tax';
+
+	const reserveExcess = round2(pos.reservedByOthers + newReserve - pos.reserveLimit);
+	if (reserveExcess > 0) {
+		return (
+			`Budget ${budget.budget_id}: indents (${label}) would exceed the budget. ` +
+			`Base + Tax: ${pos.reserveLimit.toFixed(2)}, Already Indented: ${pos.reservedByOthers.toFixed(2)}, ` +
+			`Available: ${pos.reserveAvailable.toFixed(2)}, This Indent: ${newReserve.toFixed(2)}, Excess: ${reserveExcess.toFixed(2)}.`
+		);
+	}
+
+	const thisIndentConsumption = Math.max(newReserve, pos.actualOfThisIndent);
+	const liveExcess = round2(pos.consumedByOthers + thisIndentConsumption - pos.effectiveLimit);
+	if (liveExcess > 0) {
+		return (
+			`Budget ${budget.budget_id}: not enough budget left after purchases already made against it. ` +
+			`Limit: ${pos.effectiveLimit.toFixed(2)}, Already Consumed (indents/PO/WO/invoices): ${pos.consumedByOthers.toFixed(2)}, ` +
+			`Available: ${pos.available.toFixed(2)}, This Indent (${label}): ${newReserve.toFixed(2)}, Excess: ${liveExcess.toFixed(2)}.`
+		);
+	}
+	return null;
+}
+
 /** Puts advisory violations on a create/update response as `budget_warnings`. */
 function attachBudgetWarnings(doc, warnings) {
 	if (!doc) return;
@@ -706,6 +821,8 @@ function attachBudgetWarnings(doc, warnings) {
 
 module.exports = {
 	attachBudgetWarnings,
+	getIndentBudgetPosition,
+	validateIndentAgainstLiveBudget,
 	validateIndentLineBudget,
 	validateDocumentAgainstIndentBudget,
 	taxableAmountOf,

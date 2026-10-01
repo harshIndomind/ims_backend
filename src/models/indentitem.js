@@ -95,6 +95,23 @@ module.exports = (sequelize, DataTypes) => {
 				allowNull: true,
 				defaultValue: 0,
 			},
+			// Estimated line tax (pre-filled from the product's VCP tax). `amount` stays pre-tax.
+			tax_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+			},
+			taxSnapshot: {
+				type: DataTypes.JSON,
+				allowNull: true,
+			},
+			tax_rate: {
+				type: DataTypes.DECIMAL(5, 2),
+				allowNull: true,
+			},
+			tax_amount: {
+				type: DataTypes.DECIMAL(15, 2),
+				allowNull: true,
+			},
 			requested_qty: {
 				type: DataTypes.DOUBLE,
 				allowNull: true,
