@@ -18,6 +18,7 @@ const {
 	Budget,
 	CostCenter,
 	IndentSerialItem,
+	IndentItemBatchAllocation,
 	IndentItem,
 	MasterUnit,
 	IndentDocument,
@@ -427,6 +428,11 @@ exports.getAllIndents = async (req) => {
 						as: 'serial_items',
 						attributes: ['serial_no', 'is_issued', 'issued_via', 'issued_at'],
 					},
+					{
+						model: IndentItemBatchAllocation,
+						as: 'batch_allocations',
+						attributes: ['id', 'batch_id', 'batch_no', 'expiry_date', 'qty', 'base_qty', 'issued_via', 'issued_at'],
+					},
 				],
 			},
 			{
@@ -613,6 +619,7 @@ async function fetchIndentForWorkflowAction(id) {
 				association: 'IndentItems',
 				include: [
 					{ model: IndentSerialItem, as: 'serial_items' },
+					{ model: IndentItemBatchAllocation, as: 'batch_allocations' },
 					{ model: Budget, as: 'budget' },
 				],
 			},
@@ -820,7 +827,9 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 		approvalIdempotencyKey,
 	);
 
-	const allocationMap = new Map(allocationResults.map((i) => [i.product_id, i]));
+	// Keyed by indent_item_id, not product_id — two lines for the same product (different
+	// UOMs) would otherwise overwrite each other's allocation.
+	const allocationMap = new Map(allocationResults.map((i) => [i.indent_item_id, i]));
 
 	// --- Phase 3: persist in SCM — compensate VCP if this fails ---
 	const transaction = await sequelize.transaction();
@@ -846,7 +855,7 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 		}
 
 		for (const i of indent.IndentItems) {
-			const allocation = allocationMap.get(i.product_id);
+			const allocation = allocationMap.get(i.id);
 			const dryRun = dryRunMap.get(i.product_id);
 			const issuedQty = roundQty(allocation?.issued_qty || 0);
 			const baseIssuedQty = allocation?.base_issued_qty ?? issuedQty;
@@ -909,6 +918,9 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 
 			if (i.stock_type === 'serial') {
 				await markIndentSerialsIssued(i, allocation?.issuedSerials, 'approval', transaction);
+			}
+			if (i.stock_type === 'batch') {
+				await recordBatchAllocations(i, allocation?.batch_allocations, 'approval', transaction);
 			}
 		}
 
@@ -1002,46 +1014,50 @@ async function markIndentSerialsIssued(item, issuedSerials, issuedVia, transacti
 }
 
 /**
- * A batch-type IndentItem's `batch_id` is pinned to whichever batch was selected (FEFO
- * suggestion, user-editable) at indent-creation time. verify-stock only ever checks that
- * one batch's qty — so if that batch was empty (hence the backorder) and stock later
- * arrives in a *different*, newly-received batch, the pinned batch_id never sees it and
- * re-issue keeps reporting 0 available forever. Re-resolve to whichever current batch has
- * stock, FEFO order (soonest expiry first, undated last), same policy as the frontend's
- * indent-creation suggestion — see docs/architecture/vcp-batch-fifo-fefo-design.
+ * Records which batches VCP actually issued one batch line from (it may split the line across
+ * several batches, FEFO). Re-issues append rows; the line's batch_id stays the batch picked on
+ * the indent form.
  */
-async function resolveCurrentBatchIdForReissue(req, productId) {
-	const url = `${VCP_SERVICE_API_BASE_URL}${VCP_SERVICE_PRODUCT_ENDPOINT}/${productId}`;
-	const token = req.cookies.accessToken;
-	const response = await fetch(url, {
-		method: 'GET',
-		// VCP's verifyToken reads req.cookies.accessToken, not the Authorization header —
-		// this is a server-to-server fetch so no cookie jar carries it automatically.
-		headers: { Authorization: `Bearer ${token}`, Cookie: `accessToken=${token}` },
-	});
-	if (!response.ok) {
-		logger.warn('resolveCurrentBatchIdForReissue: product fetch failed', {
-			productId,
-			status: response.status,
-		});
-		return null;
+async function recordBatchAllocations(item, batchAllocations, issuedVia, transaction) {
+	const rows = (batchAllocations || []).filter((a) => parseFloat(a.base_qty) > 0);
+	if (rows.length === 0) return;
+	const issuedAt = new Date();
+	await IndentItemBatchAllocation.bulkCreate(
+		rows.map((a) => ({
+			indent_id: item.indent_id,
+			indent_item_id: item.id,
+			product_id: item.product_id,
+			batch_id: a.batch_id,
+			batch_no: a.batch_no ?? null,
+			expiry_date: a.expiry_date ?? null,
+			qty: a.qty ?? a.base_qty,
+			base_qty: a.base_qty,
+			stock_ledger_id: a.stock_ledger_id ?? null,
+			issued_via: issuedVia,
+			issued_at: issuedAt,
+		})),
+		{ transaction },
+	);
+}
+
+/**
+ * Rollback payload for a batch line on cancel/delete: send each batch back what was issued
+ * from it. Lines (or the part of a line) issued before IndentItemBatchAllocations existed have
+ * no rows, so that remainder goes back to the line's batch_id as before.
+ */
+function batchRollbackAllocations(item) {
+	const rows = item.batch_allocations || [];
+	const allocations = rows.map((r) => ({
+		batch_id: r.batch_id,
+		qty: parseFloat(r.qty),
+		base_qty: parseFloat(r.base_qty),
+	}));
+	const recorded = allocations.reduce((sum, a) => sum + a.base_qty, 0);
+	const legacyRemainder = roundQty(parseFloat(item.base_qty_issued ?? item.qty_issued ?? 0) - recorded);
+	if (legacyRemainder > 0 && item.batch_id) {
+		allocations.push({ batch_id: item.batch_id, base_qty: legacyRemainder });
 	}
-
-	const { data } = await response.json();
-	const batches = (data?.batches || []).filter((b) => parseFloat(b.qty || 0) > 0);
-	logger.info('resolveCurrentBatchIdForReissue', {
-		productId,
-		allBatches: (data?.batches || []).map((b) => ({ id: b.id, qty: b.qty, expiry_date: b.expiry_date })),
-		batchesWithStock: batches.map((b) => b.id),
-	});
-	if (batches.length === 0) return null;
-
-	batches.sort((a, b) => {
-		const aTime = a.expiry_date ? new Date(a.expiry_date).getTime() : Infinity;
-		const bTime = b.expiry_date ? new Date(b.expiry_date).getTime() : Infinity;
-		return aTime - bTime;
-	});
-	return batches[0].id;
+	return allocations;
 }
 
 /**
@@ -1050,9 +1066,8 @@ async function resolveCurrentBatchIdForReissue(req, productId) {
  * verify-stock expects. For serial items, the stored serial_items still includes ones
  * already issued at approval time; VCP's verify-stock requires every serial it's handed
  * to currently be unsold (it throws if any aren't), so only the not-yet-issued serials
- * may be sent here. For batch items, batch_id is re-resolved to whatever currently has
- * stock (see resolveCurrentBatchIdForReissue) instead of the stale batch_id captured at
- * indent creation.
+ * may be sent here. Batch items keep their batch_id: VCP tries it first and spills over to
+ * other batches (FEFO), so stock received in a newer batch is found without re-resolving.
  */
 async function getPendingReissueItems(req, indentId) {
 	const indent = await fetchIndentForWorkflowAction(indentId);
@@ -1069,26 +1084,14 @@ async function getPendingReissueItems(req, indentId) {
 	);
 
 	// Request exactly what's still owed — VCP decides how much of that is actually available now.
-	const plainPendingItems = await Promise.all(
-		pendingItems.map(async (i) => {
-			const plain = i.get({ plain: true });
-			if (plain.stock_type === 'serial') {
-				plain.serial_items = (plain.serial_items || []).filter((s) => !s.is_issued);
-			}
-			if (plain.stock_type === 'batch') {
-				const originalBatchId = plain.batch_id;
-				const currentBatchId = await resolveCurrentBatchIdForReissue(req, plain.product_id);
-				if (currentBatchId != null) plain.batch_id = currentBatchId;
-				logger.info('getPendingReissueItems: batch resolution', {
-					product_id: plain.product_id,
-					originalBatchId,
-					resolvedBatchId: currentBatchId,
-					finalBatchId: plain.batch_id,
-				});
-			}
-			return { ...plain, qty: parseFloat(i.balance_indent_qty) };
-		}),
-	);
+	const plainPendingItems = pendingItems.map((i) => {
+		// batch_allocations is issue history, not input for VCP — keep the payload lean.
+		const { batch_allocations: _history, ...plain } = i.get({ plain: true });
+		if (plain.stock_type === 'serial') {
+			plain.serial_items = (plain.serial_items || []).filter((s) => !s.is_issued);
+		}
+		return { ...plain, qty: parseFloat(i.balance_indent_qty) };
+	});
 
 	return { indent, pendingItems, plainPendingItems };
 }
@@ -1123,6 +1126,7 @@ exports.previewReissue = async (req, indentId) => {
 			pending_qty: parseFloat(item.balance_indent_qty),
 			available_now: parseFloat(allocation?.issued_qty || 0),
 			still_short: parseFloat(allocation?.qty_for_purchase_order || 0),
+			batch_allocations: allocation?.batch_allocations || [],
 		};
 	});
 
@@ -1265,18 +1269,15 @@ exports.reissuePendingQuantity = async (req, indentId, allocations) => {
 					base_qty_issued: parseFloat(item.base_qty_issued || 0) + newlyIssuedBase,
 					balance_indent_qty: updatedBalance,
 					qty_updated_by_verifier: roundQty(parseFloat(item.qty_updated_by_verifier || 0) + newlyIssued),
-					// Keep the item's batch_id in sync with whichever batch this re-issue actually
-					// drew from (resolveCurrentBatchIdForReissue may have picked a different, newer
-					// batch than the one recorded at indent creation).
-					...(item.stock_type === 'batch' && allocation?.batch_id != null
-						? { batch_id: allocation.batch_id }
-						: {}),
 				},
 				{ transaction },
 			);
 
 			if (item.stock_type === 'serial') {
 				await markIndentSerialsIssued(item, allocation?.issuedSerials, 'reissue', transaction);
+			}
+			if (item.stock_type === 'batch') {
+				await recordBatchAllocations(item, allocation?.batch_allocations, 'reissue', transaction);
 			}
 
 			await indentQtyLogService.record({
@@ -1385,6 +1386,7 @@ exports.cancelIndent = async (req, id, remarks) => {
 							// qty_issued is in selected UOM — wrong for VCP rollback-stock.
 							base_issued_qty: item.base_qty_issued ?? item.qty_issued,
 							batch_id: item.batch_id,
+							...(item.stock_type === 'batch' ? { batch_allocations: batchRollbackAllocations(item) } : {}),
 							issuedSerials: item.serial_items
 								.filter((s) => s.is_issued)
 								.map((s) => s.serial_no),
@@ -1458,6 +1460,11 @@ exports.generateInvoiceHtml = async (req) => {
 						model: IndentSerialItem,
 						as: 'serial_items',
 						attributes: ['serial_no', 'is_issued', 'issued_via', 'issued_at'],
+					},
+					{
+						model: IndentItemBatchAllocation,
+						as: 'batch_allocations',
+						attributes: ['batch_no', 'batch_id', 'expiry_date', 'qty', 'issued_via', 'issued_at'],
 					},
 				],
 			},
@@ -1590,6 +1597,15 @@ async function calculateIndentInvoice(indent, qtyLogs) {
 			.filter((serial) => serial.issued_via !== 'reissue')
 			.map((serial) => serial.serial_no);
 
+		// "B0001 × 50" per batch the line was issued from, in issue order.
+		const issuedBatches = (item.batch_allocations || [])
+			.slice()
+			.sort((a, b) => new Date(a.issued_at) - new Date(b.issued_at))
+			.map((a) => {
+				const label = `${a.batch_no || `Batch ${a.batch_id}`} × ${parseFloat(a.qty)}`;
+				return a.issued_via === 'reissue' ? `${label} (re-issue)` : label;
+			});
+
 		return {
 			...item,
 			requestedQty,
@@ -1597,6 +1613,7 @@ async function calculateIndentInvoice(indent, qtyLogs) {
 			pendingQty,
 			qtyForPurchaseOrder,
 			statusLabel,
+			issuedBatches,
 			contractorName: latestReissue?.vendor_snapshot?.name || null,
 			contractorCode: latestReissue?.vendor_snapshot?.code || null,
 			workOrderNo: workOrderNumber(latestReissue?.workOrder),
@@ -1824,6 +1841,7 @@ exports.deleteIndent = async (req, id) => {
 				association: 'IndentItems',
 				include: [
 					{ model: IndentSerialItem, as: 'serial_items' },
+					{ model: IndentItemBatchAllocation, as: 'batch_allocations' },
 				],
 			},
 		],
@@ -1876,6 +1894,7 @@ exports.deleteIndent = async (req, id) => {
 				// qty_issued is in selected UOM — wrong for VCP rollback-stock.
 				base_issued_qty: item.base_qty_issued ?? item.qty_issued,
 				batch_id: item.batch_id,
+				...(item.stock_type === 'batch' ? { batch_allocations: batchRollbackAllocations(item) } : {}),
 				issuedSerials: item.serial_items
 					.filter((s) => s.is_issued)
 					.map((s) => s.serial_no),

@@ -20,6 +20,10 @@ module.exports = (sequelize, DataTypes) => {
 				foreignKey: 'indent_item_id',
 				as: 'serial_items',
 			});
+			IndentItem.hasMany(models.IndentItemBatchAllocation, {
+				foreignKey: 'indent_item_id',
+				as: 'batch_allocations',
+			});
 			IndentItem.belongsTo(models.RateContract, {
 				foreignKey: 'rate_contract_id',
 				as: 'rateContract',
