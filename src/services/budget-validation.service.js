@@ -705,12 +705,12 @@ async function validateBudgetCommitment({
 				requested,
 				excess,
 				message:
-					`Budget ${budget.budget_id} commitment limit exceeded. ` +
+					`Budget ${budget.budget_id} limit exceeded. ` +
 					`Limit: ${limit.toFixed(2)} (Base ${Number(budget.amount || 0).toFixed(2)} + ` +
 					(isTaxBudgetImpacting(budget.tax_budget_impact)
 						? `Tax ${Number(budget.tax_duty_amount || 0).toFixed(2)} + `
 						: 'Tax excluded (recoverable) + ') +
-					`Provision ${Number(budget.provision_amount || 0).toFixed(2)}), ` +
+					`Other Charges ${Number(budget.provision_amount || 0).toFixed(2)}), ` +
 					// BUDGET_REVISION_DISABLED: `Approved Revisions ${Number(budget.revised_amount || 0).toFixed(2)}), ` +
 					`Already Consumed (indents/PO/WO/invoices): ${committed.toFixed(2)}, Available: ${available.toFixed(2)}, ` +
 					`Budget Impact${documentLabel ? ` of ${documentLabel}` : ''}: ${requested.toFixed(2)}, ` +

@@ -565,7 +565,7 @@ describe('createPurchaseInvoice — other charges (freight, loading/unloading, e
 		);
 	});
 
-	it('flags the invoice when its charges exceed what the PO carried, and returns budget warnings', async () => {
+	it('flags the invoice when its charges exceed what the PO carried, without any budget check', async () => {
 		mockPurchaseOrderFindOne.mockResolvedValue(poWithItems({ items: [poItem({ price: 100, tax_id: 1 })] }));
 		mockGetReceivedQtyForPoItem.mockResolvedValue(10);
 		mockSumInvoicedQtyForPoWoItem.mockResolvedValue(0);
@@ -585,8 +585,9 @@ describe('createPurchaseInvoice — other charges (freight, loading/unloading, e
 			expect.objectContaining({ matching_status: 'variance_flagged' }),
 			expect.anything(),
 		);
-		expect(mockValidateInvoiceBudget).toHaveBeenCalledWith(expect.objectContaining({ enforce: false }));
-		expect(created.budget_warnings).toEqual([{ budget_id: 10, excess: 98000, message: 'over' }]);
+		// Budget is enforced at PO/WO only — the over-PO invoice is flagged for the approver instead.
+		expect(mockValidateInvoiceBudget).not.toHaveBeenCalled();
+		expect(created.budget_warnings).toBeUndefined();
 		expect(created.charge_variance).toEqual({ orderCharges: 0, invoicedCharges: 177000, excess: 177000 });
 	});
 
@@ -775,9 +776,9 @@ describe('createPurchaseInvoice — other charges (freight, loading/unloading, e
 	});
 });
 
-describe('approvePurchaseInvoice — budget limit', () => {
-	it('blocks approval (no workflow advance, rolled back) when the invoice exceeds the budget', async () => {
-		const updateFn = jest.fn();
+describe('approvePurchaseInvoice — no budget check', () => {
+	it('approves an over-budget invoice (budget is enforced at PO/WO only; variance flag is the control)', async () => {
+		const updateFn = jest.fn().mockResolvedValue(undefined);
 		mockPurchaseInvoiceFindOne.mockResolvedValue({
 			id: 7,
 			status: 'in_progress',
@@ -793,10 +794,12 @@ describe('approvePurchaseInvoice — budget limit', () => {
 		mockSumInvoicedQtyForPoWoItem.mockResolvedValue(0);
 		mockValidateInvoiceBudget.mockRejectedValue(new Error('Budget BUD-000010 limit exceeded ... Excess: 98000.00'));
 
-		await expect(piService.approvePurchaseInvoice(baseReq(), 7)).rejects.toThrow(/Excess: 98000/);
-		expect(mockWorkflowEngine.advanceStage).not.toHaveBeenCalled();
-		expect(updateFn).not.toHaveBeenCalled();
-		expect(mockTransaction.rollback).toHaveBeenCalled();
+		mockWorkflowEngine.advanceStage.mockResolvedValue({ status: 'approved' });
+
+		await piService.approvePurchaseInvoice(baseReq(), 7);
+		expect(mockValidateInvoiceBudget).not.toHaveBeenCalled();
+		expect(mockWorkflowEngine.advanceStage).toHaveBeenCalled();
+		expect(mockTransaction.commit).toHaveBeenCalled();
 	});
 });
 
@@ -937,9 +940,6 @@ describe('approvePurchaseInvoice — re-validates the cap at approval time', () 
 
 		await piService.approvePurchaseInvoice(baseReq(), 900);
 
-		expect(mockValidateInvoiceBudget).toHaveBeenCalledWith(
-			expect.objectContaining({ enforce: true, transaction: mockTransaction }),
-		);
 		expect(mockWorkflowEngine.advanceStage).toHaveBeenCalledWith(
 			expect.objectContaining({ documentType: 'purchase_invoice', documentId: 900, action: 'approved' }),
 		);

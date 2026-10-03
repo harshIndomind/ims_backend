@@ -61,11 +61,7 @@ const { createWorkflowDocumentService } = require('./workflowDocument.factory');
 const { calculateDocumentTotals } = require('../utils/charge-tax-engine.util');
 const { round2 } = require('../utils/money');
 const { fetchProductGroupsByIds } = require('../utils/vcpProductGroups');
-const {
-	validateInvoiceBudget,
-	getInvoiceChargeVariance,
-	attachBudgetWarnings,
-} = require('./budget-validation.service');
+const { getInvoiceChargeVariance } = require('./budget-validation.service');
 
 const DOCUMENT_TYPE = 'purchase_invoice';
 
@@ -623,19 +619,9 @@ exports.createPurchaseInvoice = async (req, body) => {
 	});
 	if (chargeVariance) anyVariance = true;
 
-	// Advisory budget check (authoritative one runs at approvePurchaseInvoice) — surfaced to the
-	// maker as `budget_warnings` so an over-budget bill is visible before it reaches an approver.
-	const budgetWarnings = await validateInvoiceBudget({
-		invoice: {
-			id: null,
-			document_type,
-			purchase_order_id: document_type === 'purchase_order' ? doc.id : null,
-			work_order_id: document_type === 'work_order' ? doc.id : null,
-			items: preparedItems,
-			charges: preparedCharges,
-		},
-		enforce: false,
-	});
+	// No budget check on invoices (business rule): budget is enforced at PO/WO only. An invoice
+	// billing more than its PO/WO (price/tax per line above, charges via chargeVariance) is
+	// marked 'variance_flagged' and the approver decides.
 
 	let invoice;
 	const transaction = await sequelize.transaction();
@@ -690,11 +676,6 @@ exports.createPurchaseInvoice = async (req, body) => {
 
 		await invoice.update({ status: instance.status }, { transaction });
 
-		// A zero-stage workflow approves on creation — that is the commitment point then.
-		if (instance.status === 'approved') {
-			await validateInvoiceBudget({ invoice, enforce: true, transaction });
-		}
-
 		await auditLogService.record({
 			req,
 			entityType: DOCUMENT_TYPE,
@@ -711,7 +692,6 @@ exports.createPurchaseInvoice = async (req, body) => {
 	}
 
 	const created = await fetchInvoiceOrThrow(invoice.id);
-	attachBudgetWarnings(created, budgetWarnings);
 	if (chargeVariance) {
 		if (typeof created.setDataValue === 'function') created.setDataValue('charge_variance', chargeVariance);
 		else created.charge_variance = chargeVariance;
@@ -925,11 +905,6 @@ exports.approvePurchaseInvoice = async (req, id) => {
 				);
 			}
 		}
-
-		// Authoritative budget check, under the Budget row lock(s): this invoice is the actual for
-		// its PO/WO, so anything it bills beyond the order (charges, rate, tax) must fit the
-		// budget's effective limit or be covered by an approved Budget Revision first.
-		await validateInvoiceBudget({ invoice, enforce: true, transaction });
 
 		const instance = await workflowEngine.advanceStage({
 			req,

@@ -30,6 +30,7 @@ const {
 	effectiveCommitmentLimit,
 	allocationUsage,
 	PROVISION_TYPE,
+	TAX_BUDGET_IMPACT,
 } = require('../utils/budget-limit.util');
 const { getCommittedBudgetImpact, getIndentBudgetPosition } = require('./budget-validation.service');
 const {
@@ -84,6 +85,9 @@ const SERVER_OWNED_FIELDS = ['commitment_limit', 'revised_amount', 'budget_id'];
 const stripServerOwnedFields = (payload) => {
 	const clean = { ...payload };
 	SERVER_OWNED_FIELDS.forEach((f) => delete clean[f]);
+	// Business rule: GST always counts in the budget limit — the budget creator plans every
+	// cost (tax, freight, other charges) upfront. The recoverable-ITC option is no longer offered.
+	clean.tax_budget_impact = TAX_BUDGET_IMPACT.NON_RECOVERABLE;
 	return clean;
 };
 
@@ -91,13 +95,13 @@ const validateProvisionAndPhases = (merged) => {
 	if (merged.provision_type === PROVISION_TYPE.PERCENTAGE) {
 		const pct = Number(merged.provision_percentage);
 		if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
-			throw new AppError('Provision percentage must be between 0 and 100', StatusCodes.BAD_REQUEST);
+			throw new AppError('Other charges percentage must be between 0 and 100', StatusCodes.BAD_REQUEST);
 		}
 	}
 	if (merged.provision_type === PROVISION_TYPE.FIXED) {
 		const amt = Number(merged.provision_amount);
 		if (!Number.isFinite(amt) || amt < 0) {
-			throw new AppError('Provision amount cannot be negative', StatusCodes.BAD_REQUEST);
+			throw new AppError('Other charges amount cannot be negative', StatusCodes.BAD_REQUEST);
 		}
 	}
 
@@ -137,7 +141,7 @@ const validateAllocationCeiling = async (sub_head_cost_center_amount_id, candida
 	const available = Number(allocation.amount || 0) - used;
 	if (requested > available + 0.005) {
 		throw new AppError(
-			`Base amount + tax + provision (${requested.toFixed(2)}) exceeds the remaining cost center allocation (${available.toFixed(2)})`,
+			`Amount + tax + other charges (${requested.toFixed(2)}) exceeds the remaining cost center allocation (${available.toFixed(2)})`,
 			StatusCodes.BAD_REQUEST,
 		);
 	}
