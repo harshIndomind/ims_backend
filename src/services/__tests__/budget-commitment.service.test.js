@@ -177,7 +177,34 @@ describe('validateBudgetCommitment', () => {
 				enforce: true,
 				transaction: mockTransaction,
 			}),
-		).rejects.toThrow(/Already Committed: 900000\.00, Available: 150000\.00.*Excess: 50000\.00/);
+		).rejects.toThrow(/Already Consumed \(indents\/PO\/WO\/invoices\): 900000\.00, Available: 150000\.00.*Excess: 50000\.00/);
+	});
+
+	// BUD-000010: IND-22 was issued fully from stock (never gets a PO) but still consumed 9,062.40.
+	// PO 13 (indent 24, reserve 9,20,754) at 9,39,840 used to pass because only PO/WO were summed.
+	it('counts other indents (incl. stock-issued ones with no PO) — the BUD-000010 overrun', async () => {
+		mockBudgetFindOne.mockResolvedValue(
+			budget({ id: 7, amount: 800000, tax_duty_amount: 144000, provision_amount: 20000, commitment_limit: 964000, tax_budget_impact: 'non_recoverable' }),
+		);
+		mockIndentItemFindAll.mockResolvedValue([
+			{ indent_id: 22, amount: 7680, tax_amount: 1382.4 },
+			{ indent_id: 23, amount: 12000, tax_amount: 2160 },
+			{ indent_id: 24, amount: 780300, tax_amount: 140454 },
+		]);
+		mockPoFindAll.mockResolvedValue([{ id: 12, customFields: null, same_state: false, doc_number: 'PO-12', indent_id: 23 }]);
+		mockPoItemFindAll.mockResolvedValue([storedLine({ taxable: 24160 / 1.18 })]);
+
+		const violations = await validateBudgetCommitment({
+			components: requestComponents(939840 / 1.18),
+			documentType: 'purchase_order',
+			excludeDocumentId: 13,
+			indentId: 24,
+			enforce: false,
+			transaction: mockTransaction,
+		});
+		expect(violations).toHaveLength(1);
+		// 9,062.40 (IND-22 reserve) + 24,160 (PO 12 > IND-23 reserve); IND-24's own reserve is replaced by this PO
+		expect(violations[0]).toMatchObject({ committed: 33222.4, available: 930777.6, excess: 9062.4 });
 	});
 
 	it('only counts committed statuses and excludes the document being validated', async () => {

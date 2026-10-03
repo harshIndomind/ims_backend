@@ -539,6 +539,13 @@ async function validateInvoiceBudget({ invoice, enforce, transaction }) {
 	const components = await componentsForInvoice(invoice, { transaction });
 	if (components.size === 0) return [];
 
+	const order = await DOC_CONFIG[documentType].model.findOne({
+		where: { id: documentId },
+		attributes: ['id', 'indent_id'],
+		transaction,
+	});
+	const indentId = order?.indent_id || null;
+
 	const violations = [];
 	for (const budgetId of [...components.keys()].sort((a, b) => a - b)) {
 		const budget = await Budget.findOne({
@@ -549,13 +556,23 @@ async function validateInvoiceBudget({ invoice, enforce, transaction }) {
 		if (!budget) continue;
 
 		const thisInvoice = budgetImpactOf(components.get(budgetId), budget.tax_budget_impact);
-		const [{ committed: others }, commitment, invoicedBefore] = await Promise.all([
-			getCommittedBudgetImpact({ budget, excludeDocumentType: documentType, excludeDocumentId: documentId, transaction }),
+		// "Others" = same consumption the indent/PO checks use: other indents at max(reserve,
+		// actuals) (stock-issued ones included), untracked documents, and this order's indent's
+		// other PO/WO — not just other PO/WO, which let invoices overrun BUD-000010.
+		const [pos, commitment, invoicedBefore] = await Promise.all([
+			getIndentBudgetPosition({
+				budget,
+				excludeIndentId: indentId,
+				excludeDocumentType: documentType,
+				excludeDocumentId: documentId,
+				transaction,
+			}),
 			documentCommitmentImpact({ documentType, documentId, budget, transaction }),
 			getInvoicedBudgetImpact({ documentType, documentId, budget, excludeInvoiceId: invoice.id, transaction }),
 		]);
+		const others = round2(pos.consumedByOthers + pos.actualOfThisIndent);
 		const docConsumption = Math.max(commitment, round2(invoicedBefore + thisInvoice));
-		const limit = effectiveCommitmentLimit(budget);
+		const limit = pos.effectiveLimit;
 		const excess = round2(others + docConsumption - limit);
 
 		if (excess > 0) {
@@ -569,7 +586,7 @@ async function validateInvoiceBudget({ invoice, enforce, transaction }) {
 				excess,
 				message:
 					`Budget ${budget.budget_id} limit exceeded by this Purchase Invoice. ` +
-					`Limit: ${limit.toFixed(2)}, Committed by other documents: ${others.toFixed(2)}, ` +
+					`Limit: ${limit.toFixed(2)}, Consumed by other indents/documents: ${others.toFixed(2)}, ` +
 					`This ${DOC_CONFIG[documentType].label}: ${commitment.toFixed(2)} committed / ` +
 					`${round2(invoicedBefore + thisInvoice).toFixed(2)} invoiced incl. this invoice (${thisInvoice.toFixed(2)}), ` +
 					// BUDGET_REVISION_DISABLED: revision hint hidden for now —
@@ -642,6 +659,7 @@ async function validateBudgetCommitment({
 	components,
 	documentType,
 	excludeDocumentId,
+	indentId,
 	documentLabel,
 	enforce,
 	transaction,
@@ -660,13 +678,20 @@ async function validateBudgetCommitment({
 		if (!budget) continue;
 
 		const requested = budgetImpactOf(components.get(budgetId), budget.tax_budget_impact);
-		const { committed } = await getCommittedBudgetImpact({
+		// Same consumption the indent live check uses: every OTHER indent at max(reserve, its
+		// PO/WO/invoice actuals) — so stock-issued indents that never get a PO still count —
+		// plus documents with no tracked indent, plus this document's own indent's other
+		// PO/WO actuals. This document draws on its own indent's reserve, so that reserve is
+		// replaced by actuals + this document rather than added on top.
+		const pos = await getIndentBudgetPosition({
 			budget,
+			excludeIndentId: indentId || null,
 			excludeDocumentType: documentType,
 			excludeDocumentId,
 			transaction,
 		});
-		const limit = effectiveCommitmentLimit(budget);
+		const committed = round2(pos.consumedByOthers + pos.actualOfThisIndent);
+		const limit = pos.effectiveLimit;
 		const available = round2(limit - committed);
 		const excess = round2(requested - available);
 
@@ -687,7 +712,7 @@ async function validateBudgetCommitment({
 						: 'Tax excluded (recoverable) + ') +
 					`Provision ${Number(budget.provision_amount || 0).toFixed(2)}), ` +
 					// BUDGET_REVISION_DISABLED: `Approved Revisions ${Number(budget.revised_amount || 0).toFixed(2)}), ` +
-					`Already Committed: ${committed.toFixed(2)}, Available: ${available.toFixed(2)}, ` +
+					`Already Consumed (indents/PO/WO/invoices): ${committed.toFixed(2)}, Available: ${available.toFixed(2)}, ` +
 					`Budget Impact${documentLabel ? ` of ${documentLabel}` : ''}: ${requested.toFixed(2)}, ` +
 					// BUDGET_REVISION_DISABLED: revision hint hidden for now —
 					// `Excess: ${excess.toFixed(2)}. Raise a Budget Revision of at least ${excess.toFixed(2)} to proceed.`,
@@ -721,9 +746,10 @@ const indentLineReserve = (line, nonRecoverable) =>
 
 /**
  * A budget's position as seen by an indent being created/edited/approved (`excludeIndentId` =
- * that indent, whose own saved lines are replaced by the incoming ones).
+ * that indent, whose own saved lines are replaced by the incoming ones). Also used by the PO/WO
+ * check, which additionally excludes the document being validated (`excludeDocumentType/Id`).
  */
-async function getIndentBudgetPosition({ budget, excludeIndentId, transaction }) {
+async function getIndentBudgetPosition({ budget, excludeIndentId, excludeDocumentType, excludeDocumentId, transaction }) {
 	const nonRecoverable = isTaxBudgetImpacting(budget.tax_budget_impact);
 
 	const lines = await IndentItem.findAll({
@@ -748,7 +774,7 @@ async function getIndentBudgetPosition({ budget, excludeIndentId, transaction })
 	const excludeKey = excludeIndentId ? Number(excludeIndentId) : null;
 	if (excludeKey) reserveByIndent.delete(excludeKey);
 
-	const { breakdown } = await getCommittedBudgetImpact({ budget, transaction });
+	const { breakdown } = await getCommittedBudgetImpact({ budget, excludeDocumentType, excludeDocumentId, transaction });
 	const actualByIndent = new Map();
 	let untracked = 0;
 	for (const d of breakdown) {

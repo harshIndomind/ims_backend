@@ -23,6 +23,7 @@ const {
 	User,
 	Indent,
 	BudgetRevision,
+	PurchaseInvoice,
 } = require('../models/index');
 const {
 	computeBudgetLimits,
@@ -30,7 +31,7 @@ const {
 	allocationUsage,
 	PROVISION_TYPE,
 } = require('../utils/budget-limit.util');
-const { getCommittedBudgetImpact } = require('./budget-validation.service');
+const { getCommittedBudgetImpact, getIndentBudgetPosition } = require('./budget-validation.service');
 const {
 	getAmountByMajorHeadAndPeriod,
 } = require('./masterMajorHeadAmount.service');
@@ -412,7 +413,22 @@ exports.getAllBudgets = async (req) => {
 		filterOptions.offset = Number(offset || 0);
 	}
 
-	return budgetRepo.findAll({}, filterOptions);
+	const result = await budgetRepo.findAll({}, filterOptions);
+
+	// Paginated list only (not the report export): attach each budget's live remaining —
+	// effective limit minus indents/PO/WO/invoices, same figure the indent live check uses.
+	if (limit && result?.rows?.length) {
+		await Promise.all(
+			result.rows.map(async (budget) => {
+				const pos = await getIndentBudgetPosition({ budget });
+				budget.setDataValue('effective_limit', pos.effectiveLimit);
+				budget.setDataValue('consumed_amount', pos.consumedByOthers);
+				budget.setDataValue('remaining_amount', pos.available);
+			}),
+		);
+	}
+
+	return result;
 };
 
 exports.getBudgetById = async (id) => {
@@ -717,6 +733,54 @@ exports.getBudgetUtilization = async (req, id) => {
 		order: [['id', 'DESC']],
 	});
 
+	// Invoices booked against each committed PO/WO, so the UI can show PO → Invoice hierarchy.
+	const poIds = breakdown.filter((d) => d.document_type === 'purchase_order').map((d) => d.document_id);
+	const woIds = breakdown.filter((d) => d.document_type === 'work_order').map((d) => d.document_id);
+	const invoices =
+		poIds.length || woIds.length
+			? await PurchaseInvoice.findAll({
+					where: {
+						org_id: req.user.org_id,
+						status: { [Op.notIn]: ['rejected', 'cancelled'] },
+						[Op.or]: [
+							...(poIds.length ? [{ purchase_order_id: { [Op.in]: poIds } }] : []),
+							...(woIds.length ? [{ work_order_id: { [Op.in]: woIds } }] : []),
+						],
+					},
+					attributes: [
+						'id',
+						'document_type',
+						'purchase_order_id',
+						'work_order_id',
+						'invoicePrefix',
+						'invoiceNo',
+						'invoicePostfix',
+						'vendor_invoice_no',
+						'invoice_date',
+						'grandTotal',
+						'status',
+					],
+					order: [['id', 'ASC']],
+				})
+			: [];
+	const committedDocuments = breakdown.map((d) => ({
+		...d,
+		invoices: invoices
+			.filter((inv) =>
+				d.document_type === 'purchase_order'
+					? inv.purchase_order_id === d.document_id
+					: inv.work_order_id === d.document_id,
+			)
+			.map((inv) => ({
+				id: inv.id,
+				invoice_number: `${inv.invoicePrefix || ''}${inv.invoiceNo || ''}${inv.invoicePostfix || ''}`,
+				vendor_invoice_no: inv.vendor_invoice_no,
+				invoice_date: inv.invoice_date,
+				grand_total: Number(inv.grandTotal || 0),
+				status: inv.status,
+			})),
+	}));
+
 	const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 	const isItemWise = budget.budgetType === 'item-wise';
 
@@ -741,7 +805,7 @@ exports.getBudgetUtilization = async (req, id) => {
 		remaining_base_amount: round2(Number(budget.amount || 0) - indentedAmount),
 		committed_amount: committed,
 		remaining_commitment: round2(effectiveLimit - committed),
-		committed_documents: breakdown,
+		committed_documents: committedDocuments,
 		revisions,
 	};
 };
