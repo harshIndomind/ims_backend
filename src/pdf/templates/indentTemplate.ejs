@@ -553,6 +553,9 @@
                             <% if (item.reissuedSerials && item.reissuedSerials.length > 0) { %>
                                 <br><small><strong>Re-issued S/N:</strong> <%= item.reissuedSerials.join(', ') %></small>
                             <% } %>
+                            <% if (item.issuedBatches && item.issuedBatches.length > 0) { %>
+                                <br><small><strong>Issued from batch:</strong> <%= item.issuedBatches.join(', ') %></small>
+                            <% } %>
                         </td>
                         <td style="text-align:center;"><%= item.uom_name || '' %></td>
                         <td style="text-align:right;"><%= item.requestedQty.toFixed(2) %></td>

@@ -8,7 +8,14 @@ const {
 	documentChargesRepository,
 } = require('../repository/index');
 const { calculateDocumentTotals, legacyCustomFieldsToCharges } = require('../utils/charge-tax-engine.util');
-const { validateDocumentAgainstIndentBudget, taxableAmountOf } = require('./budget-validation.service');
+const {
+	validateDocumentAgainstIndentBudget,
+	taxableAmountOf,
+	validateBudgetCommitment,
+	computeDocumentBudgetComponents,
+	componentsForStoredDocument,
+	attachBudgetWarnings,
+} = require('./budget-validation.service');
 const { round2 } = require('../utils/money');
 const { toEngineItems, chargeBreakdownToRows, dbRowsToCharges } = require('../utils/document-charges.helper');
 const paymentRequisitionAnalyticsRepo = require('../repository/payment-requisition-analytics.repository');
@@ -174,6 +181,22 @@ exports.createPurchaseOrder = async (req, payload) => {
 			transaction,
 		});
 
+		// Budget-level commitment limit (charges + non-recoverable tax included). Advisory for a
+		// draft — the authoritative, locked check runs at submitPurchaseOrder — so an over-limit
+		// draft can still be saved while its Budget Revision is raised; the warning goes back to
+		// the client as `budget_warnings`.
+		const budgetWarnings = await validateBudgetCommitment({
+			components: computeDocumentBudgetComponents(
+				totals,
+				productItems.map((item) => ({ budget_id: item.budget_id })),
+			),
+			documentType: DOCUMENT_TYPE,
+			indentId: indent_id,
+			documentLabel: 'this Purchase Order',
+			enforce: false,
+			transaction,
+		});
+
 		const poObject = {
 			org_id,
 			indent_id,
@@ -276,6 +299,7 @@ exports.createPurchaseOrder = async (req, payload) => {
 
 		await transaction.commit();
 
+		attachBudgetWarnings(purchaseOrder, budgetWarnings);
 		return purchaseOrder;
 	} catch (error) {
 		await transaction.rollback();
@@ -430,6 +454,21 @@ exports.updatePurchaseOrder = async (req) => {
 		// against the indent here. Captured before purchaseOrderRepository.update() below, which
 		// mutates `purchaseOrder` in place.
 		const wasSubmitted = purchaseOrder.status !== 'draft';
+
+		// A submitted PO is already committed against its budget(s), so re-validating its edit is
+		// authoritative (locked, throws); a draft edit is advisory only, same as create.
+		const budgetWarnings = await validateBudgetCommitment({
+			components: computeDocumentBudgetComponents(
+				totals,
+				productItems.map((item) => ({ budget_id: item.budget_id })),
+			),
+			documentType: DOCUMENT_TYPE,
+			excludeDocumentId: Number(id),
+			indentId: indent_id,
+			documentLabel: 'this Purchase Order',
+			enforce: wasSubmitted,
+			transaction,
+		});
 		// Same indent for the whole edit — this is the request body's indent_id, already in
 		// scope above, not purchaseOrder.indent_id (which update() below would overwrite anyway
 		// if the payload changed it).
@@ -596,6 +635,7 @@ exports.updatePurchaseOrder = async (req) => {
 
 		await transaction.commit();
 
+		attachBudgetWarnings(purchaseOrder, budgetWarnings);
 		return purchaseOrder;
 	} catch (error) {
 		await transaction.rollback();
@@ -1878,6 +1918,19 @@ exports.submitPurchaseOrder = async (req, id) => {
 			})),
 			matchUom: true,
 			documentLabel: 'this Purchase Order',
+			transaction,
+		});
+
+		// Authoritative budget-level commitment check (charges + non-recoverable tax), under the
+		// Budget row lock(s), before this PO's own status flips out of 'draft' — once it does,
+		// getCommittedBudgetImpact would count it as already committed.
+		await validateBudgetCommitment({
+			components: await componentsForStoredDocument(DOCUMENT_TYPE, po, { transaction, netOfShortClose: false }),
+			documentType: DOCUMENT_TYPE,
+			excludeDocumentId: po.id,
+			indentId: po.indent_id,
+			documentLabel: 'this Purchase Order',
+			enforce: true,
 			transaction,
 		});
 

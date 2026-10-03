@@ -1,5 +1,7 @@
 'use strict';
 
+const { Op } = require('sequelize');
+
 const mockIndentItemFindOne = jest.fn();
 const mockPoItemFindAll = jest.fn();
 const mockWoItemFindAll = jest.fn();
@@ -206,7 +208,7 @@ describe('validateIndentLineBudget — committed-amount status filtering', () =>
 		);
 	});
 
-	it('only counts approved WO lines — a WO commits nothing until approveWorkOrder', async () => {
+	it('only counts approved/completed WO lines — a WO commits nothing until approveWorkOrder', async () => {
 		mockIndentItemFindOne.mockResolvedValue(valueWiseIndentItem({ amount: 100 }));
 		await validateIndentLineBudget({
 			indent_id: 5,
@@ -216,7 +218,8 @@ describe('validateIndentLineBudget — committed-amount status filtering', () =>
 		});
 		const woCallArgs = mockWoItemFindAll.mock.calls[0][0];
 		const woInclude = woCallArgs.include[0];
-		expect(woInclude.where.status).toBe('approved');
+		// 'completed' = approved then fully received/short-closed; it stays committed.
+		expect(woInclude.where.status[Op.in]).toEqual(['approved', 'completed']);
 	});
 
 	it('excludes the document being edited from its own committed-amount sum (no double count on update)', async () => {

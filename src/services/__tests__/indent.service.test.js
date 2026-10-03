@@ -18,7 +18,8 @@ jest.mock('../../models/index', () => ({
 	sequelize: { transaction: jest.fn() },
 	Indent: {},
 	Budget: { findOne: mockBudgetFindOne },
-	IndentSerialItem: {},
+	IndentSerialItem: { update: jest.fn(), findAll: jest.fn().mockResolvedValue([]), bulkCreate: jest.fn() },
+	IndentItemBatchAllocation: { bulkCreate: jest.fn() },
 	IndentItem: { findAll: mockIndentItemFindAll, destroy: jest.fn() },
 	MasterUnit: {},
 	WorkOrder: {},
@@ -29,10 +30,19 @@ jest.mock('../../repository/index', () => ({
 	IndentRepository: { findById: jest.fn(), create: jest.fn(), updateById: jest.fn() },
 	IndentItemRepository: { create: jest.fn() },
 	IndentSerialRepository: { update: jest.fn(), create: jest.fn() },
+	indentItemQtyLogRepository: { create: jest.fn() },
 	purchaseInvoiceItemsRepository: { sumInvoicedQtyForPoWoItems: jest.fn().mockResolvedValue(new Map()) },
 }));
 
 jest.mock('undici', () => ({ fetch: jest.fn() }));
+
+// Live (PO/WO/invoice-aware) indent budget check — its own logic is covered in
+// budget-commitment.service.test.js; here only its wiring into indent create/update is asserted.
+const mockValidateIndentAgainstLiveBudget = jest.fn().mockResolvedValue(null);
+jest.mock('../budget-validation.service', () => ({
+	validateIndentAgainstLiveBudget: (...args) => mockValidateIndentAgainstLiveBudget(...args),
+	getIndentBudgetPosition: jest.fn(),
+}));
 
 jest.mock('../workflowEngine.service', () => ({
 	getInstanceWithStages: jest.fn().mockResolvedValue({ instance: { status: 'in_progress', currentStage: { stage_name: 'verify' } } }),
@@ -159,6 +169,67 @@ describe('updateIndent — value-wise budget re-validation', () => {
 		const findAllArgs = mockIndentItemFindAll.mock.calls[0][0];
 		expect(findAllArgs.where.indent_id[Object.getOwnPropertySymbols(findAllArgs.where.indent_id)[0]]).toBe(1);
 	});
+
+	it('does not count rejected/cancelled indents as consuming the budget', async () => {
+		const { Op } = require('sequelize');
+		const req = { user: { id: 1 } };
+		await indentService.updateIndent(req, 1, {
+			budgetType: 'value-wise',
+			selectedIndents: [{ budget_id: 99, product_id: 1, qty: 1, total: 100 }],
+		});
+		for (const [args] of mockIndentItemFindAll.mock.calls) {
+			expect(args.include[0].where.status[Op.notIn]).toEqual(['rejected', 'cancelled']);
+		}
+	});
+
+	it('runs the live budget check with the line tax derived server-side from the pre-tax amount', async () => {
+		const req = { user: { id: 1 } };
+		await indentService.updateIndent(req, 1, {
+			budgetType: 'value-wise',
+			selectedIndents: [
+				{ budget_id: 99, product_id: 1, qty: 1, total: 500, tax_id: 11, taxSnapshot: { id: 11, rate: '18' }, tax_amount: 1 },
+			],
+		});
+		expect(mockValidateIndentAgainstLiveBudget).toHaveBeenCalledWith(
+			// client-sent tax_amount (1) is ignored in favour of 500 × 18% = 90
+			expect.objectContaining({ newAmount: 500, newTax: 90, excludeIndentId: 1 }),
+		);
+		expect(indentItemRepo.create).toHaveBeenCalledWith(
+			expect.objectContaining({ amount: 500, tax_id: 11, tax_rate: 18, tax_amount: 90 }),
+			expect.anything(),
+		);
+	});
+
+	it('rejects the edit when the live budget check fails (e.g. PO/invoice actuals already used the budget)', async () => {
+		mockValidateIndentAgainstLiveBudget.mockResolvedValueOnce('Budget BUD-1: not enough budget left ... Excess: 9994.10.');
+		const req = { user: { id: 1 } };
+		await expect(
+			indentService.updateIndent(req, 1, {
+				budgetType: 'value-wise',
+				selectedIndents: [{ budget_id: 99, product_id: 1, qty: 1, total: 500 }],
+			}),
+		).rejects.toThrow(/Excess: 9994\.10/);
+		expect(indentItemRepo.create).not.toHaveBeenCalled();
+	});
+
+	it('still enforces the whole-budget base amount when the indent date is after the last phase', async () => {
+		// Previously getPhaseQuantityDateWise returned null here and every check was skipped.
+		mockBudgetFindOne.mockResolvedValue({
+			id: 99,
+			budget_id: 'BUD-1',
+			amount: 1000,
+			first_phase_date: new Date('2025-12-31'),
+			first_phase_qty: 1000,
+		});
+		const req = { user: { id: 1 } };
+		await expect(
+			indentService.updateIndent(req, 1, {
+				budgetType: 'value-wise',
+				selectedIndents: [{ budget_id: 99, product_id: 1, qty: 1, total: 1500 }],
+			}),
+		).rejects.toThrow(/exceeds base budget amount of 1000/);
+		expect(indentItemRepo.create).not.toHaveBeenCalled();
+	});
 });
 
 describe('verifyIndent — qty_in_stock snapshot', () => {
@@ -264,6 +335,34 @@ describe('approveIndent — qty_in_stock + balance_indent_qty initialization', (
 
 		expect(item.update).toHaveBeenCalledWith(
 			expect.objectContaining({ qty_issued: 0, qty_for_purchase_order: 10, qty_in_stock: 0, balance_indent_qty: 10 }),
+			expect.anything(),
+		);
+	});
+
+	it('batch item split across batches: records one allocation row per batch issued from', async () => {
+		const { IndentItemBatchAllocation } = require('../../models/index');
+		const item = makeIndentItem({ id: 5, indent_id: 1, product_id: 1, qty: 100, stock_type: 'batch', batch_id: 1 });
+		const batchAllocations = [
+			{ batch_id: 1, batch_no: 'B0001', expiry_date: '2026-11-30', qty: 50, base_qty: 50, stock_ledger_id: 11 },
+			{ batch_id: 2, batch_no: 'B0002', expiry_date: '2026-12-31', qty: 20, base_qty: 20, stock_ledger_id: 12 },
+		];
+		setupApprove(item, {
+			dryRun: { indent_item_id: 5, product_id: 1, issued_qty: 70, qty_for_purchase_order: 30, total_available_quantity: 70, minimum_stock_quantity: 0, checkMinimumStock: false, batch_allocations: batchAllocations },
+			allocation: { indent_item_id: 5, product_id: 1, issued_qty: 70, base_issued_qty: 70, qty_for_purchase_order: 30, batch_allocations: batchAllocations },
+		});
+
+		const req = { cookies: { accessToken: 'tok' }, user: { id: 1, name: 'A', email: 'a@x.com' } };
+		await indentService.approveIndent(req, 1, [{ product_id: 1, issue_qty: 70 }]);
+
+		expect(item.update).toHaveBeenCalledWith(
+			expect.objectContaining({ qty_issued: 70, qty_for_purchase_order: 30, balance_indent_qty: 30 }),
+			expect.anything(),
+		);
+		expect(IndentItemBatchAllocation.bulkCreate).toHaveBeenCalledWith(
+			[
+				expect.objectContaining({ indent_item_id: 5, batch_id: 1, batch_no: 'B0001', qty: 50, issued_via: 'approval' }),
+				expect.objectContaining({ indent_item_id: 5, batch_id: 2, batch_no: 'B0002', qty: 20, issued_via: 'approval' }),
+			],
 			expect.anything(),
 		);
 	});
@@ -386,10 +485,10 @@ describe('reissuePendingQuantity', () => {
 	}
 
 	it('is a no-op when nothing has a positive balance_indent_qty', async () => {
-		const item = makeIndentItem({ product_id: 1, qty_issued: 4, balance_indent_qty: 0 });
+		const item = makeIndentItem({ id: 7, product_id: 1, qty_issued: 4, balance_indent_qty: 0 });
 		indentRepo.findById.mockResolvedValue(approvedIndent(item));
 
-		const result = await indentService.reissuePendingQuantity({ cookies: {}, user: {} }, 1);
+		const result = await indentService.reissuePendingQuantity({ cookies: {}, user: {} }, 1, [{ indent_item_id: 7, qty: 1 }]);
 
 		expect(result).toEqual({ indent_id: 1, reissued: [] });
 		expect(fetch).not.toHaveBeenCalled();
@@ -397,61 +496,61 @@ describe('reissuePendingQuantity', () => {
 	});
 
 	it('rejects when the indent is not approved', async () => {
-		const item = makeIndentItem({ product_id: 1, balance_indent_qty: 6 });
+		const item = makeIndentItem({ id: 7, product_id: 1, balance_indent_qty: 6 });
 		indentRepo.findById.mockResolvedValue({ id: 1, status: 'in_progress', IndentItems: [item] });
 
-		await expect(indentService.reissuePendingQuantity({ cookies: {}, user: {} }, 1)).rejects.toThrow(/not approved/);
+		await expect(indentService.reissuePendingQuantity({ cookies: {}, user: {} }, 1, [{ indent_item_id: 7, qty: 6 }])).rejects.toThrow(/not approved/);
 	});
 
 	it('full re-issue: VCP now has the entire balance available — balance_indent_qty drops to 0', async () => {
-		const item = makeIndentItem({ product_id: 1, qty_issued: 4, balance_indent_qty: 6 });
+		const item = makeIndentItem({ id: 7, product_id: 1, qty_issued: 4, balance_indent_qty: 6 });
 		indentRepo.findById.mockResolvedValue(approvedIndent(item));
-		fetch.mockResolvedValueOnce(vcpJsonResponse([{ product_id: 1, issued_qty: 6, issuedSerials: [] }]));
+		fetch.mockResolvedValueOnce(vcpJsonResponse([{ indent_item_id: 7, product_id: 1, issued_qty: 6, issuedSerials: [] }]));
 
 		const req = { cookies: { accessToken: 'tok' }, user: { id: 1 } };
-		const result = await indentService.reissuePendingQuantity(req, 1);
+		const result = await indentService.reissuePendingQuantity(req, 1, [{ indent_item_id: 7, qty: 6 }]);
 
 		expect(item.update).toHaveBeenCalledWith(
 			expect.objectContaining({ qty_issued: 10, balance_indent_qty: 0 }),
 			expect.anything(),
 		);
-		expect(result.reissued).toEqual([{ product_id: 1, issued_qty: 6, balance_indent_qty: 0 }]);
+		expect(result.reissued).toEqual([expect.objectContaining({ product_id: 1, issued_qty: 6, balance_indent_qty: 0 })]);
 	});
 
 	it('partial re-issue: only some of the balance is available yet — remainder stays pending', async () => {
-		const item = makeIndentItem({ product_id: 1, qty_issued: 4, balance_indent_qty: 6 });
+		const item = makeIndentItem({ id: 7, product_id: 1, qty_issued: 4, balance_indent_qty: 6 });
 		indentRepo.findById.mockResolvedValue(approvedIndent(item));
-		fetch.mockResolvedValueOnce(vcpJsonResponse([{ product_id: 1, issued_qty: 2, issuedSerials: [] }]));
+		fetch.mockResolvedValueOnce(vcpJsonResponse([{ indent_item_id: 7, product_id: 1, issued_qty: 2, issuedSerials: [] }]));
 
 		const req = { cookies: { accessToken: 'tok' }, user: { id: 1 } };
-		const result = await indentService.reissuePendingQuantity(req, 1);
+		const result = await indentService.reissuePendingQuantity(req, 1, [{ indent_item_id: 7, qty: 6 }]);
 
 		expect(item.update).toHaveBeenCalledWith(
 			expect.objectContaining({ qty_issued: 6, balance_indent_qty: 4 }),
 			expect.anything(),
 		);
-		expect(result.reissued).toEqual([{ product_id: 1, issued_qty: 2, balance_indent_qty: 4 }]);
+		expect(result.reissued).toEqual([expect.objectContaining({ product_id: 1, issued_qty: 2, balance_indent_qty: 4 })]);
 	});
 
 	it('still no stock: nothing issued, balance_indent_qty untouched, no error', async () => {
-		const item = makeIndentItem({ product_id: 1, qty_issued: 4, balance_indent_qty: 6 });
+		const item = makeIndentItem({ id: 7, product_id: 1, qty_issued: 4, balance_indent_qty: 6 });
 		indentRepo.findById.mockResolvedValue(approvedIndent(item));
-		fetch.mockResolvedValueOnce(vcpJsonResponse([{ product_id: 1, issued_qty: 0, issuedSerials: [] }]));
+		fetch.mockResolvedValueOnce(vcpJsonResponse([{ indent_item_id: 7, product_id: 1, issued_qty: 0, issuedSerials: [] }]));
 
 		const req = { cookies: { accessToken: 'tok' }, user: { id: 1 } };
-		const result = await indentService.reissuePendingQuantity(req, 1);
+		const result = await indentService.reissuePendingQuantity(req, 1, [{ indent_item_id: 7, qty: 6 }]);
 
 		expect(item.update).not.toHaveBeenCalled();
 		expect(result.reissued).toEqual([]);
 	});
 
 	it('requests exactly the remaining balance_indent_qty from VCP, not the original requested qty', async () => {
-		const item = makeIndentItem({ product_id: 1, qty: 10, qty_issued: 4, balance_indent_qty: 6 });
+		const item = makeIndentItem({ id: 7, product_id: 1, qty: 10, qty_issued: 4, balance_indent_qty: 6 });
 		indentRepo.findById.mockResolvedValue(approvedIndent(item));
-		fetch.mockResolvedValueOnce(vcpJsonResponse([{ product_id: 1, issued_qty: 6, issuedSerials: [] }]));
+		fetch.mockResolvedValueOnce(vcpJsonResponse([{ indent_item_id: 7, product_id: 1, issued_qty: 6, issuedSerials: [] }]));
 
 		const req = { cookies: { accessToken: 'tok' }, user: { id: 1 } };
-		await indentService.reissuePendingQuantity(req, 1);
+		await indentService.reissuePendingQuantity(req, 1, [{ indent_item_id: 7, qty: 6 }]);
 
 		const sentBody = JSON.parse(fetch.mock.calls[0][1].body);
 		expect(sentBody.indents[0].qty).toBe(6);
@@ -460,6 +559,7 @@ describe('reissuePendingQuantity', () => {
 
 	it('only sends VCP the not-yet-issued serials for a serial-type pending item', async () => {
 		const item = makeIndentItem({
+			id: 7,
 			product_id: 1,
 			stock_type: 'serial',
 			qty_issued: 5,
@@ -471,20 +571,20 @@ describe('reissuePendingQuantity', () => {
 			],
 		});
 		indentRepo.findById.mockResolvedValue(approvedIndent(item));
-		fetch.mockResolvedValueOnce(vcpJsonResponse([{ product_id: 1, issued_qty: 1, issuedSerials: ['C'] }]));
+		fetch.mockResolvedValueOnce(vcpJsonResponse([{ indent_item_id: 7, product_id: 1, issued_qty: 1, issuedSerials: ['C'] }]));
 
 		const req = { cookies: { accessToken: 'tok' }, user: { id: 1 } };
-		await indentService.reissuePendingQuantity(req, 1);
+		await indentService.reissuePendingQuantity(req, 1, [{ indent_item_id: 7, qty: 1 }]);
 
 		const sentBody = JSON.parse(fetch.mock.calls[0][1].body);
 		expect(sentBody.indents[0].serial_items).toEqual([{ serial_no: 'C', is_issued: 0 }]);
 	});
 
-	it('batch items: re-resolves to whichever batch currently has stock, not the one pinned at indent creation', async () => {
-		// batch_id 55 was the FEFO suggestion at indent-creation time and is now empty (that's
-		// why this item backordered); batch 99 was received later and has stock — verify-stock
-		// only ever checks the batch_id it's handed, so re-issue must swap to 99 itself.
+	it('batch items: keeps the line batch_id (VCP spills over FEFO) and records each batch issued from', async () => {
+		const { IndentItemBatchAllocation } = require('../../models/index');
 		const item = makeIndentItem({
+			id: 7,
+			indent_id: 1,
 			product_id: 1,
 			stock_type: 'batch',
 			batch_id: 55,
@@ -492,32 +592,31 @@ describe('reissuePendingQuantity', () => {
 			balance_indent_qty: 6,
 		});
 		indentRepo.findById.mockResolvedValue(approvedIndent(item));
-
-		fetch.mockResolvedValueOnce({
-			ok: true,
-			status: 200,
-			json: async () => ({
-				data: {
-					batches: [
-						{ id: 55, qty: '0', expiry_date: '2026-01-01' },
-						{ id: 99, qty: '10', expiry_date: '2026-06-01' },
-					],
-				},
-			}),
-		});
-		fetch.mockResolvedValueOnce(vcpJsonResponse([{ product_id: 1, issued_qty: 6, batch_id: 99, issuedSerials: [] }]));
+		fetch.mockResolvedValueOnce(vcpJsonResponse([{
+			indent_item_id: 7,
+			product_id: 1,
+			issued_qty: 6,
+			base_issued_qty: 6,
+			batch_id: 55,
+			batch_allocations: [
+				{ batch_id: 99, batch_no: 'B99', expiry_date: '2027-06-01', qty: 6, base_qty: 6, stock_ledger_id: 801 },
+			],
+		}]));
 
 		const req = { cookies: { accessToken: 'tok' }, user: { id: 1 } };
-		const result = await indentService.reissuePendingQuantity(req, 1);
+		await indentService.reissuePendingQuantity(req, 1, [{ indent_item_id: 7, qty: 6 }]);
 
-		const sentBody = JSON.parse(fetch.mock.calls[1][1].body);
-		expect(sentBody.indents[0].batch_id).toBe(99);
-
+		// No product lookup to re-resolve the batch — one VCP call, with the original batch_id.
+		expect(fetch).toHaveBeenCalledTimes(1);
+		expect(JSON.parse(fetch.mock.calls[0][1].body).indents[0].batch_id).toBe(55);
 		expect(item.update).toHaveBeenCalledWith(
-			expect.objectContaining({ balance_indent_qty: 0, batch_id: 99 }),
+			expect.not.objectContaining({ batch_id: expect.anything() }),
 			expect.anything(),
 		);
-		expect(result.reissued).toEqual([{ product_id: 1, issued_qty: 6, balance_indent_qty: 0 }]);
+		expect(IndentItemBatchAllocation.bulkCreate).toHaveBeenCalledWith(
+			[expect.objectContaining({ indent_item_id: 7, batch_id: 99, batch_no: 'B99', qty: 6, base_qty: 6, stock_ledger_id: 801, issued_via: 'reissue' })],
+			expect.anything(),
+		);
 	});
 });
 
@@ -549,10 +648,10 @@ describe('previewReissue', () => {
 	});
 
 	it('dry-runs only — does not mutate stock or persist anything, reports availability', async () => {
-		const item = makeIndentItem({ product_id: 1, item_name: 'Widget', qty_issued: 4, balance_indent_qty: 6 });
+		const item = makeIndentItem({ id: 7, product_id: 1, item_name: 'Widget', qty_issued: 4, balance_indent_qty: 6 });
 		indentRepo.findById.mockResolvedValue(approvedIndent(item));
 		fetch.mockResolvedValueOnce(
-			vcpJsonResponse([{ product_id: 1, issued_qty: 2, qty_for_purchase_order: 4, issuedSerials: [] }]),
+			vcpJsonResponse([{ indent_item_id: 7, product_id: 1, issued_qty: 2, qty_for_purchase_order: 4, issuedSerials: [] }]),
 		);
 
 		const req = { cookies: { accessToken: 'tok' }, user: { id: 1 } };
@@ -563,7 +662,7 @@ describe('previewReissue', () => {
 		expect(item.update).not.toHaveBeenCalled();
 		expect(result).toEqual({
 			indent_id: 1,
-			items: [{ product_id: 1, item_name: 'Widget', pending_qty: 6, available_now: 2, still_short: 4 }],
+			items: [expect.objectContaining({ indent_item_id: 7, product_id: 1, item_name: 'Widget', pending_qty: 6, available_now: 2, still_short: 4, batch_allocations: [] })],
 		});
 	});
 });

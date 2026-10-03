@@ -18,6 +18,7 @@ const {
 	Budget,
 	CostCenter,
 	IndentSerialItem,
+	IndentItemBatchAllocation,
 	IndentItem,
 	MasterUnit,
 	IndentDocument,
@@ -46,6 +47,26 @@ const { createWorkflowDocumentService } = require('./workflowDocument.factory');
 const { generateInvoiceHTML, generateInvoiceHTMLPDF } = require('../pdf/htmlPdfGenerator');
 const { getImageAsBase64DataUrl } = require('../utils/s3Bucket');
 const dataVisibility = require('./dataVisibility.service');
+const { validateIndentAgainstLiveBudget, getIndentBudgetPosition } = require('./budget-validation.service');
+const { round2 } = require('../utils/money');
+
+/**
+ * Indent line tax from the client's taxSnapshot (same trust level as PO/WO, whose tax rate also
+ * comes from the client's taxSnapshot). tax_amount is always derived here from the pre-tax line
+ * amount (`total`), never taken from the client.
+ */
+function indentLineTax(i) {
+	const rate = parseFloat(i?.taxSnapshot?.rate ?? i?.tax_rate);
+	if (!i?.tax_id || !Number.isFinite(rate)) {
+		return { tax_id: null, taxSnapshot: null, tax_rate: null, tax_amount: null };
+	}
+	return {
+		tax_id: Number(i.tax_id),
+		taxSnapshot: i.taxSnapshot ?? { id: Number(i.tax_id), rate: String(rate) },
+		tax_rate: rate,
+		tax_amount: round2((Number(i.total || 0) * rate) / 100),
+	};
+}
 
 const DOCUMENT_TYPE = 'indent';
 
@@ -160,6 +181,7 @@ exports.createIndent = async (req, payload) => {
 						productSnapshot: i || null,
 						item_type: i?.productSnapshot?.item_type ?? i?.item_type ?? null,
 						rate_contract_id: i.rate_contract_id || null,
+						...indentLineTax(i),
 					},
 					{ transaction },
 				);
@@ -406,6 +428,11 @@ exports.getAllIndents = async (req) => {
 						as: 'serial_items',
 						attributes: ['serial_no', 'is_issued', 'issued_via', 'issued_at'],
 					},
+					{
+						model: IndentItemBatchAllocation,
+						as: 'batch_allocations',
+						attributes: ['id', 'batch_id', 'batch_no', 'expiry_date', 'qty', 'base_qty', 'issued_via', 'issued_at'],
+					},
 				],
 			},
 			{
@@ -592,6 +619,7 @@ async function fetchIndentForWorkflowAction(id) {
 				association: 'IndentItems',
 				include: [
 					{ model: IndentSerialItem, as: 'serial_items' },
+					{ model: IndentItemBatchAllocation, as: 'batch_allocations' },
 					{ model: Budget, as: 'budget' },
 				],
 			},
@@ -744,8 +772,24 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 
 	const dryRunMap = new Map(dryRunResults.map((i) => [i.product_id, i]));
 
-	if (indent.budgetType === 'value-wise') {
-		const errorMessage = await validateIndentBudgetAmount(indent, dryRunMap);
+	// Same basis as create/update (each line's indented amount/qty, both budget types) —
+	// approval used to value this indent at avg_rate × qty issued FROM STOCK while valuing
+	// every other indent at its full indented amount, so the two sides never compared like
+	// with like.
+	const budgetCheckItems = indent.IndentItems.map((i) => ({
+		budget_id: i.budget_id,
+		qty: i.qty,
+		total: i.amount,
+		stored_tax_amount: Number(i.tax_amount || 0),
+	}));
+	{
+		const errorMessage = await validateBudgetPhaseOnCreate(
+			budgetCheckItems,
+			indent.indent_date,
+			indent.budgetType,
+			undefined,
+			indent.id,
+		);
 		if (errorMessage) {
 			throw new AppError(errorMessage, StatusCodes.BAD_REQUEST);
 		}
@@ -783,7 +827,9 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 		approvalIdempotencyKey,
 	);
 
-	const allocationMap = new Map(allocationResults.map((i) => [i.product_id, i]));
+	// Keyed by indent_item_id, not product_id — two lines for the same product (different
+	// UOMs) would otherwise overwrite each other's allocation.
+	const allocationMap = new Map(allocationResults.map((i) => [i.indent_item_id, i]));
 
 	// --- Phase 3: persist in SCM — compensate VCP if this fails ---
 	const transaction = await sequelize.transaction();
@@ -795,15 +841,21 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 		// now, immediately before writing, is what actually prevents that race; if this trips,
 		// the catch below compensates the VCP allocation exactly as it would for any other
 		// failure in this block.
-		if (indent.budgetType === 'value-wise') {
-			const errorMessage = await validateIndentBudgetAmount(indent, allocationMap, transaction);
+		{
+			const errorMessage = await validateBudgetPhaseOnCreate(
+				budgetCheckItems,
+				indent.indent_date,
+				indent.budgetType,
+				transaction,
+				indent.id,
+			);
 			if (errorMessage) {
 				throw new AppError(errorMessage, StatusCodes.BAD_REQUEST);
 			}
 		}
 
 		for (const i of indent.IndentItems) {
-			const allocation = allocationMap.get(i.product_id);
+			const allocation = allocationMap.get(i.id);
 			const dryRun = dryRunMap.get(i.product_id);
 			const issuedQty = roundQty(allocation?.issued_qty || 0);
 			const baseIssuedQty = allocation?.base_issued_qty ?? issuedQty;
@@ -866,6 +918,9 @@ exports.approveIndent = async (req, id, items, lastDate) => {
 
 			if (i.stock_type === 'serial') {
 				await markIndentSerialsIssued(i, allocation?.issuedSerials, 'approval', transaction);
+			}
+			if (i.stock_type === 'batch') {
+				await recordBatchAllocations(i, allocation?.batch_allocations, 'approval', transaction);
 			}
 		}
 
@@ -959,46 +1014,50 @@ async function markIndentSerialsIssued(item, issuedSerials, issuedVia, transacti
 }
 
 /**
- * A batch-type IndentItem's `batch_id` is pinned to whichever batch was selected (FEFO
- * suggestion, user-editable) at indent-creation time. verify-stock only ever checks that
- * one batch's qty — so if that batch was empty (hence the backorder) and stock later
- * arrives in a *different*, newly-received batch, the pinned batch_id never sees it and
- * re-issue keeps reporting 0 available forever. Re-resolve to whichever current batch has
- * stock, FEFO order (soonest expiry first, undated last), same policy as the frontend's
- * indent-creation suggestion — see docs/architecture/vcp-batch-fifo-fefo-design.
+ * Records which batches VCP actually issued one batch line from (it may split the line across
+ * several batches, FEFO). Re-issues append rows; the line's batch_id stays the batch picked on
+ * the indent form.
  */
-async function resolveCurrentBatchIdForReissue(req, productId) {
-	const url = `${VCP_SERVICE_API_BASE_URL}${VCP_SERVICE_PRODUCT_ENDPOINT}/${productId}`;
-	const token = req.cookies.accessToken;
-	const response = await fetch(url, {
-		method: 'GET',
-		// VCP's verifyToken reads req.cookies.accessToken, not the Authorization header —
-		// this is a server-to-server fetch so no cookie jar carries it automatically.
-		headers: { Authorization: `Bearer ${token}`, Cookie: `accessToken=${token}` },
-	});
-	if (!response.ok) {
-		logger.warn('resolveCurrentBatchIdForReissue: product fetch failed', {
-			productId,
-			status: response.status,
-		});
-		return null;
+async function recordBatchAllocations(item, batchAllocations, issuedVia, transaction) {
+	const rows = (batchAllocations || []).filter((a) => parseFloat(a.base_qty) > 0);
+	if (rows.length === 0) return;
+	const issuedAt = new Date();
+	await IndentItemBatchAllocation.bulkCreate(
+		rows.map((a) => ({
+			indent_id: item.indent_id,
+			indent_item_id: item.id,
+			product_id: item.product_id,
+			batch_id: a.batch_id,
+			batch_no: a.batch_no ?? null,
+			expiry_date: a.expiry_date ?? null,
+			qty: a.qty ?? a.base_qty,
+			base_qty: a.base_qty,
+			stock_ledger_id: a.stock_ledger_id ?? null,
+			issued_via: issuedVia,
+			issued_at: issuedAt,
+		})),
+		{ transaction },
+	);
+}
+
+/**
+ * Rollback payload for a batch line on cancel/delete: send each batch back what was issued
+ * from it. Lines (or the part of a line) issued before IndentItemBatchAllocations existed have
+ * no rows, so that remainder goes back to the line's batch_id as before.
+ */
+function batchRollbackAllocations(item) {
+	const rows = item.batch_allocations || [];
+	const allocations = rows.map((r) => ({
+		batch_id: r.batch_id,
+		qty: parseFloat(r.qty),
+		base_qty: parseFloat(r.base_qty),
+	}));
+	const recorded = allocations.reduce((sum, a) => sum + a.base_qty, 0);
+	const legacyRemainder = roundQty(parseFloat(item.base_qty_issued ?? item.qty_issued ?? 0) - recorded);
+	if (legacyRemainder > 0 && item.batch_id) {
+		allocations.push({ batch_id: item.batch_id, base_qty: legacyRemainder });
 	}
-
-	const { data } = await response.json();
-	const batches = (data?.batches || []).filter((b) => parseFloat(b.qty || 0) > 0);
-	logger.info('resolveCurrentBatchIdForReissue', {
-		productId,
-		allBatches: (data?.batches || []).map((b) => ({ id: b.id, qty: b.qty, expiry_date: b.expiry_date })),
-		batchesWithStock: batches.map((b) => b.id),
-	});
-	if (batches.length === 0) return null;
-
-	batches.sort((a, b) => {
-		const aTime = a.expiry_date ? new Date(a.expiry_date).getTime() : Infinity;
-		const bTime = b.expiry_date ? new Date(b.expiry_date).getTime() : Infinity;
-		return aTime - bTime;
-	});
-	return batches[0].id;
+	return allocations;
 }
 
 /**
@@ -1007,9 +1066,8 @@ async function resolveCurrentBatchIdForReissue(req, productId) {
  * verify-stock expects. For serial items, the stored serial_items still includes ones
  * already issued at approval time; VCP's verify-stock requires every serial it's handed
  * to currently be unsold (it throws if any aren't), so only the not-yet-issued serials
- * may be sent here. For batch items, batch_id is re-resolved to whatever currently has
- * stock (see resolveCurrentBatchIdForReissue) instead of the stale batch_id captured at
- * indent creation.
+ * may be sent here. Batch items keep their batch_id: VCP tries it first and spills over to
+ * other batches (FEFO), so stock received in a newer batch is found without re-resolving.
  */
 async function getPendingReissueItems(req, indentId) {
 	const indent = await fetchIndentForWorkflowAction(indentId);
@@ -1026,26 +1084,14 @@ async function getPendingReissueItems(req, indentId) {
 	);
 
 	// Request exactly what's still owed — VCP decides how much of that is actually available now.
-	const plainPendingItems = await Promise.all(
-		pendingItems.map(async (i) => {
-			const plain = i.get({ plain: true });
-			if (plain.stock_type === 'serial') {
-				plain.serial_items = (plain.serial_items || []).filter((s) => !s.is_issued);
-			}
-			if (plain.stock_type === 'batch') {
-				const originalBatchId = plain.batch_id;
-				const currentBatchId = await resolveCurrentBatchIdForReissue(req, plain.product_id);
-				if (currentBatchId != null) plain.batch_id = currentBatchId;
-				logger.info('getPendingReissueItems: batch resolution', {
-					product_id: plain.product_id,
-					originalBatchId,
-					resolvedBatchId: currentBatchId,
-					finalBatchId: plain.batch_id,
-				});
-			}
-			return { ...plain, qty: parseFloat(i.balance_indent_qty) };
-		}),
-	);
+	const plainPendingItems = pendingItems.map((i) => {
+		// batch_allocations is issue history, not input for VCP — keep the payload lean.
+		const { batch_allocations: _history, ...plain } = i.get({ plain: true });
+		if (plain.stock_type === 'serial') {
+			plain.serial_items = (plain.serial_items || []).filter((s) => !s.is_issued);
+		}
+		return { ...plain, qty: parseFloat(i.balance_indent_qty) };
+	});
 
 	return { indent, pendingItems, plainPendingItems };
 }
@@ -1080,6 +1126,7 @@ exports.previewReissue = async (req, indentId) => {
 			pending_qty: parseFloat(item.balance_indent_qty),
 			available_now: parseFloat(allocation?.issued_qty || 0),
 			still_short: parseFloat(allocation?.qty_for_purchase_order || 0),
+			batch_allocations: allocation?.batch_allocations || [],
 		};
 	});
 
@@ -1222,18 +1269,15 @@ exports.reissuePendingQuantity = async (req, indentId, allocations) => {
 					base_qty_issued: parseFloat(item.base_qty_issued || 0) + newlyIssuedBase,
 					balance_indent_qty: updatedBalance,
 					qty_updated_by_verifier: roundQty(parseFloat(item.qty_updated_by_verifier || 0) + newlyIssued),
-					// Keep the item's batch_id in sync with whichever batch this re-issue actually
-					// drew from (resolveCurrentBatchIdForReissue may have picked a different, newer
-					// batch than the one recorded at indent creation).
-					...(item.stock_type === 'batch' && allocation?.batch_id != null
-						? { batch_id: allocation.batch_id }
-						: {}),
 				},
 				{ transaction },
 			);
 
 			if (item.stock_type === 'serial') {
 				await markIndentSerialsIssued(item, allocation?.issuedSerials, 'reissue', transaction);
+			}
+			if (item.stock_type === 'batch') {
+				await recordBatchAllocations(item, allocation?.batch_allocations, 'reissue', transaction);
 			}
 
 			await indentQtyLogService.record({
@@ -1342,6 +1386,7 @@ exports.cancelIndent = async (req, id, remarks) => {
 							// qty_issued is in selected UOM — wrong for VCP rollback-stock.
 							base_issued_qty: item.base_qty_issued ?? item.qty_issued,
 							batch_id: item.batch_id,
+							...(item.stock_type === 'batch' ? { batch_allocations: batchRollbackAllocations(item) } : {}),
 							issuedSerials: item.serial_items
 								.filter((s) => s.is_issued)
 								.map((s) => s.serial_no),
@@ -1415,6 +1460,11 @@ exports.generateInvoiceHtml = async (req) => {
 						model: IndentSerialItem,
 						as: 'serial_items',
 						attributes: ['serial_no', 'is_issued', 'issued_via', 'issued_at'],
+					},
+					{
+						model: IndentItemBatchAllocation,
+						as: 'batch_allocations',
+						attributes: ['batch_no', 'batch_id', 'expiry_date', 'qty', 'issued_via', 'issued_at'],
 					},
 				],
 			},
@@ -1547,6 +1597,15 @@ async function calculateIndentInvoice(indent, qtyLogs) {
 			.filter((serial) => serial.issued_via !== 'reissue')
 			.map((serial) => serial.serial_no);
 
+		// "B0001 × 50" per batch the line was issued from, in issue order.
+		const issuedBatches = (item.batch_allocations || [])
+			.slice()
+			.sort((a, b) => new Date(a.issued_at) - new Date(b.issued_at))
+			.map((a) => {
+				const label = `${a.batch_no || `Batch ${a.batch_id}`} × ${parseFloat(a.qty)}`;
+				return a.issued_via === 'reissue' ? `${label} (re-issue)` : label;
+			});
+
 		return {
 			...item,
 			requestedQty,
@@ -1554,6 +1613,7 @@ async function calculateIndentInvoice(indent, qtyLogs) {
 			pendingQty,
 			qtyForPurchaseOrder,
 			statusLabel,
+			issuedBatches,
 			contractorName: latestReissue?.vendor_snapshot?.name || null,
 			contractorCode: latestReissue?.vendor_snapshot?.code || null,
 			workOrderNo: workOrderNumber(latestReissue?.workOrder),
@@ -1718,6 +1778,7 @@ exports.updateIndent = async (req, id, payload) => {
 						productSnapshot: i || null,
 						item_type: i?.productSnapshot?.item_type ?? i?.item_type ?? null,
 						rate_contract_id: i.rate_contract_id || null,
+						...indentLineTax(i),
 					},
 					{ transaction },
 				);
@@ -1780,6 +1841,7 @@ exports.deleteIndent = async (req, id) => {
 				association: 'IndentItems',
 				include: [
 					{ model: IndentSerialItem, as: 'serial_items' },
+					{ model: IndentItemBatchAllocation, as: 'batch_allocations' },
 				],
 			},
 		],
@@ -1832,6 +1894,7 @@ exports.deleteIndent = async (req, id) => {
 				// qty_issued is in selected UOM — wrong for VCP rollback-stock.
 				base_issued_qty: item.base_qty_issued ?? item.qty_issued,
 				batch_id: item.batch_id,
+				...(item.stock_type === 'batch' ? { batch_allocations: batchRollbackAllocations(item) } : {}),
 				issuedSerials: item.serial_items
 					.filter((s) => s.is_issued)
 					.map((s) => s.serial_no),
@@ -1924,6 +1987,39 @@ exports.lastIndentByBudgetId = async (req, budgetId) => {
 	);
 };
 
+// A rejected or cancelled indent never goes on to be purchased, so its lines must stop
+// counting against the budget — previously they consumed headroom forever.
+const INACTIVE_INDENT_STATUSES = ['rejected', 'cancelled'];
+
+/**
+ * Active (non-rejected/cancelled) IndentItems on a budget, optionally scoped to one phase's
+ * indent_date window and excluding one indent (its own pre-edit rows on update/approve).
+ */
+async function findActiveBudgetIndentItems(budgetId, { indentDateFilter, excludeIndentId, transaction } = {}) {
+	return IndentItem.findAll({
+		where: {
+			budget_id: budgetId,
+			...(excludeIndentId ? { indent_id: { [Op.ne]: excludeIndentId } } : {}),
+		},
+		include: [
+			{
+				model: Indent,
+				as: 'indent',
+				where: {
+					status: { [Op.notIn]: INACTIVE_INDENT_STATUSES },
+					...(indentDateFilter ? { indent_date: indentDateFilter } : {}),
+				},
+				attributes: [],
+				required: true,
+			},
+		],
+		transaction,
+	});
+}
+
+const sumAmount = (items) => items.reduce((sum, i) => sum + Number(i.amount || 0), 0);
+const sumQty = (items) => items.reduce((sum, i) => sum + Number(i.qty || 0), 0);
+
 /**
  * [2026-06-03] getConsumedBudgetByBudgetId
  *
@@ -1940,14 +2036,49 @@ exports.lastIndentByBudgetId = async (req, budgetId) => {
 exports.getConsumedBudgetByBudgetId = async (req, budgetId) => {
 	const budget = await Budget.findByPk(budgetId);
 	if (!budget) return null;
+	const phase = await consumedPhasePosition(req, budget, budgetId);
+	if (!phase) return null;
 
+	// Live position for the indent form: what's actually left after PO/WO/invoice actuals, and
+	// the tax-inclusive reserve headroom — exactly what validateIndentAgainstLiveBudget enforces.
+	const pos = await getIndentBudgetPosition({ budget, excludeIndentId: req.query.exclude_indent_id || null });
+	return {
+		...phase,
+		tax_budget_impact: budget.tax_budget_impact,
+		reserve_limit: pos.reserveLimit,
+		reserve_available: pos.reserveAvailable,
+		effective_limit: pos.effectiveLimit,
+		live_consumed: pos.consumedByOthers,
+		live_available: pos.available,
+	};
+};
+
+async function consumedPhasePosition(req, budget, budgetId) {
 	// [2026-06-03] Use the date passed by the frontend (indent_date) so phase detection
 	// matches the date the user selected, not the server's current time. This matters when
 	// the indent_date is changed to test a different phase — without it the backend always
 	// resolves the phase from new Date() and returns the wrong phase's consumed amount.
 	const referenceDate = req.query.date ? new Date(req.query.date) : new Date();
 	const phaseResult = getPhaseQuantityDateWise(budget, referenceDate);
-	if (!phaseResult) return null;
+	const isItemWise = budget.budgetType === 'item-wise';
+
+	// Outside every phase window (e.g. after the last phase date) the whole-budget base is
+	// still the ceiling — see validateBudgetPhaseOnCreate — so report against that instead of
+	// returning nothing.
+	if (!phaseResult) {
+		const allItems = await findActiveBudgetIndentItems(budgetId);
+		const consumed_amount = sumAmount(allItems);
+		const consumed_qty = sumQty(allItems);
+		const overall = isItemWise ? Number(budget.qty_for_purchase || 0) : Number(budget.amount || 0);
+		return {
+			consumed_amount,
+			consumed_qty,
+			phase_amount: overall,
+			available_amount: overall - (isItemWise ? consumed_qty : consumed_amount),
+			phase_period: null,
+			phase_date: null,
+		};
+	}
 	const { value: phase_amount, phaseDate, phasePeriod } = phaseResult;
 
 	// Scope to current phase only — Phase-isolated rule.
@@ -1959,18 +2090,12 @@ exports.getConsumedBudgetByBudgetId = async (req, budgetId) => {
 		? { [Op.gt]: startDate, [Op.lte]: endDate }
 		: { [Op.lte]: endDate };
 
-	const existingItems = await IndentItem.findAll({
-		where: { budget_id: budgetId },
-		include: [{ model: Indent, as: 'indent', where: { indent_date: indentDateFilter }, attributes: [], required: true }],
-	});
+	const existingItems = await findActiveBudgetIndentItems(budgetId, { indentDateFilter });
 
-	const consumed_amount = existingItems.reduce((sum, i) => sum + Number(i.amount || 0), 0);
-	const consumed_qty = existingItems.reduce((sum, i) => sum + Number(i.qty || 0), 0);
+	const consumed_amount = sumAmount(existingItems);
+	const consumed_qty = sumQty(existingItems);
 
-	const available_amount =
-		budget.budgetType === 'item-wise'
-			? phase_amount - consumed_qty
-			: phase_amount - consumed_amount;
+	const available_amount = isItemWise ? phase_amount - consumed_qty : phase_amount - consumed_amount;
 
 	return {
 		consumed_amount,
@@ -1980,7 +2105,7 @@ exports.getConsumedBudgetByBudgetId = async (req, budgetId) => {
 		phase_period: phasePeriod,
 		phase_date: phaseDate,
 	};
-};
+}
 
 const getPhaseQuantityDateWise = (budget, date) => {
 	if (!budget?.id) return 0;
@@ -2130,7 +2255,7 @@ async function verifyIndentQuantityWithProductServices(
  * [2026-06-03] validateBudgetPhaseOnCreate — budget phase check at indent creation time.
  *
  * WHY: Frontend validation can be bypassed (commented out, direct API call, etc).
- * validateIndentBudgetAmount only runs at approval time, which is too late — by then the
+ * The approval-time re-check (approveIndent) is too late on its own — by then the
  * indent is already saved and the approver must reject it. This function runs BEFORE any
  * DB record is written so the user gets an immediate error and nothing is persisted.
  *
@@ -2146,6 +2271,7 @@ async function validateBudgetPhaseOnCreate(selectedIndents, indentDate, budgetTy
 	}
 
 	for (const [budgetId, items] of budgetGroups) {
+		if (!budgetId) continue;
 		// Row-locked within the caller's transaction (see createIndent/updateIndent) so two
 		// concurrent requests against the same budget serialize instead of both reading the
 		// same "previously consumed" total and both passing validation.
@@ -2156,144 +2282,77 @@ async function validateBudgetPhaseOnCreate(selectedIndents, indentDate, budgetTy
 		});
 		if (!budget) continue;
 
-		const phaseResult = getPhaseQuantityDateWise(budget, indentDate);
-		if (!phaseResult) continue;
-
-		const { value: phaseAmount, phasePeriod } = phaseResult;
-
-		// Scope consumed query to the current phase's date window (phase-isolated rule)
-		// Filter by Indent.indent_date (business date), not IndentItem.createdAt.
-		const { startDate, endDate } = getPhaseRange(budget, phasePeriod);
-		const indentDateFilter = startDate
-			? { [Op.gt]: startDate, [Op.lte]: endDate }
-			: { [Op.lte]: endDate };
-
-		const previousItems = await IndentItem.findAll({
-			where: {
-				budget_id: budgetId,
-				// updateIndent replaces this indent's own items wholesale (destroy+recreate) —
-				// exclude them here so we don't double-count the indent's own pre-edit rows on
-				// top of the freshly-supplied `selectedIndents` totals below.
-				...(excludeIndentId ? { indent_id: { [Op.ne]: excludeIndentId } } : {}),
-			},
-			include: [{ model: Indent, as: 'indent', where: { indent_date: indentDateFilter }, attributes: [], required: true }],
-			transaction,
-		});
-		const previouslyConsumedAmount = previousItems.reduce(
-			(sum, i) => sum + Number(i.amount || 0), 0,
-		);
-		const previouslyConsumedQty = previousItems.reduce(
-			(sum, i) => sum + Number(i.qty || 0), 0,
-		);
-
 		const newAmount = items.reduce((sum, i) => sum + Number(i.total || 0), 0);
 		const newQty = items.reduce((sum, i) => sum + Number(i.qty || 0), 0);
 
-		const totalAmount = previouslyConsumedAmount + newAmount;
-		const totalQty = previouslyConsumedQty + newQty;
+		// Phase-isolated check first (its message is the more specific one), then the
+		// whole-budget base ceiling below.
+		const phaseResult = getPhaseQuantityDateWise(budget, indentDate);
+		if (phaseResult) {
+			const { value: phaseAmount, phasePeriod } = phaseResult;
 
-		if (budgetType === 'value-wise') {
-			if (phaseAmount > 0 && totalAmount > phaseAmount) {
-				return `Budget ${budget.budget_id} Phase ${phasePeriod}: total amount ${totalAmount} (including ${previouslyConsumedAmount} already indented) exceeds phase limit of ${phaseAmount}. Available: ${phaseAmount - previouslyConsumedAmount}.`;
-			}
-		} else if (budgetType === 'item-wise') {
-			if (phaseAmount > 0 && totalQty > phaseAmount) {
-				return `Budget ${budget.budget_id} Phase ${phasePeriod}: total quantity ${totalQty} (including ${previouslyConsumedQty} already indented) exceeds phase quantity limit of ${phaseAmount}. Available: ${phaseAmount - previouslyConsumedQty}.`;
-			}
-			if (Number(budget.amount) > 0 && totalAmount > Number(budget.amount)) {
-				return `Budget ${budget.budget_id}: total amount ${totalAmount} (including ${previouslyConsumedAmount} already indented) exceeds total budget amount of ${budget.amount}.`;
+			// Scope consumed query to the current phase's date window (phase-isolated rule)
+			// Filter by Indent.indent_date (business date), not IndentItem.createdAt.
+			const { startDate, endDate } = getPhaseRange(budget, phasePeriod);
+			const indentDateFilter = startDate
+				? { [Op.gt]: startDate, [Op.lte]: endDate }
+				: { [Op.lte]: endDate };
+
+			const previousItems = await findActiveBudgetIndentItems(budgetId, { indentDateFilter, excludeIndentId, transaction });
+			const previouslyConsumedAmount = sumAmount(previousItems);
+			const previouslyConsumedQty = sumQty(previousItems);
+
+			const totalAmount = previouslyConsumedAmount + newAmount;
+			const totalQty = previouslyConsumedQty + newQty;
+
+			if (budgetType === 'value-wise') {
+				if (phaseAmount > 0 && totalAmount > phaseAmount) {
+					return `Budget ${budget.budget_id} Phase ${phasePeriod}: total amount ${totalAmount} (including ${previouslyConsumedAmount} already indented) exceeds phase limit of ${phaseAmount}. Available: ${phaseAmount - previouslyConsumedAmount}.`;
+				}
+			} else if (budgetType === 'item-wise') {
+				if (phaseAmount > 0 && totalQty > phaseAmount) {
+					return `Budget ${budget.budget_id} Phase ${phasePeriod}: total quantity ${totalQty} (including ${previouslyConsumedQty} already indented) exceeds phase quantity limit of ${phaseAmount}. Available: ${phaseAmount - previouslyConsumedQty}.`;
+				}
 			}
 		}
-	}
 
-	return null;
-}
+		// Whole-budget base ceiling — applies in every phase AND outside all phase windows (an
+		// indent dated after the last phase date used to skip every check). Indents draw on the
+		// BASE budget only; the Additional Cost Provision is reserved for PO/WO charges, tax and
+		// rate variance (budget-validation.service.js's commitment-limit check).
+		// updateIndent/approveIndent pass excludeIndentId so the indent's own rows aren't
+		// double-counted on top of the freshly-supplied `selectedIndents` totals.
+		const allPreviousItems = await findActiveBudgetIndentItems(budgetId, { excludeIndentId, transaction });
+		const overallAmount = sumAmount(allPreviousItems) + newAmount;
+		const overallQty = sumQty(allPreviousItems) + newQty;
+		const baseAmount = Number(budget.amount || 0);
+		const baseQty = Number(budget.qty_for_purchase || 0);
 
-/**
- * [2026-06-03] validateIndentBudgetAmount — fixed cross-indent budget enforcement
- *
- * WHY (old bug): The original code only summed the items inside the indent currently
- * being approved. It never queried previously saved IndentItems for the same budget_id,
- * so a user could create unlimited indents against the same budget phase and each one
- * would pass validation individually even though the cumulative total exceeded the phase
- * limit.
- *
- * FIX: After computing the current indent's total, we query IndentItem for all OTHER
- * indents (indent_id != indent.id) on the same budget_id to get the previously consumed
- * amount, then validate the combined total against the phase limit.
- */
-async function validateIndentBudgetAmount(indent, allocationMap, transaction) {
-	const budgetGroups = new Map();
-	for (const item of indent.IndentItems) {
-		const budgetId = item.budget_id;
-		if (!budgetGroups.has(budgetId)) {
-			budgetGroups.set(budgetId, { budget: item.budget, items: [] });
+		if (budgetType === 'item-wise' && baseQty > 0 && overallQty > baseQty) {
+			return `Budget ${budget.budget_id}: total quantity ${overallQty} (including ${overallQty - newQty} already indented) exceeds budget quantity of ${baseQty}. Available: ${baseQty - (overallQty - newQty)}.`;
 		}
-		budgetGroups.get(budgetId).items.push(item);
-	}
+		if (baseAmount > 0 && overallAmount > baseAmount) {
+			return `Budget ${budget.budget_id}: total amount ${overallAmount} (including ${overallAmount - newAmount} already indented) exceeds base budget amount of ${baseAmount}. Available: ${baseAmount - (overallAmount - newAmount)}.`;
+		}
 
-	for (const [budgetId, { budget: preloadedBudget, items }] of budgetGroups) {
-		if (!preloadedBudget) continue;
-
-		// Re-fetch with a row lock inside the caller's transaction rather than trusting the
-		// `budget` eager-loaded onto indent.IndentItems earlier (before this transaction/lock
-		// existed) — see the comment at this function's call site in approveIndent.
-		const budget = transaction
-			? await Budget.findOne({ where: { id: budgetId }, transaction, lock: transaction.LOCK.UPDATE })
-			: preloadedBudget;
-		if (!budget) continue;
-
-		// Amount from the indent currently being approved
-		const currentIndentAmount = items.reduce((total, item) => {
-			const allocation = allocationMap.get(item.product_id);
-			const issuedQty = allocation?.issued_qty ?? 0;
-			const avgRate = Number(item.avg_rate) || 0;
-			return total + avgRate * issuedQty;
-		}, 0);
-
-		const phaseResult = getPhaseQuantityDateWise(budget, indent.indent_date);
-		if (!phaseResult) continue;
-
-		const { value: phaseAmount, phaseDate, phasePeriod } = phaseResult;
-
-		// [2026-06-03] Phase-isolated rule: only count items from OTHER indents that were
-		// created within the same phase window as the indent being approved.
-		// We exclude the current indent (indent_id != indent.id) to avoid double-counting
-		// its items, which are already summed in currentIndentAmount above.
-		const { startDate, endDate } = getPhaseRange(budget, phasePeriod);
-		const indentDateFilter = startDate
-			? { [Op.gt]: startDate, [Op.lte]: endDate }
-			: { [Op.lte]: endDate };
-
-		const previousItems = await IndentItem.findAll({
-			where: {
-				budget_id: budgetId,
-				indent_id: { [Op.ne]: indent.id },
-			},
-			include: [{ model: Indent, as: 'indent', where: { indent_date: indentDateFilter }, attributes: [], required: true }],
-			transaction,
-		});
-		const previouslyConsumedAmount = previousItems.reduce(
-			(sum, i) => sum + Number(i.amount || 0),
+		// Tax-inclusive reserve + live consumption (PO/WO/invoice actuals) — catches at the
+		// indent what used to surface only at the PO (see budget-validation.service.js).
+		const newTax = items.reduce(
+			// stored_tax_amount: approve path (already-persisted lines); otherwise always derived
+			// server-side from the incoming line — a client-sent tax_amount is never trusted.
+			(sum, i) => sum + Number(i.stored_tax_amount ?? indentLineTax(i).tax_amount ?? 0),
 			0,
 		);
-
-		const totalIndentAmount = currentIndentAmount + previouslyConsumedAmount;
-
-		logger.info('Budget validation', {
-			budgetId,
-			phaseAmount,
-			currentIndentAmount,
-			previouslyConsumedAmount,
-			totalIndentAmount,
-			phasePeriod,
-			phaseDate,
+		const liveError = await validateIndentAgainstLiveBudget({
+			budget,
+			newAmount,
+			newTax,
+			excludeIndentId,
+			transaction,
 		});
-
-		if (totalIndentAmount > phaseAmount) {
-			return `Total amount ${totalIndentAmount} for budget ${budget.budget_id} cannot be greater than the phase amount ${phaseAmount}. Previously consumed: ${previouslyConsumedAmount}, current indent: ${currentIndentAmount}.`;
-		}
+		if (liveError) return liveError;
 	}
 
 	return null;
 }
+

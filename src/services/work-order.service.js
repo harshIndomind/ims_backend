@@ -7,7 +7,14 @@ const {
 	documentChargesRepository,
 } = require('../repository/index');
 const { calculateDocumentTotals, legacyCustomFieldsToCharges } = require('../utils/charge-tax-engine.util');
-const { validateDocumentAgainstIndentBudget, taxableAmountOf } = require('./budget-validation.service');
+const {
+	validateDocumentAgainstIndentBudget,
+	taxableAmountOf,
+	validateBudgetCommitment,
+	computeDocumentBudgetComponents,
+	componentsForStoredDocument,
+	attachBudgetWarnings,
+} = require('./budget-validation.service');
 const { round2 } = require('../utils/money');
 const { toEngineItems, chargeBreakdownToRows, dbRowsToCharges } = require('../utils/document-charges.helper');
 const paymentRequisitionAnalyticsRepo = require('../repository/payment-requisition-analytics.repository');
@@ -194,6 +201,21 @@ exports.createWorkOrder = async (req) => {
 			transaction,
 		});
 
+		// Budget-level commitment limit (charges + non-recoverable tax included) — advisory
+		// here for the same reason as the indent-line check above; enforced at submit and at
+		// final approval. Returned to the client as `budget_warnings`.
+		const budgetWarnings = await validateBudgetCommitment({
+			components: computeDocumentBudgetComponents(
+				totals,
+				productItems.map((item) => ({ budget_id: item.budget_id })),
+			),
+			documentType: DOCUMENT_TYPE,
+			indentId: indent_id,
+			documentLabel: 'this Work Order',
+			enforce: false,
+			transaction,
+		});
+
 		const woObject = {
 			org_id,
 			indent_id,
@@ -291,6 +313,7 @@ exports.createWorkOrder = async (req) => {
 		);
 
 		await transaction.commit();
+		attachBudgetWarnings(workOrder, budgetWarnings);
 		return workOrder;
 	} catch (error) {
 		await transaction.rollback();
@@ -379,6 +402,22 @@ exports.updateWorkOrder = async (req) => {
 			matchUom: false,
 			excludeWorkOrderId: Number(id),
 			documentLabel: 'this Work Order',
+			transaction,
+		});
+
+		// Budget-level commitment limit (charges + non-recoverable tax included) — advisory
+		// here for the same reason as the indent-line check above; enforced at submit and at
+		// final approval. Returned to the client as `budget_warnings`.
+		const budgetWarnings = await validateBudgetCommitment({
+			components: computeDocumentBudgetComponents(
+				totals,
+				productItems.map((item) => ({ budget_id: item.budget_id })),
+			),
+			documentType: DOCUMENT_TYPE,
+			excludeDocumentId: Number(id),
+			indentId: indent_id,
+			documentLabel: 'this Work Order',
+			enforce: false,
 			transaction,
 		});
 
@@ -482,6 +521,7 @@ exports.updateWorkOrder = async (req) => {
 		);
 
 		await transaction.commit();
+		attachBudgetWarnings(workOrder, budgetWarnings);
 		return workOrder;
 	} catch (error) {
 		await transaction.rollback();
@@ -1389,6 +1429,19 @@ exports.submitWorkOrder = async (req, id) => {
 
 	const transaction = await sequelize.transaction();
 	try {
+		// Block an over-limit WO before it reaches an approver (and cover a zero-stage workflow
+		// that resolves straight to 'approved' here). approveWorkOrder re-validates under lock,
+		// since other documents may commit against the same budget in between.
+		await validateBudgetCommitment({
+			components: await componentsForStoredDocument(DOCUMENT_TYPE, wo, { transaction, netOfShortClose: false }),
+			documentType: DOCUMENT_TYPE,
+			excludeDocumentId: wo.id,
+			indentId: wo.indent_id,
+			documentLabel: 'this Work Order',
+			enforce: true,
+			transaction,
+		});
+
 		const instance = await workflowEngine.startInstance({
 			req,
 			documentType: DOCUMENT_TYPE,
@@ -1456,6 +1509,16 @@ exports.approveWorkOrder = async (req, id, remarks) => {
 				})),
 				matchUom: false,
 				documentLabel: 'this Work Order',
+				transaction,
+			});
+
+			await validateBudgetCommitment({
+				components: await componentsForStoredDocument(DOCUMENT_TYPE, wo, { transaction, netOfShortClose: false }),
+				documentType: DOCUMENT_TYPE,
+				excludeDocumentId: wo.id,
+				indentId: wo.indent_id,
+				documentLabel: 'this Work Order',
+				enforce: true,
 				transaction,
 			});
 		}

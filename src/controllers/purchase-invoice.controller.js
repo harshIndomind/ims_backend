@@ -49,6 +49,11 @@ exports.cancelPurchaseInvoice = catchAsync(async (req, res) => {
 	ApiResponse.send(res, 200, 'Purchase Invoice cancelled successfully', invoice);
 });
 
+exports.cancelApprovedPurchaseInvoice = catchAsync(async (req, res) => {
+	const invoice = await purchaseInvoiceService.cancelApprovedPurchaseInvoice(req, req.params.id, req.body.remarks);
+	ApiResponse.send(res, 200, 'Approved Purchase Invoice cancelled successfully', invoice);
+});
+
 exports.getPurchaseInvoiceWorkflow = catchAsync(async (req, res) => {
 	const workflow = await purchaseInvoiceService.getPurchaseInvoiceWorkflow(req, req.params.id);
 	ApiResponse.send(res, 200, 'Purchase Invoice workflow fetched successfully', workflow);

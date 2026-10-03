@@ -61,6 +61,7 @@ const { createWorkflowDocumentService } = require('./workflowDocument.factory');
 const { calculateDocumentTotals } = require('../utils/charge-tax-engine.util');
 const { round2 } = require('../utils/money');
 const { fetchProductGroupsByIds } = require('../utils/vcpProductGroups');
+const { getInvoiceChargeVariance } = require('./budget-validation.service');
 
 const DOCUMENT_TYPE = 'purchase_invoice';
 
@@ -607,6 +608,21 @@ exports.createPurchaseInvoice = async (req, body) => {
 	// itself if the client didn't already fetch one via generate-invoice-number.
 	const invoiceNumber = invoiceDetail.invoiceNumber || (await exports.generateInvoiceNumber(req));
 
+	// Charges were never matched against the order (see the other-charges comment above), so a
+	// 20% freight line the PO never carried still read as 'matched'. Flag the invoice when this
+	// order's invoices, cumulatively, bill more in charges than the PO/WO itself carried.
+	const chargeVariance = await getInvoiceChargeVariance({
+		documentType: document_type,
+		documentId: doc.id,
+		newChargesTotal: preparedCharges.reduce((sum, c) => sum + Number(c.total || 0), 0),
+		tolerancePct: PRICE_VARIANCE_TOLERANCE_PCT,
+	});
+	if (chargeVariance) anyVariance = true;
+
+	// No budget check on invoices (business rule): budget is enforced at PO/WO only. An invoice
+	// billing more than its PO/WO (price/tax per line above, charges via chargeVariance) is
+	// marked 'variance_flagged' and the approver decides.
+
 	let invoice;
 	const transaction = await sequelize.transaction();
 	try {
@@ -675,7 +691,12 @@ exports.createPurchaseInvoice = async (req, body) => {
 		throw error;
 	}
 
-	return fetchInvoiceOrThrow(invoice.id);
+	const created = await fetchInvoiceOrThrow(invoice.id);
+	if (chargeVariance) {
+		if (typeof created.setDataValue === 'function') created.setDataValue('charge_variance', chargeVariance);
+		else created.charge_variance = chargeVariance;
+	}
+	return created;
 };
 
 exports.getPurchaseInvoice = async (req, id) => {
@@ -933,6 +954,93 @@ exports.cancelPurchaseInvoice = async (req, id, remarks) => {
 		throw new AppError(`This invoice is already ${invoice.status}`, StatusCodes.CONFLICT);
 	}
 	return piWorkflow.cancel(req, id, remarks);
+};
+
+/**
+ * Reverses an APPROVED invoice (e.g. a data-entry error such as a wrong charge). Allowed only
+ * while nothing downstream has consumed it:
+ *   - no live Payment Requisition (anything not REJECTED) against it, and
+ *   - no accounting voucher drafted/posted for it (voucher_* columns, where present).
+ * Everything the invoice held is derived from its status, so flipping it to 'cancelled' is the
+ * whole reversal: its invoiced qty stops counting (LIVE_STATUSES), so a corrected invoice can be
+ * raised; its budget impact stops counting (budget-validation.service.js counts approved only).
+ * Gated by its own permission action (`cancel_approved`), separate from ordinary `cancel`.
+ */
+exports.cancelApprovedPurchaseInvoice = async (req, id, remarks) => {
+	if (!remarks || !remarks.trim()) {
+		throw new AppError('A cancellation reason is required', StatusCodes.BAD_REQUEST);
+	}
+
+	const transaction = await sequelize.transaction();
+	try {
+		const invoice = await PurchaseInvoice.findOne({
+			where: { id, org_id: req.user.org_id },
+			transaction,
+			lock: transaction.LOCK.UPDATE,
+		});
+		if (!invoice) throw new AppError(`Purchase Invoice with ID ${id} not found`, StatusCodes.NOT_FOUND);
+		if (invoice.status !== 'approved') {
+			throw new AppError('Only an approved invoice can be reversed this way — use Cancel for draft/in-progress invoices', StatusCodes.CONFLICT);
+		}
+
+		const livePrCount = await PaymentRequisition.count({
+			where: { purchase_invoice_id: invoice.id, status: { [Op.ne]: 'REJECTED' } },
+			transaction,
+		});
+		if (livePrCount > 0) {
+			throw new AppError(
+				`Cannot cancel: ${livePrCount} payment requisition${livePrCount > 1 ? 's are' : ' is'} raised against this invoice. Reject ${livePrCount > 1 ? 'them' : 'it'} first.`,
+				StatusCodes.CONFLICT,
+			);
+		}
+
+		// Voucher columns come from the voucher-posting feature and aren't on this model/branch
+		// everywhere — read them raw, and treat "column doesn't exist" as "no voucher".
+		try {
+			const [rows] = await sequelize.query(
+				'SELECT voucher_status, voucher_posting_id, external_voucher_id FROM purchase_invoices WHERE id = ?',
+				{ replacements: [invoice.id], transaction },
+			);
+			const v = rows?.[0];
+			if (v && (v.voucher_status || v.voucher_posting_id || v.external_voucher_id)) {
+				throw new AppError(
+					'Cannot cancel: an accounting voucher has already been drafted/posted for this invoice. Reverse it in accounts first.',
+					StatusCodes.CONFLICT,
+				);
+			}
+		} catch (error) {
+			if (error instanceof AppError) throw error;
+			if (error?.original?.code !== 'ER_BAD_FIELD_ERROR') throw error;
+		}
+
+		const before = { status: invoice.status, approved_by: invoice.approved_by, approved_at: invoice.approved_at };
+		const cancelledInstance = await workflowEngine.cancelInstance({
+			req,
+			documentType: DOCUMENT_TYPE,
+			documentId: invoice.id,
+			remarks,
+			transaction,
+		});
+		await invoice.update({ status: cancelledInstance.status }, { transaction });
+
+		await auditLogService.record({
+			req,
+			entityType: DOCUMENT_TYPE,
+			entityId: invoice.id,
+			action: 'cancelled_after_approval',
+			remarks,
+			previousState: before,
+			newState: { status: cancelledInstance.status },
+			transaction,
+		});
+
+		await transaction.commit();
+	} catch (error) {
+		await transaction.rollback();
+		throw error;
+	}
+
+	return fetchInvoiceOrThrow(id);
 };
 
 exports.getPurchaseInvoiceWorkflow = async (req, id) => piWorkflow.getWorkflow(req, id);

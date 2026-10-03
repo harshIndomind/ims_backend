@@ -28,6 +28,8 @@ function chargeBreakdownToRows(breakdown) {
 		apply_on: c.applyOn,
 		tax_treatment: c.appliedTaxTreatment || c.taxTreatment,
 		tax_rate: c.taxRate ?? null,
+		// Absent (legacy/older clients) = counts against the budget, same as the column default.
+		budget_impact: c.budgetImpact !== false,
 		sequence: c.sequence ?? index,
 		taxable_amount: c.amount,
 		cgst: c.cgst,
@@ -49,6 +51,7 @@ function dbRowsToCharges(rows) {
 		applyOn: row.apply_on,
 		taxTreatment: row.tax_treatment,
 		taxRate: row.tax_rate != null ? parseFloat(row.tax_rate) : null,
+		budgetImpact: row.budget_impact !== false && row.budget_impact !== 0,
 		sequence: row.sequence,
 		amount: parseFloat(row.taxable_amount),
 		cgst: parseFloat(row.cgst),

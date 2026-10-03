@@ -21,7 +21,18 @@ const {
 	MasterAccount,
 	MasterUnit,
 	User,
+	Indent,
+	BudgetRevision,
+	PurchaseInvoice,
 } = require('../models/index');
+const {
+	computeBudgetLimits,
+	effectiveCommitmentLimit,
+	allocationUsage,
+	PROVISION_TYPE,
+	TAX_BUDGET_IMPACT,
+} = require('../utils/budget-limit.util');
+const { getCommittedBudgetImpact, getIndentBudgetPosition } = require('./budget-validation.service');
 const {
 	getAmountByMajorHeadAndPeriod,
 } = require('./masterMajorHeadAmount.service');
@@ -64,6 +75,75 @@ const validateBudgetPayload = (payload) => {
 		if (!payload.amount || Number(payload.amount) < 1) {
 			throw new AppError('Amount must be at least 1 for value-wise budget', StatusCodes.BAD_REQUEST);
 		}
+	}
+};
+
+// Fields the server derives (utils/budget-limit.util.js) or only ever moves through an approved
+// Budget Revision — never accepted from the request body.
+const SERVER_OWNED_FIELDS = ['commitment_limit', 'revised_amount', 'budget_id'];
+
+const stripServerOwnedFields = (payload) => {
+	const clean = { ...payload };
+	SERVER_OWNED_FIELDS.forEach((f) => delete clean[f]);
+	// Business rule: GST always counts in the budget limit — the budget creator plans every
+	// cost (tax, freight, other charges) upfront. The recoverable-ITC option is no longer offered.
+	clean.tax_budget_impact = TAX_BUDGET_IMPACT.NON_RECOVERABLE;
+	return clean;
+};
+
+const validateProvisionAndPhases = (merged) => {
+	if (merged.provision_type === PROVISION_TYPE.PERCENTAGE) {
+		const pct = Number(merged.provision_percentage);
+		if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+			throw new AppError('Other charges percentage must be between 0 and 100', StatusCodes.BAD_REQUEST);
+		}
+	}
+	if (merged.provision_type === PROVISION_TYPE.FIXED) {
+		const amt = Number(merged.provision_amount);
+		if (!Number.isFinite(amt) || amt < 0) {
+			throw new AppError('Other charges amount cannot be negative', StatusCodes.BAD_REQUEST);
+		}
+	}
+
+	// Phase breakup must fit inside the approved budget (qty for item-wise, base amount for
+	// value-wise) — previously enforced only by the form's zod schema.
+	const phaseTotal =
+		Number(merged.first_phase_qty || 0) + Number(merged.second_phase_qty || 0) + Number(merged.third_phase_qty || 0);
+	const ceiling = merged.budgetType === 'value-wise' ? Number(merged.amount || 0) : Number(merged.qty_for_purchase || 0);
+	if (phaseTotal > ceiling + 0.005) {
+		throw new AppError(
+			merged.budgetType === 'value-wise'
+				? `Total phase amount (${phaseTotal}) cannot exceed Budget Amount (${ceiling})`
+				: `Total phase quantity (${phaseTotal}) cannot exceed Qty For Purchase (${ceiling})`,
+			StatusCodes.BAD_REQUEST,
+		);
+	}
+};
+
+/**
+ * Server-side cost-centre allocation ceiling: Σ (base + tax + provision + approved revisions)
+ * of every budget on the allocation must stay within the allocation amount. Previously only
+ * the budget form checked this.
+ */
+const validateAllocationCeiling = async (sub_head_cost_center_amount_id, candidate, excludeBudgetId, transaction) => {
+	const allocation = await MasterSubHeadCostCenterAmount.findByPk(sub_head_cost_center_amount_id, { transaction });
+	if (!allocation) return;
+	const others = await Budget.findAll({
+		where: {
+			sub_head_cost_center_amount_id,
+			...(excludeBudgetId ? { id: { [Op.ne]: excludeBudgetId } } : {}),
+		},
+		attributes: ['amount', 'tax_duty_amount', 'provision_amount', 'revised_amount'],
+		transaction,
+	});
+	const used = others.reduce((sum, b) => sum + allocationUsage(b), 0);
+	const requested = allocationUsage(candidate);
+	const available = Number(allocation.amount || 0) - used;
+	if (requested > available + 0.005) {
+		throw new AppError(
+			`Amount + tax + other charges (${requested.toFixed(2)}) exceeds the remaining cost center allocation (${available.toFixed(2)})`,
+			StatusCodes.BAD_REQUEST,
+		);
 	}
 };
 
@@ -120,12 +200,17 @@ const resolveCostCenterAllocation = async (org_id, payload) => {
 	};
 };
 
-exports.createBudget = async (req, payload) => {
-	validateBudgetPayload(payload);
-	await validateBudgetDateInPeriod(payload.date, payload.period_id);
+exports.createBudget = async (req, rawPayload) => {
+	const input = stripServerOwnedFields(rawPayload);
+	validateBudgetPayload(input);
+	await validateBudgetDateInPeriod(input.date, input.period_id);
 	const { org_id } = req.user;
 
+	const payload = { ...input, ...computeBudgetLimits(input) };
+	validateProvisionAndPhases(payload);
+
 	const resolvedAllocation = await resolveCostCenterAllocation(org_id, payload);
+	await validateAllocationCeiling(resolvedAllocation.sub_head_cost_center_amount_id, payload, null);
 	const budget = await budgetRepo.create({ ...payload, ...resolvedAllocation, org_id });
 
 	if (budget) {
@@ -146,7 +231,8 @@ exports.createBudget = async (req, payload) => {
 	return created;
 };
 
-exports.updateBudget = async (req, id, payload) => {
+exports.updateBudget = async (req, id, rawPayload) => {
+	const input = stripServerOwnedFields(rawPayload);
 	const budget = await budgetRepo.findById(id);
 
 	if (!budget) {
@@ -164,8 +250,13 @@ exports.updateBudget = async (req, id, payload) => {
 
 	const before = budget.toJSON();
 
-	const mergedType = payload.budgetType ?? budget.budgetType;
-	validateBudgetPayload({ ...budget.dataValues, ...payload, budgetType: mergedType });
+	const mergedType = input.budgetType ?? budget.budgetType;
+	const merged = { ...budget.dataValues, ...input, budgetType: mergedType };
+	validateBudgetPayload(merged);
+
+	const computed = computeBudgetLimits(merged);
+	const payload = { ...input, ...computed };
+	validateProvisionAndPhases({ ...merged, ...computed });
 
 	// Validate effective date (from payload or existing record) against period bounds
 	const effectiveDate = payload.date ?? budget.date;
@@ -177,6 +268,12 @@ exports.updateBudget = async (req, id, payload) => {
 		sub_head_cost_center_amount_id:
 			payload.sub_head_cost_center_amount_id ?? budget.sub_head_cost_center_amount_id,
 	});
+
+	await validateAllocationCeiling(
+		resolvedAllocation.sub_head_cost_center_amount_id,
+		{ ...computed, revised_amount: budget.revised_amount },
+		Number(id),
+	);
 
 	const updated = await budgetRepo.updateById(id, { ...payload, ...resolvedAllocation });
 
@@ -320,7 +417,22 @@ exports.getAllBudgets = async (req) => {
 		filterOptions.offset = Number(offset || 0);
 	}
 
-	return budgetRepo.findAll({}, filterOptions);
+	const result = await budgetRepo.findAll({}, filterOptions);
+
+	// Paginated list only (not the report export): attach each budget's live remaining —
+	// effective limit minus indents/PO/WO/invoices, same figure the indent live check uses.
+	if (limit && result?.rows?.length) {
+		await Promise.all(
+			result.rows.map(async (budget) => {
+				const pos = await getIndentBudgetPosition({ budget });
+				budget.setDataValue('effective_limit', pos.effectiveLimit);
+				budget.setDataValue('consumed_amount', pos.consumedByOthers);
+				budget.setDataValue('remaining_amount', pos.available);
+			}),
+		);
+	}
+
+	return result;
 };
 
 exports.getBudgetById = async (id) => {
@@ -379,6 +491,14 @@ exports.deleteBudget = async (req, id) => {
 	if (woItemCount > 0) {
 		throw new AppError(
 			`Cannot delete budget: it is already used by ${woItemCount} Work Order item${woItemCount > 1 ? 's' : ''}. Remove it from those Work Orders first.`,
+			StatusCodes.CONFLICT,
+		);
+	}
+
+	const revisionCount = await BudgetRevision.count({ where: { budget_id: id } });
+	if (revisionCount > 0) {
+		throw new AppError(
+			`Cannot delete budget: it has ${revisionCount} budget revision${revisionCount > 1 ? 's' : ''} on record, which form its audit trail.`,
 			StatusCodes.CONFLICT,
 		);
 	}
@@ -580,4 +700,116 @@ exports.searchBudgets = async ({ org_id, search = '', limit = 20, user }) => {
 		order: [['budget_id', 'ASC']],
 		limit: Number(limit),
 	});
+};
+
+/**
+ * Explainable budget position (docs/budget-validation/budget-modification.md "Reporting / Audit"):
+ *   Base + Tax (if non-recoverable) + Provision = Commitment Limit; + Approved Revisions = Effective Limit
+ *   Indented (active indents, base budget) and Committed (PO/WO budget impact) vs those limits.
+ */
+exports.getBudgetUtilization = async (req, id) => {
+	const budget = await Budget.findOne({ where: { id, org_id: req.user.org_id } });
+	if (!budget) {
+		throw new AppError('Budget not found', StatusCodes.NOT_FOUND);
+	}
+
+	const indentItems = await IndentItem.findAll({
+		where: { budget_id: id },
+		include: [
+			{
+				model: Indent,
+				as: 'indent',
+				attributes: [],
+				required: true,
+				where: { status: { [Op.notIn]: ['rejected', 'cancelled'] } },
+			},
+		],
+		attributes: ['amount', 'qty'],
+	});
+	const indentedAmount = indentItems.reduce((sum, i) => sum + Number(i.amount || 0), 0);
+	const indentedQty = indentItems.reduce((sum, i) => sum + Number(i.qty || 0), 0);
+
+	const { committed, breakdown } = await getCommittedBudgetImpact({ budget });
+	const effectiveLimit = effectiveCommitmentLimit(budget);
+
+	const revisions = await BudgetRevision.findAll({
+		where: { budget_id: id },
+		order: [['id', 'DESC']],
+	});
+
+	// Invoices booked against each committed PO/WO, so the UI can show PO → Invoice hierarchy.
+	const poIds = breakdown.filter((d) => d.document_type === 'purchase_order').map((d) => d.document_id);
+	const woIds = breakdown.filter((d) => d.document_type === 'work_order').map((d) => d.document_id);
+	const invoices =
+		poIds.length || woIds.length
+			? await PurchaseInvoice.findAll({
+					where: {
+						org_id: req.user.org_id,
+						status: { [Op.notIn]: ['rejected', 'cancelled'] },
+						[Op.or]: [
+							...(poIds.length ? [{ purchase_order_id: { [Op.in]: poIds } }] : []),
+							...(woIds.length ? [{ work_order_id: { [Op.in]: woIds } }] : []),
+						],
+					},
+					attributes: [
+						'id',
+						'document_type',
+						'purchase_order_id',
+						'work_order_id',
+						'invoicePrefix',
+						'invoiceNo',
+						'invoicePostfix',
+						'vendor_invoice_no',
+						'invoice_date',
+						'grandTotal',
+						'status',
+					],
+					order: [['id', 'ASC']],
+				})
+			: [];
+	const committedDocuments = breakdown.map((d) => ({
+		...d,
+		invoices: invoices
+			.filter((inv) =>
+				d.document_type === 'purchase_order'
+					? inv.purchase_order_id === d.document_id
+					: inv.work_order_id === d.document_id,
+			)
+			.map((inv) => ({
+				id: inv.id,
+				invoice_number: `${inv.invoicePrefix || ''}${inv.invoiceNo || ''}${inv.invoicePostfix || ''}`,
+				vendor_invoice_no: inv.vendor_invoice_no,
+				invoice_date: inv.invoice_date,
+				grand_total: Number(inv.grandTotal || 0),
+				status: inv.status,
+			})),
+	}));
+
+	const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+	const isItemWise = budget.budgetType === 'item-wise';
+
+	return {
+		id: budget.id,
+		budget_id: budget.budget_id,
+		budgetType: budget.budgetType,
+		base_amount: Number(budget.amount || 0),
+		tax_duty_amount: Number(budget.tax_duty_amount || 0),
+		tax_budget_impact: budget.tax_budget_impact,
+		provision_type: budget.provision_type,
+		provision_percentage: budget.provision_percentage,
+		provision_amount: Number(budget.provision_amount || 0),
+		commitment_limit: effectiveCommitmentLimit({ ...budget.get({ plain: true }), revised_amount: 0 }),
+		revised_amount: Number(budget.revised_amount || 0),
+		effective_limit: effectiveLimit,
+		// Quantity only means something for an item-wise (single-product) budget.
+		approved_qty: isItemWise ? Number(budget.qty_for_purchase || 0) : null,
+		indented_qty: isItemWise ? indentedQty : null,
+		remaining_qty: isItemWise ? round2(Number(budget.qty_for_purchase || 0) - indentedQty) : null,
+		indented_amount: round2(indentedAmount),
+		remaining_base_amount: round2(Number(budget.amount || 0) - indentedAmount),
+		committed_amount: committed,
+		remaining_commitment: round2(effectiveLimit - committed),
+		committed_documents: committedDocuments,
+		revisions,
+	};
 };

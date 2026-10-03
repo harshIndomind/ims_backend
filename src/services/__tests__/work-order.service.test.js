@@ -64,6 +64,9 @@ const mockWorkOrderItemModelFindAll = jest.fn().mockResolvedValue([]);
 
 jest.mock('../../models/index', () => ({
 	sequelize: { transaction: jest.fn() },
+	// Budget-level commitment check (budget-validation.service.js): no Budget row → no-op.
+	Budget: { findOne: jest.fn().mockResolvedValue(null) },
+	DocumentCharge: { findAll: jest.fn().mockResolvedValue([]) },
 	WorkOrder: {},
 	WorkOrderItem: { findAll: (...args) => mockWorkOrderItemModelFindAll(...args) },
 	Indent: {},

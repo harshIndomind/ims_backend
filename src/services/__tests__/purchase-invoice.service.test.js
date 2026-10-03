@@ -12,6 +12,17 @@ const mockWorkflowEngine = {
 };
 jest.mock('../workflowEngine.service', () => mockWorkflowEngine);
 
+// Budget layer is covered by budget-commitment.service.test.js; here only its wiring is asserted.
+const mockValidateInvoiceBudget = jest.fn();
+const mockGetInvoiceChargeVariance = jest.fn();
+jest.mock('../budget-validation.service', () => ({
+	validateInvoiceBudget: (...args) => mockValidateInvoiceBudget(...args),
+	getInvoiceChargeVariance: (...args) => mockGetInvoiceChargeVariance(...args),
+	attachBudgetWarnings: (doc, warnings) => {
+		if (doc) doc.budget_warnings = warnings;
+	},
+}));
+
 const mockGetReceivedQtyForPoItem = jest.fn();
 jest.mock('../grn.service', () => ({ getReceivedQtyForPoItem: (...args) => mockGetReceivedQtyForPoItem(...args) }));
 
@@ -27,9 +38,11 @@ const mockPurchaseInvoiceItemBulkCreate = jest.fn().mockResolvedValue([]);
 const mockPurchaseInvoiceChargeBulkCreate = jest.fn().mockResolvedValue([]);
 const mockGoodsReceiptNoteFindOne = jest.fn();
 const mockQcInspectionFindOne = jest.fn();
+const mockPaymentRequisitionCount = jest.fn();
 
 jest.mock('../../models/index', () => ({
-	sequelize: { transaction: jest.fn() },
+	sequelize: { transaction: jest.fn(), query: jest.fn() },
+	PaymentRequisition: { count: (...args) => mockPaymentRequisitionCount(...args) },
 	PurchaseOrder: { findOne: (...args) => mockPurchaseOrderFindOne(...args) },
 	PurchaseOrderItem: { findAll: (...args) => mockPurchaseOrderItemFindAll(...args) },
 	WorkOrder: { findOne: (...args) => mockWorkOrderFindOne(...args) },
@@ -121,6 +134,8 @@ beforeEach(() => {
 	mockPurchaseInvoiceCreate.mockResolvedValue({ id: 900, update: jest.fn().mockResolvedValue(undefined) });
 	mockPurchaseInvoiceItemBulkCreate.mockResolvedValue([]);
 	mockPurchaseInvoiceFindOne.mockResolvedValue({ id: 900, status: 'in_progress', items: [] });
+	mockValidateInvoiceBudget.mockResolvedValue([]);
+	mockGetInvoiceChargeVariance.mockResolvedValue(null);
 });
 
 describe('createPurchaseInvoice — quantity hard block (purchase_order)', () => {
@@ -542,11 +557,38 @@ describe('createPurchaseInvoice — other charges (freight, loading/unloading, e
 			[expect.objectContaining({ amount: 5000, cgst: 450, sgst: 450, total: 5900, description: 'Local cartage' })],
 			expect.anything(),
 		);
-		// matching_status stays scoped to the item, unaffected by the charge.
+		// matching_status stays scoped to the item, unaffected by the charge (as long as the
+		// charge-variance check — mocked here — finds the order's charges cover it).
 		expect(mockPurchaseInvoiceCreate).toHaveBeenCalledWith(
 			expect.objectContaining({ matching_status: 'matched' }),
 			expect.anything(),
 		);
+	});
+
+	it('flags the invoice when its charges exceed what the PO carried, without any budget check', async () => {
+		mockPurchaseOrderFindOne.mockResolvedValue(poWithItems({ items: [poItem({ price: 100, tax_id: 1 })] }));
+		mockGetReceivedQtyForPoItem.mockResolvedValue(10);
+		mockSumInvoicedQtyForPoWoItem.mockResolvedValue(0);
+		mockGetInvoiceChargeVariance.mockResolvedValue({ orderCharges: 0, invoicedCharges: 177000, excess: 177000 });
+		mockValidateInvoiceBudget.mockResolvedValue([{ budget_id: 10, excess: 98000, message: 'over' }]);
+
+		const created = await piService.createPurchaseInvoice(baseReq(), {
+			document_type: 'purchase_order',
+			document_id: 50,
+			vendor_invoice_no: 'INV-9',
+			vendor_invoice_date: '2026-08-20',
+			items: [{ po_wo_item_id: 300, invoiced_qty: 10, price: 100, tax_id: 1, taxSnapshot: { rate: 18 } }],
+			other_charges: [{ name: 'Freight', value: 20, calculationType: 'PERCENTAGE', applyOn: 'AFTER_TAX' }],
+		});
+
+		expect(mockPurchaseInvoiceCreate).toHaveBeenCalledWith(
+			expect.objectContaining({ matching_status: 'variance_flagged' }),
+			expect.anything(),
+		);
+		// Budget is enforced at PO/WO only — the over-PO invoice is flagged for the approver instead.
+		expect(mockValidateInvoiceBudget).not.toHaveBeenCalled();
+		expect(created.budget_warnings).toBeUndefined();
+		expect(created.charge_variance).toEqual({ orderCharges: 0, invoicedCharges: 177000, excess: 177000 });
 	});
 
 	it('folds charge amounts into the invoice header totals (grandTotal, total_tax, total_taxable)', async () => {
@@ -731,6 +773,90 @@ describe('createPurchaseInvoice — other charges (freight, loading/unloading, e
 			[expect.objectContaining({ amount: 10, cgst: 9, sgst: 9, total: 118 })],
 			expect.anything(),
 		);
+	});
+});
+
+describe('approvePurchaseInvoice — no budget check', () => {
+	it('approves an over-budget invoice (budget is enforced at PO/WO only; variance flag is the control)', async () => {
+		const updateFn = jest.fn().mockResolvedValue(undefined);
+		mockPurchaseInvoiceFindOne.mockResolvedValue({
+			id: 7,
+			status: 'in_progress',
+			document_type: 'purchase_order',
+			purchase_order_id: 50,
+			work_order_id: null,
+			items: [{ po_wo_item_id: 300, invoiced_qty: 50, productSnapshot: { name: 'Cement' } }],
+			update: updateFn,
+		});
+		mockPurchaseOrderFindOne.mockResolvedValue({ id: 50, org_id: 7 });
+		mockPurchaseOrderItemFindAll.mockResolvedValue([poItem()]);
+		mockGetReceivedQtyForPoItem.mockResolvedValue(60);
+		mockSumInvoicedQtyForPoWoItem.mockResolvedValue(0);
+		mockValidateInvoiceBudget.mockRejectedValue(new Error('Budget BUD-000010 limit exceeded ... Excess: 98000.00'));
+
+		mockWorkflowEngine.advanceStage.mockResolvedValue({ status: 'approved' });
+
+		await piService.approvePurchaseInvoice(baseReq(), 7);
+		expect(mockValidateInvoiceBudget).not.toHaveBeenCalled();
+		expect(mockWorkflowEngine.advanceStage).toHaveBeenCalled();
+		expect(mockTransaction.commit).toHaveBeenCalled();
+	});
+});
+
+describe('cancelApprovedPurchaseInvoice — reversing an approved invoice', () => {
+	function approvedInvoice(overrides = {}) {
+		return { id: 7, org_id: 7, status: 'approved', approved_by: { id: 12 }, update: jest.fn().mockResolvedValue(undefined), ...overrides };
+	}
+
+	beforeEach(() => {
+		mockPaymentRequisitionCount.mockResolvedValue(0);
+		sequelize.query.mockResolvedValue([[{ voucher_status: null, voucher_posting_id: null, external_voucher_id: null }]]);
+		mockWorkflowEngine.cancelInstance.mockResolvedValue({ status: 'cancelled' });
+	});
+
+	it('cancels the approved invoice through the workflow and records the reason', async () => {
+		const inv = approvedInvoice();
+		mockPurchaseInvoiceFindOne.mockResolvedValueOnce(inv).mockResolvedValue({ id: 7, status: 'cancelled' });
+
+		await piService.cancelApprovedPurchaseInvoice(baseReq(), 7, 'Freight 20% entered in error');
+
+		expect(mockPurchaseInvoiceFindOne.mock.calls[0][0].lock).toBe('UPDATE');
+		expect(mockWorkflowEngine.cancelInstance).toHaveBeenCalledWith(
+			expect.objectContaining({ documentType: 'purchase_invoice', documentId: 7, remarks: 'Freight 20% entered in error' }),
+		);
+		expect(inv.update).toHaveBeenCalledWith({ status: 'cancelled' }, expect.anything());
+		expect(mockTransaction.commit).toHaveBeenCalled();
+	});
+
+	it('requires a reason', async () => {
+		await expect(piService.cancelApprovedPurchaseInvoice(baseReq(), 7, '  ')).rejects.toThrow(/reason is required/);
+	});
+
+	it('refuses an invoice that is not approved (ordinary Cancel covers draft/in-progress)', async () => {
+		mockPurchaseInvoiceFindOne.mockResolvedValue(approvedInvoice({ status: 'in_progress' }));
+		await expect(piService.cancelApprovedPurchaseInvoice(baseReq(), 7, 'x')).rejects.toThrow(/Only an approved invoice/);
+		expect(mockTransaction.rollback).toHaveBeenCalled();
+	});
+
+	it('refuses while a non-rejected payment requisition exists against it', async () => {
+		mockPurchaseInvoiceFindOne.mockResolvedValue(approvedInvoice());
+		mockPaymentRequisitionCount.mockResolvedValue(1);
+		await expect(piService.cancelApprovedPurchaseInvoice(baseReq(), 7, 'x')).rejects.toThrow(/payment requisition/);
+		expect(mockPaymentRequisitionCount.mock.calls[0][0].where.status[Op.ne]).toBe('REJECTED');
+		expect(mockWorkflowEngine.cancelInstance).not.toHaveBeenCalled();
+	});
+
+	it('refuses once an accounting voucher exists for it', async () => {
+		mockPurchaseInvoiceFindOne.mockResolvedValue(approvedInvoice());
+		sequelize.query.mockResolvedValue([[{ voucher_status: 'drafted', voucher_posting_id: 5, external_voucher_id: null }]]);
+		await expect(piService.cancelApprovedPurchaseInvoice(baseReq(), 7, 'x')).rejects.toThrow(/voucher/);
+		expect(mockWorkflowEngine.cancelInstance).not.toHaveBeenCalled();
+	});
+
+	it('treats a DB without voucher columns as "no voucher"', async () => {
+		mockPurchaseInvoiceFindOne.mockResolvedValueOnce(approvedInvoice()).mockResolvedValue({ id: 7, status: 'cancelled' });
+		sequelize.query.mockRejectedValue(Object.assign(new Error('Unknown column'), { original: { code: 'ER_BAD_FIELD_ERROR' } }));
+		await expect(piService.cancelApprovedPurchaseInvoice(baseReq(), 7, 'x')).resolves.toBeDefined();
 	});
 });
 
