@@ -12,6 +12,7 @@ const {
 	organization,
 } = require('../models/index');
 const auditLogService = require('./auditLog.service');
+const { round2, gt } = require('../utils/money');
 const { Op } = require('sequelize');
 
 const ENTITY_TYPE = 'sub_head_cost_center_amount';
@@ -76,9 +77,9 @@ exports.createSubHeadCostCenterAmount = async (req, payload) => {
 	}
 
 	const alreadyAllocated = await getAllocatedAmountForSubHeadAmount(sub_head_amount_id);
-	const amountLeftForUse = Number(subHeadAmount.amount) - alreadyAllocated;
+	const amountLeftForUse = round2(Number(subHeadAmount.amount) - alreadyAllocated);
 
-	if (Number(amount) > amountLeftForUse) {
+	if (gt(amount, amountLeftForUse)) {
 		throw new AppError(
 			`Cost center amount is greater than the left amount for use ${amountLeftForUse}`,
 			StatusCodes.BAD_REQUEST,
@@ -164,10 +165,10 @@ exports.updateSubHeadCostCenterAmount = async (req, payload) => {
 	// Exclude this row's own current amount from the "already allocated" total so we're
 	// checking the new amount against the ceiling left by its siblings only.
 	const siblingsAllocated = alreadyAllocated - Number(record.amount);
-	const amountLeftForUse = Number(subHeadAmount.amount) - siblingsAllocated;
+	const amountLeftForUse = round2(Number(subHeadAmount.amount) - siblingsAllocated);
 	const nextAmount = amount ?? record.amount;
 
-	if (Number(nextAmount) > amountLeftForUse) {
+	if (gt(nextAmount, amountLeftForUse)) {
 		throw new AppError(
 			`Cost center amount is greater than the left amount for use ${amountLeftForUse}`,
 			StatusCodes.BAD_REQUEST,

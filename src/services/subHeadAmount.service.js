@@ -18,6 +18,7 @@ const {
 	getAmountByMajorHeadAndPeriodAndSubHead,
 } = require('../services/budget.service');
 const auditLogService = require('./auditLog.service');
+const { round2, gt } = require('../utils/money');
 const { fn, col, Op } = require('sequelize');
 
 const ENTITY_TYPE = 'sub_head_amount';
@@ -81,10 +82,10 @@ exports.createSubHeadAmount = async (req, payload) => {
 	let totalSubHeadAmount = 0;
 	if (subHeadAmount) {
 		totalSubHeadAmount = subHeadAmount;
-		totalAmountLeftForUse = totalAmountLeftForUse - totalSubHeadAmount;
+		totalAmountLeftForUse = round2(totalAmountLeftForUse - totalSubHeadAmount);
 	}
 
-	if (Number(amount) > Number(totalAmountLeftForUse)) {
+	if (gt(amount, totalAmountLeftForUse)) {
 		throw new AppError(
 			`Sub head amount is greater than the left amount for use ${totalAmountLeftForUse}`,
 			400,
@@ -183,10 +184,10 @@ exports.updateSubHeadAmount = async (req, payload) => {
 	let totalSubHeadAmount = 0;
 	if (subHeadAmount) {
 		totalSubHeadAmount = subHeadAmount - masterMajorHeadAmount.amount;
-		totalAmountLeftForUse = totalAmountLeftForUse - totalSubHeadAmount;
+		totalAmountLeftForUse = round2(totalAmountLeftForUse - totalSubHeadAmount);
 	}
 
-	if (Number(amount) > Number(totalAmountLeftForUse)) {
+	if (gt(amount, totalAmountLeftForUse)) {
 		throw new AppError(
 			`Sub head amount is greater than the left amount for use ${totalAmountLeftForUse}`,
 			400,
