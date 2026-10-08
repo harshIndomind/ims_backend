@@ -46,7 +46,7 @@ exports.logout = catchAsync(async (req, res) => {
 			});
 			// Only this service's own current_jti is ours to clear — a token
 			// minted by AUTH/VCP was never recorded in this service's column
-			if (decoded.iss === 'SCM') {
+			if (decoded.iss === (process.env.APP_CODE || 'IMS')) {
 				const [affected] = await User.update(
 					{ current_jti: null },
 					{ where: { uuid: decoded.sub, current_jti: decoded.jti } },
