@@ -12,13 +12,13 @@ if (!fs.existsSync(logDir)) {
 const logger = createLogger({
 	level: process.env.LOG_LEVEL || 'debug',
 	defaultMeta: {
-		service: 'scm-api',
-    	environment: process.env.APP_ENV || 'local'
+		service: 'ims-api',
+		environment: process.env.APP_ENV || 'local',
 	},
 	format: format.combine(
 		format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
 		format.errors({ stack: true }),
-		format.json()
+		format.json(),
 	),
 	transports: [
 		new DailyRotateFile({
@@ -41,15 +41,15 @@ if (process.env.APP_ENV !== 'production') {
 	logger.add(
 		new transports.Console({
 			format: format.combine(
-				format.colorize({all:true}),
+				format.colorize({ all: true }),
 				format.timestamp({ format: 'DD-MM-YYYY HH:mm:ss' }),
 				format.printf(({ level, message, timestamp, ...meta }) => {
 					return `${timestamp} [${level}]: ${message} ${
 						Object.keys(meta).length ? JSON.stringify(meta, null, 2) : ''
 					}`;
-				})
+				}),
 			),
-		})
+		}),
 	);
 }
 

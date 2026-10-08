@@ -1,11 +1,11 @@
 {
-	"name": "Supply Chain Mananagement",
+	"name": "ims-backend",
 	"version": "1.0.0",
 	"main": "index.js",
 	"type": "commonjs",
 	"scripts": {
 		"test": "jest",
-		"dev": "nodemon --env-file=.env src/index.js -- -p 4300",
+		"dev": "nodemon --env-file=.env src/index.js",
 		"start": "node --env-file=.env.production src/index.js",
 		"migrate:status": "cd src && npx sequelize-cli db:migrate:status",
 		"migrate": "cd src && npx sequelize-cli db:migrate",
@@ -66,3 +66,4 @@
 		"nodemon": "^3.1.10"
 	}
 }
+
