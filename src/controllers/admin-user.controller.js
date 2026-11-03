@@ -9,7 +9,7 @@ exports.createUserByOrganization = catchAsync(async (req, res) => {
 		message: 'User created successfully',
 		data: user,
 	});
-});
+});	
 
 exports.getAllOrgAdminUsers = catchAsync(async (req, res) => {
 	// const org_id = req.user.org_id;

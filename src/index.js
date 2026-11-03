@@ -71,7 +71,10 @@ async function prepareAndStartServer() {
 		app.use(`${apiPrefix}/v1/admin-users`, require('./routes/v1/admin-user.routes'));
 	app.use(`${apiPrefix}/v1/indent`, require('./routes/v1/indent.routes'));
 	app.use(`${apiPrefix}/v1/budget-revisions`, require('./routes/v1/budget-revision.routes'));
-	app.use(`${apiPrefix}/v1/workflow-definitions`, require('./routes/v1/workflow-definitions.routes'));	
+	app.use(`${apiPrefix}/v1/workflow-definitions`, require('./routes/v1/workflow-definitions.routes'));
+	app.use(`${apiPrefix}/v1/companies`, require('./routes/v1/company.routes'));	
+	app.use(`${apiPrefix}/v1/projects`, require('./routes/v1/project.routes'));
+	app.use(`${apiPrefix}/v1/issues`, require('./routes/v1/issue.routes'));
 	app.get('/', (req, res) => {
 		res.status(200).json({ status: true, message: '✅ Server up & running.' });
 	});
